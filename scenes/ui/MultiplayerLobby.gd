@@ -293,8 +293,14 @@ func _on_both_players_ready() -> void:
 func _load_level_set_games(level_set: Dictionary) -> void:
 	"""Load the correct game scene for each player based on level set"""
 	var my_player_num = NetworkManager.get_local_player_num()
-	var my_game_scene: String
 	
+	# Validate player number
+	if my_player_num < 1 or my_player_num > 2:
+		push_error("Invalid player number: %d" % my_player_num)
+		_show_error("Invalid player number!")
+		return
+	
+	var my_game_scene: String
 	if my_player_num == 1:
 		my_game_scene = level_set["player1_game"]
 	else:

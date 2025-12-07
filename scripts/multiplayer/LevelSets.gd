@@ -16,8 +16,8 @@ const LEVEL_SETS = [
 		"id": "water_collection_chain",
 		"name": "Water Collection Chain",
 		"description": "Catch rain and filter it for use",
-		"player1_game": "res://scenes/minigames/CatchTheRain.tscn",
-		"player2_game": "res://scenes/minigames/FilterBuilder.tscn",
+		"player1_game": "res://scripts/multiplayer/MiniGame_Rain.tscn",
+		"player2_game": "res://scripts/multiplayer/MiniGame_Rain.tscn",  # Both play same game with different modes
 		"player1_role": "Rain Catcher",
 		"player2_role": "Water Filter",
 		"connection_type": "resource_transfer",
@@ -39,8 +39,8 @@ const LEVEL_SETS = [
 		"id": "pipe_repair_team",
 		"name": "Pipe Repair Team",
 		"description": "Spot leaks and plug them",
-		"player1_game": "res://scenes/minigames/SpotTheSpeck.tscn",
-		"player2_game": "res://scenes/minigames/PlugTheLeak.tscn",
+		"player1_game": "res://scripts/multiplayer/MiniGame_LeafSort.tscn",
+		"player2_game": "res://scripts/multiplayer/MiniGame_LeafSort.tscn",  # Using existing game
 		"player1_role": "Leak Spotter",
 		"player2_role": "Leak Plugger",
 		"connection_type": "task_marking",
@@ -62,8 +62,8 @@ const LEVEL_SETS = [
 		"id": "garden_conservation",
 		"name": "Garden Conservation",
 		"description": "Collect greywater and water plants",
-		"player1_game": "res://scenes/minigames/GreywaterSorter.tscn",
-		"player2_game": "res://scenes/minigames/WaterPlant.tscn",
+		"player1_game": "res://scripts/multiplayer/MiniGame_GreywaterSort.tscn",
+		"player2_game": "res://scripts/multiplayer/MiniGame_GreywaterSort.tscn",  # Using existing game
 		"player1_role": "Greywater Collector",
 		"player2_role": "Plant Waterer",
 		"connection_type": "resource_transfer",
@@ -85,8 +85,8 @@ const LEVEL_SETS = [
 		"id": "household_savings",
 		"name": "Household Savings",
 		"description": "Turn off taps and cover water drums",
-		"player1_game": "res://scenes/minigames/TurnOffTap.tscn",
-		"player2_game": "res://scenes/minigames/CoverTheDrum.tscn",
+		"player1_game": "res://scripts/multiplayer/MiniGame_BucketBrigade.tscn",
+		"player2_game": "res://scripts/multiplayer/MiniGame_BucketBrigade.tscn",  # Using existing game
 		"player1_role": "Tap Turner",
 		"player2_role": "Drum Coverer",
 		"connection_type": "combined_efficiency",

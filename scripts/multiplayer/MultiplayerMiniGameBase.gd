@@ -342,10 +342,9 @@ func _on_team_lives_updated(remaining_lives: int) -> void:
 		lives_label.text = "❤️ x%d" % remaining_lives
 		
 		# Flash red if life lost
-		if lives_label:
-			var tween = create_tween()
-			tween.tween_property(lives_label, "modulate", Color(2, 0.5, 0.5), 0.2)
-			tween.tween_property(lives_label, "modulate", Color.WHITE, 0.2)
+		var tween = create_tween()
+		tween.tween_property(lives_label, "modulate", Color(2, 0.5, 0.5), 0.2)
+		tween.tween_property(lives_label, "modulate", Color.WHITE, 0.2)
 	
 	# Check for game over
 	if remaining_lives <= 0:
