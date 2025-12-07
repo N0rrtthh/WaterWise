@@ -1,0 +1,92 @@
+[gd_scene load_steps=2 format=3 uid="uid://minigameresults123"]
+
+[ext_resource type="Script" path="res://scenes/ui/MiniGameResults.gd" id="1_results"]
+
+[node name="MiniGameResults" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_results")
+
+[node name="Background" type="ColorRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.1, 0.15, 0.2, 0.95)
+
+[node name="CenterContainer" type="CenterContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="VBoxContainer" type="VBoxContainer" parent="CenterContainer"]
+layout_mode = 2
+theme_override_constants/separation = 30
+
+[node name="ResultTitle" type="Label" parent="CenterContainer/VBoxContainer"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.3, 1, 0.5, 1)
+theme_override_font_sizes/font_size = 56
+text = "🎉 SUCCESS!"
+horizontal_alignment = 1
+
+[node name="Stats" type="VBoxContainer" parent="CenterContainer/VBoxContainer"]
+layout_mode = 2
+theme_override_constants/separation = 15
+
+[node name="Accuracy" type="Label" parent="CenterContainer/VBoxContainer/Stats"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 32
+text = "Accuracy: 85%"
+horizontal_alignment = 1
+
+[node name="Time" type="Label" parent="CenterContainer/VBoxContainer/Stats"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 32
+text = "Time: 12.5s"
+horizontal_alignment = 1
+
+[node name="Mistakes" type="Label" parent="CenterContainer/VBoxContainer/Stats"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 32
+text = "Mistakes: 2"
+horizontal_alignment = 1
+
+[node name="Difficulty" type="Label" parent="CenterContainer/VBoxContainer/Stats"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 28
+text = "Difficulty: Medium"
+horizontal_alignment = 1
+
+[node name="Spacer" type="Control" parent="CenterContainer/VBoxContainer"]
+custom_minimum_size = Vector2(0, 30)
+layout_mode = 2
+
+[node name="Buttons" type="HBoxContainer" parent="CenterContainer/VBoxContainer"]
+layout_mode = 2
+theme_override_constants/separation = 30
+alignment = 1
+
+[node name="ContinueButton" type="Button" parent="CenterContainer/VBoxContainer/Buttons"]
+custom_minimum_size = Vector2(200, 70)
+layout_mode = 2
+theme_override_font_sizes/font_size = 28
+text = "➡️ Next"
+
+[node name="RetryButton" type="Button" parent="CenterContainer/VBoxContainer/Buttons"]
+custom_minimum_size = Vector2(200, 70)
+layout_mode = 2
+theme_override_font_sizes/font_size = 28
+text = "🔄 Retry"
+
+[connection signal="pressed" from="CenterContainer/VBoxContainer/Buttons/ContinueButton" to="." method="_on_continue_pressed"]
+[connection signal="pressed" from="CenterContainer/VBoxContainer/Buttons/RetryButton" to="." method="_on_retry_pressed"]

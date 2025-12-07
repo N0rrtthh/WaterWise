@@ -1,0 +1,128 @@
+[gd_scene load_steps=3 format=3 uid="uid://bxcpomsqkffv4"]
+
+[ext_resource type="Texture2D" uid="uid://me3aw8fjd3o1" path="res://characters/Loading.png" id="2_loading_img"]
+
+[sub_resource type="GDScript" id="GDScript_uo7ie"]
+script/source = "extends Control
+
+@onready var progress_bar = $ProgressBar
+@onready var loading_text = $LoadingText
+
+var progress: float = 0.0
+var loading_messages_en = [
+	\"Fetching watering can...\",
+	\"Planting seeds...\",
+	\"Setting up adaptive difficulty...\",
+	\"Waiting for water...\",
+	\"Analyzing water conservation...\"
+]
+
+var loading_messages_tl = [
+	\"Naglalako ng watering can...\",
+	\"Tinatanim ang halaman...\",
+	\"Ini-set up ang adaptive difficulty...\",
+	\"Hinihintay ang tubig...\",
+	\"Sinusuri ang water conservation...\"
+]
+
+func _ready() -> void:
+	progress_bar.value = 0
+	_update_message()
+
+func _on_timer_timeout() -> void:
+	progress += randf_range(5, 15)
+	progress = min(progress, 100)
+	
+	progress_bar.value = progress
+	
+	if int(progress) % 20 == 0:
+		_update_message()
+	
+	if progress >= 100:
+		_loading_complete()
+
+func _update_message() -> void:
+	var messages = loading_messages_tl
+	if Localization and Localization.is_english():
+		messages = loading_messages_en
+	loading_text.text = messages[randi() % messages.size()]
+
+func _loading_complete() -> void:
+	await get_tree().create_timer(0.5).timeout
+	
+	# Redirect to Initial Screen (Dashboard)
+	get_tree().change_scene_to_file(\"res://scenes/ui/InitialScreen.tscn\")
+"
+
+[node name="LoadingScreen" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = SubResource("GDScript_uo7ie")
+
+[node name="Background" type="ColorRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.1, 0.2, 0.3, 1)
+
+[node name="LoadingImage" type="TextureRect" parent="."]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -300.0
+offset_top = -300.0
+offset_right = 300.0
+offset_bottom = 300.0
+grow_horizontal = 2
+grow_vertical = 2
+texture = ExtResource("2_loading_img")
+expand_mode = 1
+stretch_mode = 5
+
+[node name="ProgressBar" type="ProgressBar" parent="."]
+layout_mode = 1
+anchors_preset = 7
+anchor_left = 0.5
+anchor_top = 1.0
+anchor_right = 0.5
+anchor_bottom = 1.0
+offset_left = -300.0
+offset_top = -100.0
+offset_right = 300.0
+offset_bottom = -70.0
+grow_horizontal = 2
+grow_vertical = 0
+show_percentage = false
+
+[node name="LoadingText" type="Label" parent="."]
+layout_mode = 1
+anchors_preset = 7
+anchor_left = 0.5
+anchor_top = 1.0
+anchor_right = 0.5
+anchor_bottom = 1.0
+offset_left = -200.0
+offset_top = -60.0
+offset_right = 200.0
+offset_bottom = -30.0
+grow_horizontal = 2
+grow_vertical = 0
+theme_override_font_sizes/font_size = 24
+text = "Loading..."
+horizontal_alignment = 1
+
+[node name="Timer" type="Timer" parent="."]
+wait_time = 0.1
+autostart = true
+
+[connection signal="timeout" from="Timer" to="." method="_on_timer_timeout"]

@@ -1,0 +1,231 @@
+[gd_scene load_steps=2 format=3 uid="uid://analytics_dashboard"]
+
+[ext_resource type="Script" path="res://scenes/ui/AnalyticsDashboard.gd" id="1_analytics"]
+
+[node name="AnalyticsDashboard" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_analytics")
+
+[node name="Background" type="ColorRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.05, 0.1, 0.15, 1)
+
+[node name="ScrollContainer" type="ScrollContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 20.0
+offset_top = 20.0
+offset_right = -20.0
+offset_bottom = -20.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="VBoxContainer" type="VBoxContainer" parent="ScrollContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 20
+
+[node name="Title" type="Label" parent="ScrollContainer/VBoxContainer"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.3, 0.8, 1, 1)
+theme_override_font_sizes/font_size = 48
+text = "📊 RESEARCH ANALYTICS DASHBOARD"
+
+[node name="SessionInfo" type="PanelContainer" parent="ScrollContainer/VBoxContainer"]
+layout_mode = 2
+
+[node name="VBox" type="VBoxContainer" parent="ScrollContainer/VBoxContainer/SessionInfo"]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="Title" type="Label" parent="ScrollContainer/VBoxContainer/SessionInfo/VBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 28
+text = "🎮 Session Information"
+
+[node name="SessionID" type="Label" parent="ScrollContainer/VBoxContainer/SessionInfo/VBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 18
+text = "Session ID: WW_1234567890_0001"
+
+[node name="Duration" type="Label" parent="ScrollContainer/VBoxContainer/SessionInfo/VBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 18
+text = "Duration: 15:32"
+
+[node name="GamesPlayed" type="Label" parent="ScrollContainer/VBoxContainer/SessionInfo/VBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 18
+text = "Games Played: 18"
+
+[node name="FormativeData" type="PanelContainer" parent="ScrollContainer/VBoxContainer"]
+layout_mode = 2
+
+[node name="VBox" type="VBoxContainer" parent="ScrollContainer/VBoxContainer/FormativeData"]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="Title" type="Label" parent="ScrollContainer/VBoxContainer/FormativeData/VBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 28
+text = "📈 FORMATIVE ASSESSMENT (Gameplay)"
+
+[node name="AvgAccuracy" type="Label" parent="ScrollContainer/VBoxContainer/FormativeData/VBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
+text = "Average Accuracy: 78%"
+
+[node name="AvgTime" type="Label" parent="ScrollContainer/VBoxContainer/FormativeData/VBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
+text = "Average Reaction Time: 14.2s"
+
+[node name="TotalMistakes" type="Label" parent="ScrollContainer/VBoxContainer/FormativeData/VBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
+text = "Total Mistakes: 12"
+
+[node name="DifficultyProgression" type="Label" parent="ScrollContainer/VBoxContainer/FormativeData/VBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
+text = "Difficulty Progression: Easy → Medium → Hard"
+
+[node name="SummativeData" type="PanelContainer" parent="ScrollContainer/VBoxContainer"]
+layout_mode = 2
+
+[node name="VBox" type="VBoxContainer" parent="ScrollContainer/VBoxContainer/SummativeData"]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="Title" type="Label" parent="ScrollContainer/VBoxContainer/SummativeData/VBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 28
+text = "📝 SUMMATIVE ASSESSMENT (Post-Test)"
+
+[node name="Score" type="Label" parent="ScrollContainer/VBoxContainer/SummativeData/VBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
+text = "Post-Test Score: 12/15 (80%)"
+
+[node name="Conceptual" type="Label" parent="ScrollContainer/VBoxContainer/SummativeData/VBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 18
+text = "  Conceptual: 90%"
+
+[node name="Application" type="Label" parent="ScrollContainer/VBoxContainer/SummativeData/VBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 18
+text = "  Application: 75%"
+
+[node name="Retention" type="Label" parent="ScrollContainer/VBoxContainer/SummativeData/VBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 18
+text = "  Retention: 80%"
+
+[node name="CorrelationPanel" type="PanelContainer" parent="ScrollContainer/VBoxContainer"]
+layout_mode = 2
+
+[node name="VBox" type="VBoxContainer" parent="ScrollContainer/VBoxContainer/CorrelationPanel"]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="Title" type="Label" parent="ScrollContainer/VBoxContainer/CorrelationPanel/VBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.3, 1, 0.6, 1)
+theme_override_font_sizes/font_size = 28
+text = "🔗 CORRELATION ANALYSIS"
+
+[node name="GameplayPerf" type="Label" parent="ScrollContainer/VBoxContainer/CorrelationPanel/VBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
+text = "Gameplay Performance: 78%"
+
+[node name="TestScore" type="Label" parent="ScrollContainer/VBoxContainer/CorrelationPanel/VBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
+text = "Knowledge Retention: 80%"
+
+[node name="Correlation" type="Label" parent="ScrollContainer/VBoxContainer/CorrelationPanel/VBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.3, 1, 0.6, 1)
+theme_override_font_sizes/font_size = 24
+text = "Correlation (r): 0.85 (STRONG)"
+
+[node name="Interpretation" type="Label" parent="ScrollContainer/VBoxContainer/CorrelationPanel/VBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 18
+text = "✅ Algorithm successfully facilitated learning transfer from gameplay to knowledge retention."
+autowrap_mode = 3
+
+[node name="AlgorithmStats" type="PanelContainer" parent="ScrollContainer/VBoxContainer"]
+layout_mode = 2
+
+[node name="VBox" type="VBoxContainer" parent="ScrollContainer/VBoxContainer/AlgorithmStats"]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="Title" type="Label" parent="ScrollContainer/VBoxContainer/AlgorithmStats/VBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 28
+text = "⚙️ ALGORITHM PERFORMANCE"
+
+[node name="Adaptations" type="Label" parent="ScrollContainer/VBoxContainer/AlgorithmStats/VBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 18
+text = "Total Adaptations: 6"
+
+[node name="WindowSize" type="Label" parent="ScrollContainer/VBoxContainer/AlgorithmStats/VBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 18
+text = "Rolling Window Size: 5 games"
+
+[node name="AvgLatency" type="Label" parent="ScrollContainer/VBoxContainer/AlgorithmStats/VBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 18
+text = "Average Latency: 45ms"
+
+[node name="ButtonsPanel" type="HBoxContainer" parent="ScrollContainer/VBoxContainer"]
+layout_mode = 2
+theme_override_constants/separation = 20
+alignment = 1
+
+[node name="ExportJSONButton" type="Button" parent="ScrollContainer/VBoxContainer/ButtonsPanel"]
+custom_minimum_size = Vector2(200, 60)
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
+text = "💾 Export JSON"
+
+[node name="ExportCSVButton" type="Button" parent="ScrollContainer/VBoxContainer/ButtonsPanel"]
+custom_minimum_size = Vector2(200, 60)
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
+text = "📊 Export CSV"
+
+[node name="ViewRawButton" type="Button" parent="ScrollContainer/VBoxContainer/ButtonsPanel"]
+custom_minimum_size = Vector2(200, 60)
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
+text = "🔍 View Raw Data"
+
+[node name="CloseButton" type="Button" parent="ScrollContainer/VBoxContainer/ButtonsPanel"]
+custom_minimum_size = Vector2(200, 60)
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
+text = "❌ Close"
+
+[connection signal="pressed" from="ScrollContainer/VBoxContainer/ButtonsPanel/ExportJSONButton" to="." method="_on_export_json_pressed"]
+[connection signal="pressed" from="ScrollContainer/VBoxContainer/ButtonsPanel/ExportCSVButton" to="." method="_on_export_csv_pressed"]
+[connection signal="pressed" from="ScrollContainer/VBoxContainer/ButtonsPanel/ViewRawButton" to="." method="_on_view_raw_pressed"]
+[connection signal="pressed" from="ScrollContainer/VBoxContainer/ButtonsPanel/CloseButton" to="." method="_on_close_pressed"]

@@ -1,0 +1,122 @@
+[gd_scene load_steps=5 format=3 uid="uid://crain_mp_scene"]
+
+[ext_resource type="Script" path="res://scripts/multiplayer/MiniGame_Rain.gd" id="1_rain"]
+[ext_resource type="Script" path="res://scripts/multiplayer/PlayerBucket.gd" id="2_bucket"]
+[ext_resource type="Script" path="res://scripts/multiplayer/MovingObject.gd" id="3_moving"]
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_bucket"]
+size = Vector2(100, 30)
+
+[node name="MiniGame_Rain" type="Node2D"]
+script = ExtResource("1_rain")
+
+[node name="SpawnTimer" type="Timer" parent="."]
+wait_time = 2.0
+autostart = false
+
+[node name="Background" type="ColorRect" parent="."]
+offset_right = 1920.0
+offset_bottom = 1080.0
+color = Color(0.6, 0.85, 1, 1)
+
+[node name="GameLayer" type="Node2D" parent="."]
+
+[node name="SpawnArea" type="Node2D" parent="GameLayer"]
+position = Vector2(960, 50)
+
+[node name="Bucket" type="Area2D" parent="GameLayer"]
+position = Vector2(960, 900)
+script = ExtResource("2_bucket")
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="GameLayer/Bucket"]
+shape = SubResource("RectangleShape2D_bucket")
+
+[node name="BucketVisual" type="Polygon2D" parent="GameLayer/Bucket"]
+color = Color(0.2, 0.6, 1, 1)
+polygon = PackedVector2Array(-60, -30, -50, 0, 50, 0, 60, -30)
+
+[node name="ObjectsContainer" type="Node2D" parent="GameLayer"]
+
+[node name="UI" type="CanvasLayer" parent="."]
+layer = 10
+
+[node name="TopBar" type="HBoxContainer" parent="UI"]
+offset_left = 20.0
+offset_top = 10.0
+offset_right = 1900.0
+offset_bottom = 70.0
+
+[node name="LivesLabel" type="Label" parent="UI/TopBar"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 32
+text = "❤️❤️❤️"
+
+[node name="Spacer" type="Control" parent="UI/TopBar"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="ScoreLabel" type="Label" parent="UI/TopBar"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 32
+text = "💧 Score: 0"
+
+[node name="Spacer2" type="Control" parent="UI/TopBar"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="TimerLabel" type="Label" parent="UI/TopBar"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 32
+text = "⏱️ 60"
+
+[node name="RoleLabel" type="Label" parent="UI"]
+layout_mode = 0
+offset_left = 20.0
+offset_top = 80.0
+offset_right = 400.0
+offset_bottom = 120.0
+theme_override_font_sizes/font_size = 24
+text = "Your Role: Collector"
+
+[node name="QuotaBar" type="ProgressBar" parent="UI"]
+layout_mode = 0
+offset_left = 860.0
+offset_top = 1000.0
+offset_right = 1060.0
+offset_bottom = 1050.0
+max_value = 20.0
+value = 0.0
+show_percentage = false
+
+[node name="GameOverPanel" type="PanelContainer" parent="UI"]
+visible = false
+layout_mode = 0
+offset_left = 560.0
+offset_top = 340.0
+offset_right = 1360.0
+offset_bottom = 740.0
+
+[node name="VBox" type="VBoxContainer" parent="UI/GameOverPanel"]
+layout_mode = 2
+theme_override_constants/separation = 20
+alignment = 1
+
+[node name="Title" type="Label" parent="UI/GameOverPanel/VBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 48
+text = "GAME OVER"
+horizontal_alignment = 1
+
+[node name="FinalScore" type="Label" parent="UI/GameOverPanel/VBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 32
+text = "Team Score: 0"
+horizontal_alignment = 1
+
+[node name="PlayAgainButton" type="Button" parent="UI/GameOverPanel/VBox"]
+layout_mode = 2
+text = "Play Again"
+
+[node name="MenuButton" type="Button" parent="UI/GameOverPanel/VBox"]
+layout_mode = 2
+text = "Main Menu"

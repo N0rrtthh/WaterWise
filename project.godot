@@ -1,0 +1,41 @@
+; Engine configuration file.
+; It's best edited using the editor UI and not directly,
+; since the parameters that go here are not all obvious.
+;
+; Format:
+;   [section] ; section goes between []
+;   param=value ; assign values to parameters
+
+config_version=5
+
+[application]
+
+config/name="Waterwise"
+run/main_scene="res://scenes/ui/MainMenu.tscn"
+config/features=PackedStringArray("4.5", "Forward Plus")
+config/icon="res://icon.svg"
+
+[autoload]
+
+AdaptiveDifficulty="*res://autoload/AdaptiveDifficulty.gd"
+GameManager="*res://autoload/GameManager.gd"
+Localization="*res://autoload/Localization.gd"
+NetworkManager="*res://autoload/NetworkManager.gd"
+CoopAdaptation="*res://autoload/CoopAdaptation.gd"
+ThemeManager="*res://autoload/ThemeManager.gd"
+SaveManager="*res://autoload/SaveManager.gd"
+TutorialManager="*res://autoload/TutorialManager.gd"
+AccessibilityManager="*res://autoload/AccessibilityManager.gd"
+AudioManager="*res://autoload/AudioManager.gd"
+
+[display]
+
+window/size/viewport_width=1920
+window/size/viewport_height=1080
+window/size/mode=2
+window/stretch/mode="canvas_items"
+
+[rendering]
+
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"
