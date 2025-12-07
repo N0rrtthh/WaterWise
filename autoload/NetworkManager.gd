@@ -22,6 +22,10 @@ signal player_ready_changed(peer_id: int, ready: bool)
 signal game_started(scenario_id: String, roles: Dictionary)
 signal performance_data_received(player_id: int, performance: Dictionary)
 signal game_state_synced(state: Dictionary)
+signal team_score_updated(total_score: int)
+signal team_lives_updated(remaining_lives: int)
+signal round_starting(countdown: int)
+signal round_completed(p1_score: int, p2_score: int, team_total: int)
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # CONFIGURATION
@@ -52,6 +56,24 @@ var grace_period_active: bool = false
 # Game session
 var current_scenario_id: String = ""
 var game_in_progress: bool = false
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# G-COUNTER CRDT (Conflict-Free Replicated Data Type)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Each peer maintains their own counter, global score = sum of all counters
+# Grow-only property: counters only increment, never decrement
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+var g_counter: Dictionary = {}  # {peer_id: local_count}
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# SHARED STATE (Team Lives, Score)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+var team_lives: int = 3  # Shared life pool (only host has authority)
+const MAX_TEAM_LIVES: int = 5
+const START_TEAM_LIVES: int = 3
+var rounds_survived: int = 0
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # INITIALIZATION
@@ -377,6 +399,113 @@ func _receive_game_start(scenario_id: String, roles: Dictionary) -> void:
 	
 	_log("🎮 Game started: " + scenario_id)
 	game_started.emit(scenario_id, roles)
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# G-COUNTER IMPLEMENTATION
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+func reset_g_counter() -> void:
+	"""Reset G-Counter for new game session"""
+	g_counter.clear()
+	var my_id = multiplayer.get_unique_id()
+	g_counter[my_id] = 0
+	_log("🔄 G-Counter reset")
+
+func increment_local(amount: int) -> void:
+	"""
+	Increment local player's counter (CRDT operation)
+	Each player only increments their own counter
+	"""
+	var my_id = multiplayer.get_unique_id()
+	g_counter[my_id] = g_counter.get(my_id, 0) + amount
+	
+	_log("💧 Local score +%d → G-Counter[%d] = %d" % [amount, my_id, g_counter[my_id]])
+	
+	# Broadcast merge to all peers
+	rpc("_merge_counter", my_id, g_counter[my_id])
+	
+	# Emit signal for UI update
+	team_score_updated.emit(get_total_score())
+
+@rpc("any_peer", "reliable")
+func _merge_counter(peer_id: int, value: int) -> void:
+	"""
+	Merge counter value from remote peer (CRDT merge operation)
+	Takes MAX of existing and new value to ensure monotonic growth
+	"""
+	var old_value = g_counter.get(peer_id, 0)
+	g_counter[peer_id] = max(old_value, value)
+	
+	if g_counter[peer_id] > old_value:
+		_log("📡 Merged counter[%d]: %d → %d" % [peer_id, old_value, g_counter[peer_id]])
+		team_score_updated.emit(get_total_score())
+
+func get_total_score() -> int:
+	"""Calculate global score = sum of all peer counters"""
+	var total = 0
+	for count in g_counter.values():
+		total += count
+	return total
+
+func get_player_score(peer_id: int) -> int:
+	"""Get individual player's score"""
+	return g_counter.get(peer_id, 0)
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# SHARED LIVES SYSTEM
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+func reset_team_lives() -> void:
+	"""Reset team lives for new game session (host only)"""
+	if not is_host:
+		return
+	
+	team_lives = START_TEAM_LIVES
+	rounds_survived = 0
+	_log("❤️ Team lives reset to %d" % team_lives)
+	
+	# Sync to all clients
+	rpc("_sync_team_lives", team_lives)
+
+func lose_life() -> void:
+	"""
+	Team loses a life (called by any player when they fail)
+	Only host has authority to modify lives
+	"""
+	if is_host:
+		team_lives = max(0, team_lives - 1)
+		_log("💔 Team lost a life! Remaining: %d" % team_lives)
+		
+		# Broadcast to all clients
+		rpc("_sync_team_lives", team_lives)
+		team_lives_updated.emit(team_lives)
+		
+		if team_lives <= 0:
+			_log("💀 GAME OVER - Team ran out of lives!")
+			rpc("_execute_game_over")
+	else:
+		# Client requests host to deduct life
+		rpc_id(1, "_request_lose_life")
+
+@rpc("any_peer", "reliable")
+func _request_lose_life() -> void:
+	"""Client requests host to deduct a life"""
+	if is_host:
+		lose_life()
+
+@rpc("authority", "call_local", "reliable")
+func _sync_team_lives(lives: int) -> void:
+	"""Sync team lives from host to all clients"""
+	team_lives = lives
+	team_lives_updated.emit(team_lives)
+	_log("📡 Team lives synced: %d" % lives)
+
+@rpc("authority", "call_local", "reliable")
+func _execute_game_over() -> void:
+	"""Execute game over sequence on all clients"""
+	game_in_progress = false
+	_log("🏁 GAME OVER - Rounds survived: %d, Final score: %d" % [rounds_survived, get_total_score()])
+	# Game will handle showing game over screen
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # RPC FUNCTIONS - GAME EVENTS
@@ -783,9 +912,51 @@ func get_buffer_status() -> Dictionary:
 # SYNCHRONIZED PAUSE SYSTEM
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+func request_pause() -> void:
+	"""Request game pause (either player can pause)"""
+	_log("⏸️ Pause requested by Player %d" % local_player_id)
+	rpc("_execute_pause")
+
+@rpc("any_peer", "call_local", "reliable")
+func _execute_pause() -> void:
+	"""Execute pause on all clients"""
+	get_tree().paused = true
+	_log("⏸️ Game paused")
+	
+	# Notify current scene
+	var current_scene = get_tree().current_scene
+	if current_scene and current_scene.has_method("_on_remote_pause"):
+		current_scene._on_remote_pause()
+
+func request_resume() -> void:
+	"""Request game resume (either player can resume, but host has priority)"""
+	if is_host:
+		_log("▶️ Resume requested by host")
+		rpc("_execute_resume")
+	else:
+		_log("▶️ Resume requested by Player %d" % local_player_id)
+		rpc_id(1, "_request_resume_from_client")
+
+@rpc("any_peer", "reliable")
+func _request_resume_from_client() -> void:
+	"""Client requests host to resume"""
+	if is_host:
+		rpc("_execute_resume")
+
+@rpc("any_peer", "call_local", "reliable")
+func _execute_resume() -> void:
+	"""Execute resume on all clients"""
+	get_tree().paused = false
+	_log("▶️ Game resumed")
+	
+	# Notify current scene
+	var current_scene = get_tree().current_scene
+	if current_scene and current_scene.has_method("_on_remote_resume"):
+		current_scene._on_remote_resume()
+
 @rpc("any_peer", "call_local", "reliable")
 func sync_pause_state(paused: bool) -> void:
-	"""Synchronize pause state across all connected players"""
+	"""Synchronize pause state across all connected players (legacy support)"""
 	var sender_id = multiplayer.get_remote_sender_id()
 	if sender_id == 0:  # Local call
 		sender_id = multiplayer.get_unique_id()
@@ -799,3 +970,105 @@ func sync_pause_state(paused: bool) -> void:
 			current_scene._on_remote_pause()
 		elif not paused and current_scene.has_method("_on_remote_resume"):
 			current_scene._on_remote_resume()
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# SYNCHRONIZED COUNTDOWN
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+func start_countdown() -> void:
+	"""Start synchronized countdown (3-2-1-GO!) before round (host only)"""
+	if not is_host:
+		return
+	
+	_log("⏱️ Starting countdown...")
+	rpc("_execute_countdown", 3)
+
+@rpc("authority", "call_local", "reliable")
+func _execute_countdown(count: int) -> void:
+	"""Execute countdown on all clients"""
+	round_starting.emit(count)
+	_log("⏱️ Countdown: %d" % count)
+	
+	if count > 0:
+		await get_tree().create_timer(1.0).timeout
+		if is_host:
+			rpc("_execute_countdown", count - 1)
+	else:
+		_log("🎮 GO! Round started")
+		# Signal game can start
+		var current_scene = get_tree().current_scene
+		if current_scene and current_scene.has_method("_on_countdown_complete"):
+			current_scene._on_countdown_complete()
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ROUND MANAGEMENT
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+func complete_round() -> void:
+	"""Mark round as complete and show results (host only)"""
+	if not is_host:
+		return
+	
+	rounds_survived += 1
+	
+	# Get individual scores
+	var p1_score = 0
+	var p2_score = 0
+	for peer_id in g_counter:
+		if players.get(peer_id, {}).get("player_num", 0) == 1:
+			p1_score = g_counter[peer_id]
+		else:
+			p2_score = g_counter[peer_id]
+	
+	var team_total = get_total_score()
+	
+	_log("🏁 Round %d complete! P1: %d | P2: %d | Total: %d" % [rounds_survived, p1_score, p2_score, team_total])
+	
+	# Broadcast round completion
+	rpc("_show_round_results", p1_score, p2_score, team_total, rounds_survived)
+
+@rpc("authority", "call_local", "reliable")
+func _show_round_results(p1_score: int, p2_score: int, team_total: int, rounds: int) -> void:
+	"""Show round results on all clients"""
+	round_completed.emit(p1_score, p2_score, team_total)
+	_log("📊 Round %d results - Your score: %d | Partner: %d | Team: %d" % [
+		rounds,
+		g_counter.get(multiplayer.get_unique_id(), 0),
+		team_total - g_counter.get(multiplayer.get_unique_id(), 0),
+		team_total
+	])
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# INTERCONNECTION SYSTEM (Resource Transfer)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+signal resource_sent(from_player: int, resource_type: String, amount: int, quality: float)
+signal task_marked(from_player: int, task_id: int, position: Vector2)
+
+func send_resource(resource_type: String, amount: int, quality: float = 1.0) -> void:
+	"""Send resource to partner player (e.g., water, greywater)"""
+	var my_player_num = _get_player_num(multiplayer.get_unique_id())
+	_log("💧 Sending resource: %s (x%d, quality: %.1f) from P%d" % [resource_type, amount, quality, my_player_num])
+	rpc("_receive_resource", my_player_num, resource_type, amount, quality)
+
+@rpc("any_peer", "reliable")
+func _receive_resource(from_player: int, resource_type: String, amount: int, quality: float) -> void:
+	"""Receive resource from partner"""
+	resource_sent.emit(from_player, resource_type, amount, quality)
+	_log("📥 Received resource: %s (x%d) from P%d" % [resource_type, amount, from_player])
+
+func mark_task(task_id: int, task_position: Vector2) -> void:
+	"""Mark a task for partner to complete (e.g., leak spotted, tap found)"""
+	var my_player_num = _get_player_num(multiplayer.get_unique_id())
+	_log("🎯 Marking task #%d at %s for partner" % [task_id, task_position])
+	rpc("_receive_task_mark", my_player_num, task_id, task_position)
+
+@rpc("any_peer", "reliable")
+func _receive_task_mark(from_player: int, task_id: int, position: Vector2) -> void:
+	"""Receive task mark from partner"""
+	task_marked.emit(from_player, task_id, position)
+	_log("📍 Task #%d marked by P%d at %s" % [task_id, from_player, position])
+
+func _get_player_num(peer_id: int) -> int:
+	"""Helper to get player number from peer ID"""
+	return players.get(peer_id, {}).get("player_num", 0)

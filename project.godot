@@ -27,6 +27,7 @@ SaveManager="*res://autoload/SaveManager.gd"
 TutorialManager="*res://autoload/TutorialManager.gd"
 AccessibilityManager="*res://autoload/AccessibilityManager.gd"
 AudioManager="*res://autoload/AudioManager.gd"
+LevelSets="*res://scripts/multiplayer/LevelSets.gd"
 
 [display]
 
