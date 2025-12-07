@@ -10,6 +10,7 @@ extends MultiplayerMiniGameBase
 const DROP_SPEED: float = 200.0
 const SPAWN_INTERVAL: float = 1.5
 const BUCKET_SPEED: float = 400.0
+const MAX_ALLOWED_MISSES: int = 3
 
 var bucket: Area2D
 var spawn_timer: Timer
@@ -144,7 +145,7 @@ func _on_drop_missed() -> void:
 	_log("❌ Missed raindrop! Missed: %d" % drops_missed)
 	
 	# Fail if too many misses
-	if drops_missed >= 3:
+	if drops_missed >= MAX_ALLOWED_MISSES:
 		_log("💔 Too many misses - game failed!")
 		end_game(false)
 

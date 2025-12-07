@@ -96,11 +96,13 @@ func _check_water_unit_complete() -> void:
 	if water_queue.is_empty():
 		return
 	
-	var particles_needed = water_queue[0]["amount"] * PARTICLES_PER_WATER
+	# Safely access first element
+	var first_unit = water_queue[0]
+	var particles_needed = first_unit["amount"] * PARTICLES_PER_WATER
 	
 	if filtered_count >= particles_needed:
 		# Water unit filtered!
-		var water_unit = water_queue.pop_front()
+		var _water_unit = water_queue.pop_front()
 		add_score(20)  # Bonus for completing unit
 		
 		_log("💧 Water unit filtered! Bonus +20 points")

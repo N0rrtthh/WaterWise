@@ -136,9 +136,9 @@ func _load_next_round() -> void:
 	# Reset G-Counter for next round
 	NetworkManager.reset_g_counter()
 	
-	# Get next level set
-	if not LevelSets:
-		push_error("LevelSets not available!")
+	# Validate LevelSets availability
+	if not LevelSets or LevelSets.get_all_level_sets().is_empty():
+		push_error("LevelSets not available or has no level sets!")
 		return
 	
 	var level_set = LevelSets.get_random_level_set()

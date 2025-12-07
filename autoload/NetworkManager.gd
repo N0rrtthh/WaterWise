@@ -1011,13 +1011,14 @@ func complete_round() -> void:
 	
 	rounds_survived += 1
 	
-	# Get individual scores
+	# Get individual scores (handle only 2 players)
 	var p1_score = 0
 	var p2_score = 0
 	for peer_id in g_counter:
-		if players.get(peer_id, {}).get("player_num", 0) == 1:
+		var player_num = players.get(peer_id, {}).get("player_num", 0)
+		if player_num == 1:
 			p1_score = g_counter[peer_id]
-		else:
+		elif player_num == 2:
 			p2_score = g_counter[peer_id]
 	
 	var team_total = get_total_score()
