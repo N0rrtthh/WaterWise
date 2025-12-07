@@ -225,13 +225,29 @@ func _on_start_game_pressed() -> void:
 		_show_error("Both players must be ready!")
 		return
 	
-	# Set GameManager to multiplayer mode and reset state
-	if GameManager:
-		GameManager.set_game_mode(GameManager.GameMode.MULTIPLAYER_COOP)
-		GameManager.reset_multiplayer_game()  # Reset lives, score, difficulty
+	# Initialize multiplayer session
+	if NetworkManager:
+		# Reset G-Counter and lives for new session
+		NetworkManager.reset_g_counter()
+		NetworkManager.reset_team_lives()
+		NetworkManager.game_in_progress = true
+	
+	# Get a random level set
+	if LevelSets:
+		var level_set = LevelSets.get_random_level_set()
 		
-		# Start the continuous minigame loop by loading the first random game
-		GameManager.rpc("_load_next_multiplayer_minigame")
+		# Assign roles based on level set
+		NetworkManager.player_roles = {
+			1: level_set["player1_role"],
+			2: level_set["player2_role"]
+		}
+		
+		print("🎯 Selected level set: %s" % level_set["name"])
+		print("   P1 role: %s (%s)" % [level_set["player1_role"], level_set["player1_game"]])
+		print("   P2 role: %s (%s)" % [level_set["player2_role"], level_set["player2_game"]])
+		
+		# Load the appropriate game scene for each player
+		_load_level_set_games(level_set)
 
 func _on_disconnect_pressed() -> void:
 	if NetworkManager:
@@ -273,6 +289,31 @@ func _on_both_players_ready() -> void:
 	
 	if NetworkManager and NetworkManager.is_server():
 		start_game_button.disabled = false
+
+func _load_level_set_games(level_set: Dictionary) -> void:
+	"""Load the correct game scene for each player based on level set"""
+	var my_player_num = NetworkManager.get_local_player_num()
+	
+	# Validate player number
+	if my_player_num < 1 or my_player_num > 2:
+		push_error("Invalid player number: %d" % my_player_num)
+		_show_error("Invalid player number!")
+		return
+	
+	var my_game_scene: String
+	if my_player_num == 1:
+		my_game_scene = level_set["player1_game"]
+	else:
+		my_game_scene = level_set["player2_game"]
+	
+	print("🎮 Loading game for Player %d: %s" % [my_player_num, my_game_scene])
+	
+	# Load the scene
+	if ResourceLoader.exists(my_game_scene):
+		get_tree().change_scene_to_file(my_game_scene)
+	else:
+		push_error("❌ Game scene not found: " + my_game_scene)
+		_show_error("Game scene not found!")
 
 func _on_game_started(scenario_id: String, _roles: Dictionary) -> void:
 	print("🎮 Navigating to game: " + scenario_id)
