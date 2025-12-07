@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://b2e3j3o00hoba"]
+
+[ext_resource type="Script" path="res://scenes/minigames/VegetableBath.gd" id="1_script"]
+
+[node name="VegetableBath" type="Node2D"]
+script = ExtResource("1_script")

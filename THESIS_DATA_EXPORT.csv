@@ -1,0 +1,54 @@
+====================
+SYSTEM ARCHITECTURE TABLE
+====================
+Module,Components,Responsibility
+"Module 1: Presentation","UI Screens, HUD, Results, Multiplayer UI","User interface rendering, input capture, visual feedback, lobby management"
+"Module 2: Business Logic","MiniGameBase, 19 Mini-Games","Game mechanics, collision detection, scoring logic"
+"Module 3: Service","GameManager, AdaptiveDifficulty, Localization, NetworkManager, CoopAdaptation, G-Counter","State management, difficulty adaptation, translations, multiplayer sync, skill balancing"
+"Module 4: Data Persistence","ConfigFile, JSON Export","Save/load progress, session data export"
+
+====================
+USE CASE DESCRIPTIONS TABLE
+====================
+ID,Use Case,Primary Actor,Description,Precondition,Postcondition
+UC-01,Start New Game,Player 1,Initialize game session,App launched,Session active
+UC-02,Play Mini-Game,Player 1/2,Complete water conservation task,Game selected,Performance recorded
+UC-03,View Progress,Player 1,"Check scores, achievements",Session exists,Stats displayed
+UC-05,Adjust Settings,Player 1,"Language, volume, accessibility",In menu,Settings saved
+UC-06,Host/Join Multiplayer,Player 1/2,LAN co-op connection,Network available,Peers connected
+UC-07,Sync Score,Network,G-Counter CRDT merge,Multiplayer active,Scores consistent
+UC-08,Adapt Difficulty,System,"Calculate Φ, apply settings",≥2 games completed,Difficulty adjusted
+UC-10,Customize Character,Player 1,Avatar selection,In menu,Character saved
+
+====================
+IPO TABLE (Input-Process-Output)
+====================
+Module,Input,Process,Output
+MiniGameBase,"Touch position, delta time","Collision detection, timer update","Score increment, visual feedback"
+AdaptiveDifficulty,"accuracy, reaction_time, mistakes","WMA calculation, σ computation, Φ derivation",difficulty_settings Dictionary
+GameManager,Game completion data,"State transition, score accumulation","Next scene, saved data"
+NetworkManager,"Remote peer packets, RPC calls","ENet connection, message routing","Peer status, synced state"
+G-Counter,"Player scores, peer counters","Increment local, merge remote",GlobalScore = Σ counters
+CoopAdaptation,Player 1 & 2 accuracy,"Skill calculation, load balancing",Per-player difficulty params
+Localization,"Language key, current_language",Dictionary lookup,Translated text (EN/Filipino)
+
+====================
+COLOR LEGEND TABLE
+====================
+Module/Component,Color,Hex Code
+Presentation Module,Blue,#2196F3
+Business Logic Module,Green,#4CAF50
+Service Module,Orange,#FF9800
+Data Persistence Module,Purple,#9C27B0
+Easy Difficulty,Green,#27AE60
+Medium Difficulty,Yellow,#F1C40F
+Hard Difficulty,Red,#E74C3C
+Network/Multiplayer,Cyan,#00BCD4
+
+====================
+DIFFICULTY SETTINGS TABLE
+====================
+Difficulty,Speed Multiplier,Time Limit,Hints,Chaos Effects
+Easy,0.7x,20 seconds,3,None
+Medium,1.0x,15 seconds,2,shake_mild
+Hard,1.5x,10 seconds,1,"shake, mud, fly, reverse"

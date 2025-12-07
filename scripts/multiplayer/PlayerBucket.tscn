@@ -1,0 +1,16 @@
+[gd_scene load_steps=3 format=3 uid="uid://cbucket_prefab"]
+
+[ext_resource type="Script" path="res://scripts/multiplayer/PlayerBucket.gd" id="1_bucket"]
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_bucket"]
+size = Vector2(100, 30)
+
+[node name="PlayerBucket" type="Area2D"]
+script = ExtResource("1_bucket")
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="."]
+shape = SubResource("RectangleShape2D_bucket")
+
+[node name="Polygon2D" type="Polygon2D" parent="."]
+color = Color(0.2, 0.6, 1, 1)
+polygon = PackedVector2Array(-60, -30, -50, 0, 50, 0, 60, -30)

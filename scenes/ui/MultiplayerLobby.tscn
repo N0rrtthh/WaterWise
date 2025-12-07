@@ -1,0 +1,484 @@
+[gd_scene load_steps=5 format=3 uid="uid://8f1hd8wnuo4i"]
+
+[ext_resource type="Script" uid="uid://bhmgig65y33uu" path="res://scenes/ui/MultiplayerLobby.gd" id="1_lobby"]
+[ext_resource type="Shader" uid="uid://boqv2sk3gmhpx" path="res://shaders/wave_menu.gdshader" id="3_wave"]
+[ext_resource type="FontFile" uid="uid://bs7drrspc0ykk" path="res://fonts/Cubao_Free_Wide.otf" id="5_cubao"]
+[ext_resource type="FontFile" uid="uid://6gq30qbnrhfs" path="res://fonts/NTBrickSans.otf" id="6_brick"]
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_wave_back"]
+shader = ExtResource("3_wave")
+shader_parameter/color = Color(0.227451, 0.611765, 0.709804, 1)
+shader_parameter/speed = 1.5
+shader_parameter/frequency = 6.0
+shader_parameter/amplitude = 0.15
+shader_parameter/offset = 2.0
+shader_parameter/surface_level = 0.3
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_wave_front"]
+shader = ExtResource("3_wave")
+shader_parameter/color = Color(0.290196, 0.733333, 0.839216, 1)
+shader_parameter/speed = 2.0
+shader_parameter/frequency = 8.0
+shader_parameter/amplitude = 0.2
+shader_parameter/offset = 0.0
+shader_parameter/surface_level = 0.35
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_host"]
+bg_color = Color(0.2, 0.75, 0.4, 1)
+border_width_left = 4
+border_width_top = 4
+border_width_right = 4
+border_width_bottom = 4
+border_color = Color(0.15, 0.55, 0.3, 1)
+corner_radius_top_left = 20
+corner_radius_top_right = 20
+corner_radius_bottom_right = 20
+corner_radius_bottom_left = 20
+shadow_color = Color(0, 0, 0, 0.25)
+shadow_size = 4
+shadow_offset = Vector2(0, 4)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_host_hover"]
+bg_color = Color(0.25, 0.85, 0.5, 1)
+border_width_left = 4
+border_width_top = 4
+border_width_right = 4
+border_width_bottom = 4
+border_color = Color(0.2, 0.65, 0.4, 1)
+corner_radius_top_left = 20
+corner_radius_top_right = 20
+corner_radius_bottom_right = 20
+corner_radius_bottom_left = 20
+shadow_color = Color(0, 0, 0, 0.3)
+shadow_size = 6
+shadow_offset = Vector2(0, 6)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_join"]
+bg_color = Color(0.3, 0.6, 0.95, 1)
+border_width_left = 4
+border_width_top = 4
+border_width_right = 4
+border_width_bottom = 4
+border_color = Color(0.2, 0.45, 0.75, 1)
+corner_radius_top_left = 20
+corner_radius_top_right = 20
+corner_radius_bottom_right = 20
+corner_radius_bottom_left = 20
+shadow_color = Color(0, 0, 0, 0.25)
+shadow_size = 4
+shadow_offset = Vector2(0, 4)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_join_hover"]
+bg_color = Color(0.4, 0.7, 1.0, 1)
+border_width_left = 4
+border_width_top = 4
+border_width_right = 4
+border_width_bottom = 4
+border_color = Color(0.3, 0.55, 0.85, 1)
+corner_radius_top_left = 20
+corner_radius_top_right = 20
+corner_radius_bottom_right = 20
+corner_radius_bottom_left = 20
+shadow_color = Color(0, 0, 0, 0.3)
+shadow_size = 6
+shadow_offset = Vector2(0, 6)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_back"]
+bg_color = Color(0.85, 0.45, 0.35, 1)
+border_width_left = 4
+border_width_top = 4
+border_width_right = 4
+border_width_bottom = 4
+border_color = Color(0.65, 0.35, 0.25, 1)
+corner_radius_top_left = 20
+corner_radius_top_right = 20
+corner_radius_bottom_right = 20
+corner_radius_bottom_left = 20
+shadow_color = Color(0, 0, 0, 0.25)
+shadow_size = 4
+shadow_offset = Vector2(0, 4)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_back_hover"]
+bg_color = Color(0.95, 0.55, 0.45, 1)
+border_width_left = 4
+border_width_top = 4
+border_width_right = 4
+border_width_bottom = 4
+border_color = Color(0.75, 0.45, 0.35, 1)
+corner_radius_top_left = 20
+corner_radius_top_right = 20
+corner_radius_bottom_right = 20
+corner_radius_bottom_left = 20
+shadow_color = Color(0, 0, 0, 0.3)
+shadow_size = 6
+shadow_offset = Vector2(0, 6)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_panel"]
+bg_color = Color(1, 1, 1, 0.15)
+corner_radius_top_left = 25
+corner_radius_top_right = 25
+corner_radius_bottom_right = 25
+corner_radius_bottom_left = 25
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_input"]
+bg_color = Color(1, 1, 1, 0.9)
+border_width_left = 3
+border_width_top = 3
+border_width_right = 3
+border_width_bottom = 3
+border_color = Color(0.3, 0.6, 0.9, 1)
+corner_radius_top_left = 12
+corner_radius_top_right = 12
+corner_radius_bottom_right = 12
+corner_radius_bottom_left = 12
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_connect"]
+bg_color = Color(0.2, 0.8, 0.5, 1)
+border_width_left = 3
+border_width_top = 3
+border_width_right = 3
+border_width_bottom = 3
+border_color = Color(0.15, 0.6, 0.4, 1)
+corner_radius_top_left = 15
+corner_radius_top_right = 15
+corner_radius_bottom_right = 15
+corner_radius_bottom_left = 15
+shadow_color = Color(0, 0, 0, 0.2)
+shadow_size = 3
+shadow_offset = Vector2(0, 3)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_cancel"]
+bg_color = Color(0.6, 0.6, 0.65, 1)
+border_width_left = 3
+border_width_top = 3
+border_width_right = 3
+border_width_bottom = 3
+border_color = Color(0.45, 0.45, 0.5, 1)
+corner_radius_top_left = 15
+corner_radius_top_right = 15
+corner_radius_bottom_right = 15
+corner_radius_bottom_left = 15
+shadow_color = Color(0, 0, 0, 0.2)
+shadow_size = 3
+shadow_offset = Vector2(0, 3)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_ready"]
+bg_color = Color(0.95, 0.75, 0.2, 1)
+border_width_left = 3
+border_width_top = 3
+border_width_right = 3
+border_width_bottom = 3
+border_color = Color(0.75, 0.55, 0.15, 1)
+corner_radius_top_left = 15
+corner_radius_top_right = 15
+corner_radius_bottom_right = 15
+corner_radius_bottom_left = 15
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_start"]
+bg_color = Color(0.3, 0.85, 0.4, 1)
+border_width_left = 4
+border_width_top = 4
+border_width_right = 4
+border_width_bottom = 4
+border_color = Color(0.2, 0.65, 0.3, 1)
+corner_radius_top_left = 20
+corner_radius_top_right = 20
+corner_radius_bottom_right = 20
+corner_radius_bottom_left = 20
+shadow_color = Color(0, 0, 0, 0.25)
+shadow_size = 5
+shadow_offset = Vector2(0, 5)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_disconnect"]
+bg_color = Color(0.75, 0.35, 0.35, 1)
+border_width_left = 3
+border_width_top = 3
+border_width_right = 3
+border_width_bottom = 3
+border_color = Color(0.55, 0.25, 0.25, 1)
+corner_radius_top_left = 12
+corner_radius_top_right = 12
+corner_radius_bottom_right = 12
+corner_radius_bottom_left = 12
+
+[node name="MultiplayerLobby" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_lobby")
+
+[node name="Background" type="ColorRect" parent="."]
+z_index = -1
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.35, 0.55, 0.75, 1)
+
+[node name="WaterLayer" type="Control" parent="."]
+layout_mode = 1
+anchors_preset = 12
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_top = -250.0
+grow_horizontal = 2
+grow_vertical = 0
+mouse_filter = 2
+
+[node name="BackWave" type="ColorRect" parent="WaterLayer"]
+material = SubResource("ShaderMaterial_wave_back")
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="FrontWave" type="ColorRect" parent="WaterLayer"]
+material = SubResource("ShaderMaterial_wave_front")
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="MarginContainer" type="MarginContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/margin_left = 50
+theme_override_constants/margin_top = 40
+theme_override_constants/margin_right = 50
+theme_override_constants/margin_bottom = 50
+
+[node name="VBoxContainer" type="VBoxContainer" parent="MarginContainer"]
+layout_mode = 2
+theme_override_constants/separation = 25
+
+[node name="TitleLabel" type="Label" parent="MarginContainer/VBoxContainer"]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_colors/font_outline_color = Color(0.15, 0.35, 0.55, 1)
+theme_override_constants/outline_size = 8
+theme_override_fonts/font = ExtResource("5_cubao")
+theme_override_font_sizes/font_size = 56
+text = "🌊 MULTIPLAYER 🌊"
+horizontal_alignment = 1
+
+[node name="SubtitleLabel" type="Label" parent="MarginContainer/VBoxContainer"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.9, 0.95, 1, 1)
+theme_override_colors/font_outline_color = Color(0.2, 0.4, 0.6, 0.8)
+theme_override_constants/outline_size = 4
+theme_override_fonts/font = ExtResource("6_brick")
+theme_override_font_sizes/font_size = 24
+text = "Team up to save water together!"
+horizontal_alignment = 1
+
+[node name="ModeSelectionPanel" type="PanelContainer" parent="MarginContainer/VBoxContainer"]
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_styles/panel = SubResource("StyleBoxFlat_panel")
+
+[node name="VBoxContainer" type="VBoxContainer" parent="MarginContainer/VBoxContainer/ModeSelectionPanel"]
+layout_mode = 2
+theme_override_constants/separation = 25
+alignment = 1
+
+[node name="HostButton" type="Button" parent="MarginContainer/VBoxContainer/ModeSelectionPanel/VBoxContainer"]
+custom_minimum_size = Vector2(420, 90)
+layout_mode = 2
+size_flags_horizontal = 4
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_colors/font_outline_color = Color(0.1, 0.3, 0.15, 1)
+theme_override_constants/outline_size = 3
+theme_override_fonts/font = ExtResource("6_brick")
+theme_override_font_sizes/font_size = 32
+theme_override_styles/normal = SubResource("StyleBoxFlat_host")
+theme_override_styles/hover = SubResource("StyleBoxFlat_host_hover")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_host")
+text = "🏠 HOST GAME"
+
+[node name="JoinButton" type="Button" parent="MarginContainer/VBoxContainer/ModeSelectionPanel/VBoxContainer"]
+custom_minimum_size = Vector2(420, 90)
+layout_mode = 2
+size_flags_horizontal = 4
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_colors/font_outline_color = Color(0.1, 0.25, 0.45, 1)
+theme_override_constants/outline_size = 3
+theme_override_fonts/font = ExtResource("6_brick")
+theme_override_font_sizes/font_size = 32
+theme_override_styles/normal = SubResource("StyleBoxFlat_join")
+theme_override_styles/hover = SubResource("StyleBoxFlat_join_hover")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_join")
+text = "🔗 JOIN GAME"
+
+[node name="BackButton" type="Button" parent="MarginContainer/VBoxContainer/ModeSelectionPanel/VBoxContainer"]
+custom_minimum_size = Vector2(300, 70)
+layout_mode = 2
+size_flags_horizontal = 4
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_colors/font_outline_color = Color(0.3, 0.15, 0.1, 1)
+theme_override_constants/outline_size = 2
+theme_override_fonts/font = ExtResource("6_brick")
+theme_override_font_sizes/font_size = 26
+theme_override_styles/normal = SubResource("StyleBoxFlat_back")
+theme_override_styles/hover = SubResource("StyleBoxFlat_back_hover")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_back")
+text = "← BACK"
+
+[node name="JoinPanel" type="PanelContainer" parent="MarginContainer/VBoxContainer"]
+visible = false
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_styles/panel = SubResource("StyleBoxFlat_panel")
+
+[node name="VBoxContainer" type="VBoxContainer" parent="MarginContainer/VBoxContainer/JoinPanel"]
+layout_mode = 2
+theme_override_constants/separation = 20
+alignment = 1
+
+[node name="Label" type="Label" parent="MarginContainer/VBoxContainer/JoinPanel/VBoxContainer"]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_colors/font_outline_color = Color(0.2, 0.4, 0.6, 0.8)
+theme_override_constants/outline_size = 3
+theme_override_fonts/font = ExtResource("6_brick")
+theme_override_font_sizes/font_size = 28
+text = "📡 Enter Host IP Address:"
+horizontal_alignment = 1
+
+[node name="IPInput" type="LineEdit" parent="MarginContainer/VBoxContainer/JoinPanel/VBoxContainer"]
+custom_minimum_size = Vector2(350, 60)
+layout_mode = 2
+size_flags_horizontal = 4
+theme_override_colors/font_color = Color(0.2, 0.3, 0.4, 1)
+theme_override_fonts/font = ExtResource("6_brick")
+theme_override_font_sizes/font_size = 26
+theme_override_styles/normal = SubResource("StyleBoxFlat_input")
+text = "192.168.1."
+alignment = 1
+caret_blink = true
+
+[node name="HBoxContainer" type="HBoxContainer" parent="MarginContainer/VBoxContainer/JoinPanel/VBoxContainer"]
+layout_mode = 2
+alignment = 1
+theme_override_constants/separation = 20
+
+[node name="ConnectButton" type="Button" parent="MarginContainer/VBoxContainer/JoinPanel/VBoxContainer/HBoxContainer"]
+custom_minimum_size = Vector2(200, 60)
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_fonts/font = ExtResource("6_brick")
+theme_override_font_sizes/font_size = 24
+theme_override_styles/normal = SubResource("StyleBoxFlat_connect")
+theme_override_styles/hover = SubResource("StyleBoxFlat_connect")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_connect")
+text = "✓ CONNECT"
+
+[node name="CancelButton" type="Button" parent="MarginContainer/VBoxContainer/JoinPanel/VBoxContainer/HBoxContainer"]
+custom_minimum_size = Vector2(180, 60)
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_fonts/font = ExtResource("6_brick")
+theme_override_font_sizes/font_size = 24
+theme_override_styles/normal = SubResource("StyleBoxFlat_cancel")
+theme_override_styles/hover = SubResource("StyleBoxFlat_cancel")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_cancel")
+text = "✕ CANCEL"
+
+[node name="WaitingPanel" type="PanelContainer" parent="MarginContainer/VBoxContainer"]
+visible = false
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_styles/panel = SubResource("StyleBoxFlat_panel")
+
+[node name="VBoxContainer" type="VBoxContainer" parent="MarginContainer/VBoxContainer/WaitingPanel"]
+layout_mode = 2
+theme_override_constants/separation = 20
+alignment = 1
+
+[node name="StatusLabel" type="Label" parent="MarginContainer/VBoxContainer/WaitingPanel/VBoxContainer"]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_colors/font_outline_color = Color(0.2, 0.4, 0.6, 0.8)
+theme_override_constants/outline_size = 3
+theme_override_fonts/font = ExtResource("6_brick")
+theme_override_font_sizes/font_size = 26
+text = "⏳ Waiting for players..."
+horizontal_alignment = 1
+
+[node name="PlayerListContainer" type="HBoxContainer" parent="MarginContainer/VBoxContainer/WaitingPanel/VBoxContainer"]
+layout_mode = 2
+alignment = 1
+theme_override_constants/separation = 80
+
+[node name="Player1Label" type="Label" parent="MarginContainer/VBoxContainer/WaitingPanel/VBoxContainer/PlayerListContainer"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.5, 1, 0.6, 1)
+theme_override_colors/font_outline_color = Color(0.1, 0.3, 0.15, 1)
+theme_override_constants/outline_size = 4
+theme_override_fonts/font = ExtResource("6_brick")
+theme_override_font_sizes/font_size = 28
+text = "👤 Player 1
+💧 Collector"
+horizontal_alignment = 1
+
+[node name="Player2Label" type="Label" parent="MarginContainer/VBoxContainer/WaitingPanel/VBoxContainer/PlayerListContainer"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.5, 0.8, 1, 1)
+theme_override_colors/font_outline_color = Color(0.15, 0.3, 0.45, 1)
+theme_override_constants/outline_size = 4
+theme_override_fonts/font = ExtResource("6_brick")
+theme_override_font_sizes/font_size = 28
+text = "👤 Player 2
+🚿 User"
+horizontal_alignment = 1
+
+[node name="ReadyCheckbox" type="CheckBox" parent="MarginContainer/VBoxContainer/WaitingPanel/VBoxContainer"]
+layout_mode = 2
+size_flags_horizontal = 4
+theme_override_colors/font_color = Color(1, 0.95, 0.4, 1)
+theme_override_colors/font_outline_color = Color(0.4, 0.35, 0.1, 1)
+theme_override_constants/outline_size = 3
+theme_override_fonts/font = ExtResource("6_brick")
+theme_override_font_sizes/font_size = 32
+theme_override_styles/normal = SubResource("StyleBoxFlat_ready")
+text = "✋ I'M READY!"
+
+[node name="StartGameButton" type="Button" parent="MarginContainer/VBoxContainer/WaitingPanel/VBoxContainer"]
+visible = false
+custom_minimum_size = Vector2(350, 80)
+layout_mode = 2
+size_flags_horizontal = 4
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_colors/font_outline_color = Color(0.1, 0.35, 0.15, 1)
+theme_override_constants/outline_size = 4
+theme_override_fonts/font = ExtResource("6_brick")
+theme_override_font_sizes/font_size = 32
+theme_override_styles/normal = SubResource("StyleBoxFlat_start")
+theme_override_styles/hover = SubResource("StyleBoxFlat_start")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_start")
+text = "🎮 START GAME!"
+
+[node name="DisconnectButton" type="Button" parent="MarginContainer/VBoxContainer/WaitingPanel/VBoxContainer"]
+custom_minimum_size = Vector2(220, 50)
+layout_mode = 2
+size_flags_horizontal = 4
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_fonts/font = ExtResource("6_brick")
+theme_override_font_sizes/font_size = 20
+theme_override_styles/normal = SubResource("StyleBoxFlat_disconnect")
+theme_override_styles/hover = SubResource("StyleBoxFlat_disconnect")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_disconnect")
+text = "🚫 DISCONNECT"

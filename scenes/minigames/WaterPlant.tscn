@@ -1,0 +1,20 @@
+[gd_scene load_steps=2 format=3 uid="uid://waterplant123"]
+
+[ext_resource type="Script" path="res://scenes/minigames/WaterPlant.gd" id="1_waterplant"]
+
+[node name="WaterPlant" type="Node2D"]
+script = ExtResource("1_waterplant")
+
+[node name="Background" type="ColorRect" parent="."]
+offset_right = 1920.0
+offset_bottom = 1080.0
+color = Color(0.6, 0.8, 0.9, 1)
+
+[node name="Ground" type="ColorRect" parent="."]
+offset_top = 880.0
+offset_right = 1920.0
+offset_bottom = 1080.0
+color = Color(0.4, 0.6, 0.3, 1)
+
+[node name="Camera2D" type="Camera2D" parent="."]
+position = Vector2(960, 540)

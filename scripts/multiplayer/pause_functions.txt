@@ -1,0 +1,140 @@
+# Add these functions to the end of MiniGame_Rain.gd:
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# PAUSE SYSTEM (SYNCHRONIZED FOR MULTIPLAYER)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+func _create_pause_ui() -> void:
+	"""Create pause button and pause menu"""
+	# Create pause button
+	pause_button = Button.new()
+	pause_button.text = "⏸"
+	pause_button.custom_minimum_size = Vector2(50, 50)
+	pause_button.add_theme_font_size_override("font_size", 32)
+	
+	# Style the pause button
+	var btn_normal = StyleBoxFlat.new()
+	btn_normal.bg_color = Color(0.2, 0.3, 0.4, 0.8)
+	btn_normal.corner_radius_top_left = 10
+	btn_normal.corner_radius_top_right = 10
+	btn_normal.corner_radius_bottom_left = 10
+	btn_normal.corner_radius_bottom_right = 10
+	
+	var btn_pressed = StyleBoxFlat.new()
+	btn_pressed.bg_color = Color(0.3, 0.5, 0.7, 0.9)
+	btn_pressed.corner_radius_top_left = 10
+	btn_pressed.corner_radius_top_right = 10
+	btn_pressed.corner_radius_bottom_left = 10
+	btn_pressed.corner_radius_bottom_right = 10
+	
+	pause_button.add_theme_stylebox_override("normal", btn_normal)
+	pause_button.add_theme_stylebox_override("pressed", btn_pressed)
+	pause_button.add_theme_stylebox_override("hover", btn_normal)
+	
+	pause_button.process_mode = Node.PROCESS_MODE_ALWAYS
+	pause_button.pressed.connect(_on_pause_button_pressed)
+	
+	# Add to top bar
+	var top_bar = $UI/TopBar
+	if top_bar:
+		top_bar.add_child(pause_button)
+	
+	# Create pause menu
+	pause_menu = Control.new()
+	pause_menu.set_anchors_preset(Control.PRESET_FULL_RECT)
+	pause_menu.visible = false
+	pause_menu.process_mode = Node.PROCESS_MODE_ALWAYS
+	hud.add_child(pause_menu)
+	
+	var bg = ColorRect.new()
+	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	bg.color = Color(0, 0, 0, 0.7)
+	pause_menu.add_child(bg)
+	
+	var center = CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	pause_menu.add_child(center)
+	
+	var vbox = VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 20)
+	center.add_child(vbox)
+	
+	var label = Label.new()
+	label.text = "PAUSED"
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.add_theme_font_size_override("font_size", 48)
+	vbox.add_child(label)
+	
+	var resume_btn = Button.new()
+	resume_btn.text = "RESUME"
+	resume_btn.custom_minimum_size = Vector2(200, 60)
+	resume_btn.add_theme_font_size_override("font_size", 24)
+	resume_btn.pressed.connect(_on_resume_pressed)
+	vbox.add_child(resume_btn)
+	
+	var exit_btn = Button.new()
+	exit_btn.text = "EXIT TO LOBBY"
+	exit_btn.custom_minimum_size = Vector2(200, 60)
+	exit_btn.add_theme_font_size_override("font_size", 24)
+	exit_btn.pressed.connect(_on_exit_pressed)
+	vbox.add_child(exit_btn)
+
+func _on_pause_button_pressed() -> void:
+	"""Called when local player presses pause button"""
+	if is_paused:
+		return
+	
+	is_paused = true
+	get_tree().paused = true
+	pause_menu.visible = true
+	pause_button.text = "▶"
+	
+	# Notify other player via RPC (check if method exists first)
+	if NetworkManager and NetworkManager.has_method("sync_pause_state"):
+		NetworkManager.rpc("sync_pause_state", true)
+	
+	print("⏸ Game paused by local player")
+
+func _on_resume_pressed() -> void:
+	"""Called when local player presses resume"""
+	if not is_paused:
+		return
+	
+	is_paused = false
+	get_tree().paused = false
+	pause_menu.visible = false
+	pause_button.text = "⏸"
+	
+	# Notify other player via RPC
+	if NetworkManager and NetworkManager.has_method("sync_pause_state"):
+		NetworkManager.rpc("sync_pause_state", false)
+	
+	print("▶ Game resumed by local player")
+
+func _on_exit_pressed() -> void:
+	"""Exit to multiplayer lobby"""
+	get_tree().paused = false
+	if NetworkManager:
+		NetworkManager.return_to_lobby()
+	else:
+		get_tree().change_scene_to_file("res://scenes/ui/MultiplayerLobby.tscn")
+
+func _on_remote_pause() -> void:
+	"""Called when remote player pauses the game"""
+	is_paused = true
+	get_tree().paused = true
+	if pause_menu:
+		pause_menu.visible = true
+	if pause_button:
+		pause_button.text = "▶"
+	print("⏸ Game paused by remote player")
+
+func _on_remote_resume() -> void:
+	"""Called when remote player resumes the game"""
+	is_paused = false
+	get_tree().paused = false
+	if pause_menu:
+		pause_menu.visible = false
+	if pause_button:
+		pause_button.text = "⏸"
+	print("▶ Game resumed by remote player")

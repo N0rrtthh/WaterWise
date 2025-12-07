@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://bgkkraw5kt3xs"]
+
+[ext_resource type="Script" path="res://scenes/minigames/TimingTap.gd" id="1_script"]
+
+[node name="TimingTap" type="Node2D"]
+script = ExtResource("1_script")
