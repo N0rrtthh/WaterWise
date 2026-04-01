@@ -104,8 +104,12 @@ func _animate_entrance() -> void:
 	modulate.a = 0.0
 	var tween = create_tween()
 	tween.tween_property(self, "modulate:a", 1.0, 0.5)
+	if AudioManager:
+		AudioManager.play_fanfare()
 
 func _on_export_button_pressed() -> void:
+	if AudioManager:
+		AudioManager.play_click()
 	if AdaptiveDifficulty:
 		AdaptiveDifficulty.export_to_json_file()
 		
@@ -120,4 +124,6 @@ func _on_export_button_pressed() -> void:
 		label.queue_free()
 
 func _on_main_menu_button_pressed() -> void:
+	if AudioManager:
+		AudioManager.play_click()
 	get_tree().change_scene_to_file("res://scenes/ui/MainMenu.tscn")

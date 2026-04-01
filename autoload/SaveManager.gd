@@ -58,18 +58,44 @@ var unlocked_content: Dictionary = {
 
 # Achievements
 var achievements: Dictionary = {
-	"first_drop": { "name": "First Drop", "desc": "Complete your first game", "unlocked": false, "icon": "💧" },
-	"water_saver": { "name": "Water Saver", "desc": "Save 100 liters of water", "unlocked": false, "icon": "🌊" },
-	"perfect_game": { "name": "Perfect!", "desc": "Get 100% accuracy in any game", "unlocked": false, "icon": "⭐" },
-	"speed_demon": { "name": "Speed Demon", "desc": "Complete a game in under 30 seconds", "unlocked": false, "icon": "⚡" },
-	"persistent": { "name": "Persistent", "desc": "Play 10 games in one session", "unlocked": false, "icon": "🔄" },
-	"collector": { "name": "Collector", "desc": "Unlock 5 characters", "unlocked": false, "icon": "👤" },
-	"explorer": { "name": "Explorer", "desc": "Play all available minigames", "unlocked": false, "icon": "🗺️" },
-	"coop_star": { "name": "Co-op Star", "desc": "Win a multiplayer game", "unlocked": false, "icon": "🤝" },
-	"streak_3": { "name": "Hat Trick", "desc": "Win 3 games in a row", "unlocked": false, "icon": "🎯" },
-	"streak_5": { "name": "On Fire!", "desc": "Win 5 games in a row", "unlocked": false, "icon": "🔥" },
-	"master": { "name": "Water Master", "desc": "Reach Hard difficulty", "unlocked": false, "icon": "👑" },
-	"eco_warrior": { "name": "Eco Warrior", "desc": "Save 1000 liters total", "unlocked": false, "icon": "🌍" }
+	"first_drop": {
+		"name": "First Drop", "desc": "Complete your first game", "unlocked": false, "icon": "💧"
+	},
+	"water_saver": {
+		"name": "Water Saver", "desc": "Save 100 liters of water", "unlocked": false, "icon": "🌊"
+	},
+	"perfect_game": {
+		"name": "Perfect!", "desc": "Get 100% accuracy in any game", "unlocked": false, "icon": "⭐"
+	},
+	"speed_demon": {
+		"name": "Speed Demon", "desc": "Complete a game in under 30 seconds", "unlocked": false,
+		"icon": "⚡"
+	},
+	"persistent": {
+		"name": "Persistent", "desc": "Play 10 games in one session", "unlocked": false,
+		"icon": "🔄"
+	},
+	"collector": {
+		"name": "Collector", "desc": "Unlock 5 characters", "unlocked": false, "icon": "👤"
+	},
+	"explorer": {
+		"name": "Explorer", "desc": "Play all available minigames", "unlocked": false, "icon": "🗺️"
+	},
+	"coop_star": {
+		"name": "Co-op Star", "desc": "Win a multiplayer game", "unlocked": false, "icon": "🤝"
+	},
+	"streak_3": {
+		"name": "Hat Trick", "desc": "Win 3 games in a row", "unlocked": false, "icon": "🎯"
+	},
+	"streak_5": {
+		"name": "On Fire!", "desc": "Win 5 games in a row", "unlocked": false, "icon": "🔥"
+	},
+	"master": {
+		"name": "Water Master", "desc": "Reach Hard difficulty", "unlocked": false, "icon": "👑"
+	},
+	"eco_warrior": {
+		"name": "Eco Warrior", "desc": "Save 1000 liters total", "unlocked": false, "icon": "🌍"
+	}
 }
 
 # Settings
@@ -159,7 +185,7 @@ func load_all_data() -> void:
 	data_loaded.emit()
 
 func _merge_data(data: Dictionary) -> void:
-	"""Merge loaded data with defaults (handles missing keys from older saves)"""
+	# Merge loaded data with defaults (handles missing keys from older saves).
 	if data.has("player"):
 		for key in data.player:
 			player_data[key] = data.player[key]
@@ -207,7 +233,7 @@ func _update_play_time() -> void:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func record_game_result(game_id: String, score: int, accuracy: float, time_seconds: float) -> bool:
-	"""Record game result and return true if it's a new high score"""
+	# Record game result and return true if it's a new high score.
 	var is_new_record := false
 	
 	if not high_scores.has(game_id):
@@ -424,7 +450,7 @@ func get_play_time_formatted() -> String:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func reset_all_data() -> void:
-	"""WARNING: Resets all player progress"""
+	# WARNING: Resets all player progress.
 	player_data = {
 		"save_version": SAVE_VERSION,
 		"total_water_saved": 0,

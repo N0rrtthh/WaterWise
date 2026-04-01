@@ -106,7 +106,10 @@ var mp_game_name: String = ""
 # Player progress tracking
 var completed_minigames: Array = []
 var current_minigame_index: int = 0
-var available_minigames: Array = [
+var minigame_random_bag: Array[String] = []
+var pending_next_minigame_name: String = ""
+var force_full_singleplayer_pool: bool = true
+const ALL_SINGLEPLAYER_MINIGAMES: Array = [
 	"RiceWashRescue",
 	"VegetableBath",
 	"GreywaterSorter",
@@ -116,7 +119,8 @@ var available_minigames: Array = [
 	"CatchTheRain",
 	"CoverTheDrum",
 	"SpotTheSpeck",
-	# NEW Mini-Games (10 additional)
+	"FixLeak",
+	"WaterPlant",
 	"PlugTheLeak",
 	"SwipeTheSoap",
 	"QuickShower",
@@ -128,6 +132,22 @@ var available_minigames: Array = [
 	"TimingTap",
 	"TurnOffTap"
 ]
+var available_minigames: Array = []
+
+const UNLOCK_ID_TO_MINIGAMES: Dictionary = {
+	"catch_rain": ["CatchTheRain", "CoverTheDrum", "RiceWashRescue"],
+	"pipe_puzzle": ["TracePipePath", "PlugTheLeak", "FixLeak", "ToiletTankFix", "TurnOffTap"],
+	"water_sorting": [
+		"GreywaterSorter",
+		"VegetableBath",
+		"ScrubToSave",
+		"FilterBuilder",
+		"SpotTheSpeck"
+	],
+	"leak_fix": ["WringItOut", "QuickShower", "SwipeTheSoap", "WaterPlant"],
+	"water_quiz": ["ThirstyPlant", "MudPieMaker"],
+	"bucket_relay": ["BucketBrigade", "TimingTap"]
+}
 
 var session_active: bool = false
 var minigames_played_this_session: int = 0
@@ -139,6 +159,7 @@ var local_player_num: int = 0
 
 func _ready() -> void:
 	_load_saved_data()
+	_refresh_available_minigames()
 	
 	# Connect signals from other autoloads
 	if has_node("/root/AdaptiveDifficulty"):
@@ -537,7 +558,7 @@ func reset_multiplayer_game() -> void:
 var multiplayer_minigames: Array[String] = [
 	"MiniGame_WaterHarvest",
 	"MiniGame_GreywaterSort",
-	"MiniGame_PipeRepair"
+	"MiniGame_LeafSort"
 ]
 
 var multiplayer_game_order: Array[String] = []
@@ -700,9 +721,14 @@ func start_new_session(mode: GameMode = GameMode.SINGLE_PLAYER) -> void:
 	session_lives = 3
 	session_score = 0
 	round_scores.clear()
+	pending_next_minigame_name = ""
 	
 	if mode == GameMode.SINGLE_PLAYER:
-		available_minigames.shuffle()
+		# Hard reset any multiplayer remnants so single-player never hijacks flow.
+		if is_multiplayer_connected or multiplayer.multiplayer_peer:
+			disconnect_multiplayer()
+		_refresh_available_minigames()
+		_rebuild_minigame_random_bag()
 		_load_saved_data()
 		if has_node("/root/AdaptiveDifficulty"):
 			AdaptiveDifficulty.reset()
@@ -712,28 +738,109 @@ func start_new_session(mode: GameMode = GameMode.SINGLE_PLAYER) -> void:
 		print("🎯 New MULTIPLAYER CO-OP session started")
 
 func start_next_minigame() -> void:
+	if current_game_mode != GameMode.SINGLE_PLAYER:
+		push_warning(
+			"start_next_minigame called outside single-player mode; forcing single-player."
+		)
+		current_game_mode = GameMode.SINGLE_PLAYER
+
 	if session_lives <= 0:
 		all_minigames_completed.emit()
 		_show_final_score()
 		return
-	
-	if current_minigame_index >= available_minigames.size():
-		current_minigame_index = 0
-		available_minigames.shuffle()
-	
-	var game_name: String = available_minigames[current_minigame_index]
+
+	if available_minigames.is_empty():
+		_refresh_available_minigames()
+		_rebuild_minigame_random_bag()
+		if available_minigames.is_empty():
+			push_warning("No minigames available. Returning to main menu.")
+			return_to_main_menu()
+			return
+
+	if minigame_random_bag.is_empty():
+		_rebuild_minigame_random_bag()
+
+	if minigame_random_bag.is_empty():
+		push_warning("Random bag is empty. Returning to main menu.")
+		return_to_main_menu()
+		return
+
+	var pick_index = randi() % minigame_random_bag.size()
+	var game_name: String = minigame_random_bag[pick_index]
+	minigame_random_bag.remove_at(pick_index)
+
 	change_state(GameState.PLAYING_MINIGAME)
 	minigame_started.emit(game_name)
-	
+	_start_intro_cutscene_for_game(game_name)
+
+func _start_intro_cutscene_for_game(game_name: String) -> void:
+	pending_next_minigame_name = game_name
+	var bridge_path := "res://scenes/ui/cutscenes/MiniGameIntroBridge.tscn"
+	if ResourceLoader.exists(bridge_path):
+		get_tree().change_scene_to_file(bridge_path)
+		return
+
+	# Fallback for safety: if bridge scene is missing, go straight to minigame.
+	launch_pending_minigame()
+
+func launch_pending_minigame() -> void:
+	if pending_next_minigame_name.is_empty():
+		push_warning("No pending minigame set. Selecting next minigame.")
+		start_next_minigame()
+		return
+
+	var game_name := pending_next_minigame_name
+	pending_next_minigame_name = ""
 	var game_path: String = "res://scenes/minigames/%s.tscn" % game_name
 	if ResourceLoader.exists(game_path):
 		get_tree().change_scene_to_file(game_path)
 	else:
 		push_warning("Mini-game not found: ", game_path)
+		# Try the next one immediately if one entry is stale.
+		start_next_minigame()
+
+func _refresh_available_minigames() -> void:
+	# Build single-player pool from SaveManager unlock bundles.
+	var save_mgr = get_node_or_null("/root/SaveManager")
+	var unlocked_ids: Array = []
+	var filtered: Array = []
+
+	if save_mgr and save_mgr.unlocked_content is Dictionary:
+		unlocked_ids = save_mgr.unlocked_content.get("minigames", [])
+
+	if force_full_singleplayer_pool:
+		filtered = ALL_SINGLEPLAYER_MINIGAMES.duplicate()
+	elif unlocked_ids.is_empty():
+		filtered = ALL_SINGLEPLAYER_MINIGAMES.duplicate()
+	else:
+		for unlock_id in unlocked_ids:
+			if UNLOCK_ID_TO_MINIGAMES.has(unlock_id):
+				for game_name in UNLOCK_ID_TO_MINIGAMES[unlock_id]:
+					if game_name not in filtered:
+						filtered.append(game_name)
+
+	# Keep only scenes that exist to prevent runtime scene load errors.
+	available_minigames.clear()
+	for game_name in filtered:
+		if ResourceLoader.exists("res://scenes/minigames/%s.tscn" % game_name):
+			available_minigames.append(game_name)
+
+	if available_minigames.is_empty():
+		available_minigames = ["CatchTheRain"]
+
+func _rebuild_minigame_random_bag() -> void:
+	minigame_random_bag.clear()
+	for game_name in available_minigames:
+		minigame_random_bag.append(game_name)
+
+func refresh_available_minigames() -> void:
+	_refresh_available_minigames()
 
 func complete_minigame(
 	game_name: String, accuracy: float,
-	reaction_time: int, mistakes: int
+	reaction_time: int, mistakes: int,
+	round_score_override: int = -1,
+	best_combo: int = 0
 ) -> void:
 	if not game_name in completed_minigames:
 		completed_minigames.append(game_name)
@@ -742,8 +849,16 @@ func complete_minigame(
 	
 	var round_score: int = int(accuracy * 100.0) - (mistakes * 10)
 	round_score = max(0, round_score)
+	if round_score_override >= 0:
+		round_score = round_score_override
 	session_score += round_score
-	round_scores.append({"game": game_name, "score": round_score})
+	round_scores.append({
+		"game": game_name,
+		"score": round_score,
+		"combo": best_combo,
+		"accuracy": accuracy,
+		"mistakes": mistakes
+	})
 	
 	# Add to rolling window for difficulty adjustment
 	var round_time_seconds: float = float(reaction_time) / 1000.0
@@ -813,6 +928,12 @@ func return_to_main_menu() -> void:
 func _show_final_score() -> void:
 	print("🎉 Session complete! Showing final score...")
 	change_state(GameState.FINAL_RESULTS)
+	
+	# Update high score before showing FinalScore so the screen can compare
+	if session_score > high_score:
+		high_score = session_score
+	_save_data()
+	
 	if ResourceLoader.exists("res://scenes/ui/FinalScore.tscn"):
 		get_tree().change_scene_to_file("res://scenes/ui/FinalScore.tscn")
 	else:

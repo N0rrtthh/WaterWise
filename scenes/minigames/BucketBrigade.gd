@@ -512,7 +512,8 @@ func _show_delivery_celebration(pos: Vector2) -> void:
 		var tween = create_tween()
 		tween.set_parallel(true)
 		tween.tween_property(drop, "position", target, 0.5).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
-		tween.tween_property(drop, "modulate:a", 0.0, 0.5).set_delay(0.2)
+		tween.tween_interval(0.2)
+		tween.tween_property(drop, "modulate:a", 0.0, 0.5)
 		tween.set_parallel(false)
 		tween.tween_callback(drop.queue_free)
 	
@@ -527,5 +528,6 @@ func _show_delivery_celebration(pos: Vector2) -> void:
 	
 	var star_tween = create_tween()
 	star_tween.tween_property(star, "scale", Vector2(1.5, 1.5), 0.2).set_trans(Tween.TRANS_BACK)
-	star_tween.tween_property(star, "scale", Vector2(0, 0), 0.3).set_delay(0.3)
+	star_tween.tween_interval(0.3)
+	star_tween.tween_property(star, "scale", Vector2(0, 0), 0.3)
 	star_tween.tween_callback(star.queue_free)
