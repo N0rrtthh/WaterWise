@@ -1,0 +1,109 @@
+{
+  "version": "1.0",
+  "minigame_key": "default",
+  "cutscene_type": "intro",
+  "duration": 2.0,
+  "character": {
+    "expression": "determined",
+    "deformation_enabled": true
+  },
+  "background_color": "#0a1e0f",
+  "keyframes": [
+    {
+      "time": 0.0,
+      "transforms": [
+        {
+          "type": "scale",
+          "value": [0.8, 0.8],
+          "relative": false
+        },
+        {
+          "type": "position",
+          "value": [-100, 0],
+          "relative": true
+        },
+        {
+          "type": "rotation",
+          "value": -0.2,
+          "relative": false
+        }
+      ],
+      "easing": "ease_out"
+    },
+    {
+      "time": 0.5,
+      "transforms": [
+        {
+          "type": "scale",
+          "value": [1.05, 1.05],
+          "relative": false
+        },
+        {
+          "type": "position",
+          "value": [10, 0],
+          "relative": true
+        },
+        {
+          "type": "rotation",
+          "value": 0.1,
+          "relative": false
+        }
+      ],
+      "easing": "ease_in_out"
+    },
+    {
+      "time": 1.0,
+      "transforms": [
+        {
+          "type": "scale",
+          "value": [1.0, 1.0],
+          "relative": false
+        },
+        {
+          "type": "position",
+          "value": [0, 0],
+          "relative": false
+        },
+        {
+          "type": "rotation",
+          "value": 0.0,
+          "relative": false
+        }
+      ],
+      "easing": "ease_in_out"
+    },
+    {
+      "time": 1.5,
+      "transforms": [
+        {
+          "type": "scale",
+          "value": [1.0, 1.0],
+          "relative": false
+        }
+      ],
+      "easing": "linear"
+    },
+    {
+      "time": 2.0,
+      "transforms": [
+        {
+          "type": "scale",
+          "value": [1.0, 1.0],
+          "relative": false
+        }
+      ],
+      "easing": "linear"
+    }
+  ],
+  "particles": [],
+  "audio_cues": [
+    {
+      "time": 0.0,
+      "sound": "whoosh"
+    },
+    {
+      "time": 1.0,
+      "sound": "ready"
+    }
+  ]
+}

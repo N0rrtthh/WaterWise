@@ -15,11 +15,6 @@ extends Control
 @onready var left_arm = $Decorations/Character/LeftArm
 @onready var right_arm = $Decorations/Character/RightArm
 
-# Algorithm Demo Buttons (created dynamically for thesis defense)
-var algorithm_demo_btn: Button = null
-var gcounter_demo_btn: Button = null
-var research_dashboard_btn: Button = null
-
 var loading_messages_en = [
 	"Fetching watering can...",
 	"Planting seeds...",
@@ -41,9 +36,14 @@ func _ready() -> void:
 	_update_translations()
 	_animate_entrance()
 	_start_character_animation()
-	_create_algorithm_demo_button()
-	_create_gcounter_demo_button()
-	_create_research_dashboard_button()
+
+	# Start menu music
+	if AudioManager:
+		AudioManager.play_music("menu")
+	
+	# Apply mobile UI scaling if on mobile platform
+	if MobileUIManager and MobileUIManager.is_mobile_platform():
+		_apply_mobile_ui_scaling()
 	
 	# Connect to language changes
 	if Localization:
@@ -208,106 +208,40 @@ func _on_quit_button_pressed() -> void:
 	get_tree().quit()
 
 func _play_button_sound() -> void:
-	# Placeholder for button sound
-	pass
+	if AudioManager:
+		AudioManager.play_click()
 
 # ═══════════════════════════════════════════════════════════════════
-# ALGORITHM DEMO BUTTON (For Thesis Defense)
+# MOBILE UI SCALING
 # ═══════════════════════════════════════════════════════════════════
 
-func _create_algorithm_demo_button() -> void:
-	# Create a button for panelists to see the algorithm demo
-	algorithm_demo_btn = Button.new()
-	algorithm_demo_btn.text = "🔬 Algorithm Demo"
-	algorithm_demo_btn.custom_minimum_size = Vector2(200, 50)
-	algorithm_demo_btn.tooltip_text = "View the adaptive difficulty algorithm in action"
+func _apply_mobile_ui_scaling() -> void:
+	# Apply mobile-specific UI scaling to all UI elements.
+	# Scale main UI container
+	var ui_container = $UI/VBoxContainer
+	if ui_container:
+		MobileUIManager.apply_mobile_scaling(ui_container)
 	
-	# Style it differently to stand out
-	var style = StyleBoxFlat.new()
-	style.bg_color = Color(0.2, 0.4, 0.8, 0.9)
-	style.corner_radius_top_left = 8
-	style.corner_radius_top_right = 8
-	style.corner_radius_bottom_left = 8
-	style.corner_radius_bottom_right = 8
-	algorithm_demo_btn.add_theme_stylebox_override("normal", style)
+	# Scale individual buttons
+	if play_button:
+		MobileUIManager.apply_mobile_scaling(play_button)
+	if quit_button:
+		MobileUIManager.apply_mobile_scaling(quit_button)
 	
-	var hover_style = style.duplicate()
-	hover_style.bg_color = Color(0.3, 0.5, 0.9, 1.0)
-	algorithm_demo_btn.add_theme_stylebox_override("hover", hover_style)
+	# Scale labels
+	if title_label:
+		MobileUIManager.apply_mobile_scaling(title_label)
+	if subtitle_label:
+		MobileUIManager.apply_mobile_scaling(subtitle_label)
 	
-	# Position at bottom of screen
-	algorithm_demo_btn.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
-	algorithm_demo_btn.position = Vector2(-100, -80)
+	# Apply safe area margins to root UI container
+	var ui_root = $UI
+	if ui_root:
+		var margins = MobileUIManager.get_safe_area_margins()
+		LayoutManager.apply_safe_area_margins(ui_root, margins)
 	
-	algorithm_demo_btn.pressed.connect(_on_algorithm_demo_pressed)
-	add_child(algorithm_demo_btn)
-
-func _on_algorithm_demo_pressed() -> void:
-	_play_button_sound()
-	get_tree().change_scene_to_file("res://scenes/ui/AlgorithmDemo.tscn")
-
-# ═══════════════════════════════════════════════════════════════════
-# G-COUNTER CRDT DEMO BUTTON (For Thesis Defense)
-# ═══════════════════════════════════════════════════════════════════
-
-func _create_gcounter_demo_button() -> void:
-	gcounter_demo_btn = Button.new()
-	gcounter_demo_btn.text = "📊 G-Counter CRDT Demo"
-	gcounter_demo_btn.custom_minimum_size = Vector2(220, 50)
-	gcounter_demo_btn.tooltip_text = "View the G-Counter CRDT algorithm in action"
+	# Enable haptic feedback for buttons
+	if TouchInputManager:
+		TouchInputManager.enable_haptics_for_scene(self)
 	
-	var style = StyleBoxFlat.new()
-	style.bg_color = Color(0.7, 0.3, 0.1, 0.9)
-	style.corner_radius_top_left = 8
-	style.corner_radius_top_right = 8
-	style.corner_radius_bottom_left = 8
-	style.corner_radius_bottom_right = 8
-	gcounter_demo_btn.add_theme_stylebox_override("normal", style)
-	
-	var hover_style = style.duplicate()
-	hover_style.bg_color = Color(0.85, 0.4, 0.15, 1.0)
-	gcounter_demo_btn.add_theme_stylebox_override("hover", hover_style)
-	
-	# Position just above the existing Algorithm Demo button
-	gcounter_demo_btn.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
-	gcounter_demo_btn.position = Vector2(-110, -140)
-	
-	gcounter_demo_btn.pressed.connect(_on_gcounter_demo_pressed)
-	add_child(gcounter_demo_btn)
-
-func _on_gcounter_demo_pressed() -> void:
-	_play_button_sound()
-	get_tree().change_scene_to_file("res://scenes/ui/GCounterDemo.tscn")
-
-# ═══════════════════════════════════════════════════════════════════
-# RESEARCH DATA DASHBOARD BUTTON (For Thesis Defense)
-# ═══════════════════════════════════════════════════════════════════
-
-func _create_research_dashboard_button() -> void:
-	research_dashboard_btn = Button.new()
-	research_dashboard_btn.text = "📋 Research Dashboard"
-	research_dashboard_btn.custom_minimum_size = Vector2(220, 50)
-	research_dashboard_btn.tooltip_text = "View all thesis metrics and export data"
-	
-	var style = StyleBoxFlat.new()
-	style.bg_color = Color(0.15, 0.5, 0.15, 0.9)
-	style.corner_radius_top_left = 8
-	style.corner_radius_top_right = 8
-	style.corner_radius_bottom_left = 8
-	style.corner_radius_bottom_right = 8
-	research_dashboard_btn.add_theme_stylebox_override("normal", style)
-	
-	var hover_style = style.duplicate()
-	hover_style.bg_color = Color(0.2, 0.65, 0.2, 1.0)
-	research_dashboard_btn.add_theme_stylebox_override("hover", hover_style)
-	
-	# Position above the other demo buttons
-	research_dashboard_btn.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
-	research_dashboard_btn.position = Vector2(-110, -200)
-	
-	research_dashboard_btn.pressed.connect(_on_research_dashboard_pressed)
-	add_child(research_dashboard_btn)
-
-func _on_research_dashboard_pressed() -> void:
-	_play_button_sound()
-	get_tree().change_scene_to_file("res://scenes/ui/ResearchDashboard.tscn")
+	print("📱 Mobile UI scaling applied to MainMenu")

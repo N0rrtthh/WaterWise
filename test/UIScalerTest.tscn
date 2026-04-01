@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://c8qvxj7y8rkqh"]
+
+[ext_resource type="Script" path="res://test/UIScalerTest.gd" id="1_test"]
+
+[node name="UIScalerTest" type="Node"]
+script = ExtResource("1_test")

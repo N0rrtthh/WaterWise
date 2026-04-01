@@ -26,6 +26,12 @@ signal touch_drag(from: Vector2, to: Vector2)
 @export var mobile_button_min_size: Vector2 = Vector2(80, 80)  # Minimum touch target size
 @export var mobile_font_scale: float = 1.2  # Font scaling for mobile readability
 
+## Hit detection expansion
+@export var hit_expansion: float = 10.0  # Pixels to expand hit area for touch targets
+
+## Edge dead zone
+@export var edge_dead_zone: float = 15.0  # Pixels from screen edge to ignore touches
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # STATE VARIABLES
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -78,6 +84,10 @@ func _input(event: InputEvent) -> void:
 		_handle_screen_drag(event)
 
 func _handle_screen_touch(event: InputEventScreenTouch) -> void:
+	# Filter touches in edge dead zone
+	if _is_in_edge_dead_zone(event.position):
+		return
+	
 	if event.pressed:
 		# Touch started
 		active_touches[event.index] = {
@@ -155,6 +165,16 @@ func vibrate_error() -> void:
 		await get_tree().create_timer(0.1).timeout
 		Input.vibrate_handheld(150)
 
+func vibrate_button_press() -> void:
+	"""Provide haptic feedback for button presses on mobile platforms
+	
+	This method should be called when a button is pressed to provide
+	tactile feedback to the user. Only triggers on mobile platforms.
+	Requirement 2.5: Haptic feedback on button press
+	"""
+	if is_mobile:
+		Input.vibrate_handheld(50)  # 50ms light vibration for button press
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # UI HELPERS FOR MOBILE
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -185,6 +205,43 @@ func get_safe_area_margins() -> Dictionary:
 		"right": screen_size.x - (safe_area.position.x + safe_area.size.x)
 	}
 
+func enable_button_haptics(button: BaseButton) -> void:
+	"""Enable haptic feedback for a button on mobile platforms
+	
+	Connects the button's pressed signal to trigger haptic feedback.
+	This should be called for all interactive buttons in the UI.
+	
+	@param button: The button to enable haptics for
+	"""
+	if not button:
+		push_warning("TouchInputManager.enable_button_haptics: button is null")
+		return
+	
+	# Only connect if on mobile platform
+	if is_mobile:
+		# Check if already connected to avoid duplicate connections
+		if not button.pressed.is_connected(vibrate_button_press):
+			button.pressed.connect(vibrate_button_press)
+
+func enable_haptics_for_scene(root: Node) -> void:
+	"""Recursively enable haptic feedback for all buttons in a scene
+	
+	Traverses the scene tree and enables haptics for all BaseButton nodes.
+	This is a convenience method for enabling haptics across an entire scene.
+	
+	@param root: The root node to start traversal from
+	"""
+	if not root:
+		return
+	
+	# Enable haptics for this node if it's a button
+	if root is BaseButton:
+		enable_button_haptics(root)
+	
+	# Recursively process children
+	for child in root.get_children():
+		enable_haptics_for_scene(child)
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # GESTURE UTILITIES
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -211,3 +268,81 @@ func get_pinch_distance() -> float:
 		positions.append(touch["current_position"])
 	
 	return positions[0].distance_to(positions[1])
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# HIT DETECTION EXPANSION
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+func is_touch_in_expanded_bounds(touch_pos: Vector2, control: Control) -> bool:
+	"""Check if touch position is within expanded bounds of a control node
+	
+	Expands the hit area by hit_expansion pixels on all sides to make
+	touch targets easier to hit on mobile devices.
+	
+	@param touch_pos: The touch position in screen coordinates
+	@param control: The control node to check against
+	@return: True if touch is within expanded bounds
+	"""
+	if not control or not control.is_visible_in_tree():
+		return false
+	
+	var global_rect = control.get_global_rect()
+	var expanded_rect = global_rect.grow(hit_expansion)
+	
+	return expanded_rect.has_point(touch_pos)
+
+func find_touch_target(touch_pos: Vector2, root: Node) -> Control:
+	"""Find the best touch target at the given position with expanded hit detection
+	
+	Searches for Control nodes that contain the touch position, considering
+	expanded hit areas. Prioritizes smaller/closer targets for disambiguation.
+	
+	@param touch_pos: The touch position in screen coordinates
+	@param root: The root node to start searching from
+	@return: The best matching Control node, or null if none found
+	"""
+	var candidates = []
+	_find_touch_candidates(touch_pos, root, candidates)
+	
+	if candidates.is_empty():
+		return null
+	
+	# Disambiguate by choosing smallest area (most specific target)
+	candidates.sort_custom(func(a, b): return a.size.x * a.size.y < b.size.x * b.size.y)
+	return candidates[0]
+
+func _find_touch_candidates(touch_pos: Vector2, node: Node, candidates: Array) -> void:
+	"""Recursively find all Control nodes that could be touch targets"""
+	if node is Control and is_touch_in_expanded_bounds(touch_pos, node):
+		# Only consider interactive controls
+		if node is BaseButton or node.mouse_filter != Control.MOUSE_FILTER_IGNORE:
+			candidates.append(node)
+	
+	for child in node.get_children():
+		_find_touch_candidates(touch_pos, child, candidates)
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# EDGE DEAD ZONE
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+func _is_in_edge_dead_zone(position: Vector2) -> bool:
+	"""Check if touch position is within edge dead zone
+	
+	Filters accidental touches near screen edges by ignoring touches
+	within edge_dead_zone pixels from any screen edge.
+	
+	@param position: The touch position in screen coordinates
+	@return: True if position is in dead zone (should be ignored)
+	"""
+	if not is_mobile:
+		return false
+	
+	var viewport_size = get_viewport().get_visible_rect().size
+	
+	# Check all four edges
+	if position.x < edge_dead_zone or position.x > viewport_size.x - edge_dead_zone:
+		return true
+	if position.y < edge_dead_zone or position.y > viewport_size.y - edge_dead_zone:
+		return true
+	
+	return false

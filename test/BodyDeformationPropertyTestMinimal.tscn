@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://c9k0l1m2n3o4p5q6r7s8"]
+
+[ext_resource type="Script" path="res://test/BodyDeformationPropertyTestMinimal.gd" id="1_minimal_test"]
+
+[node name="BodyDeformationPropertyTestMinimal" type="Node"]
+script = ExtResource("1_minimal_test")

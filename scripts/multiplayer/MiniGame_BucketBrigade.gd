@@ -19,21 +19,21 @@ signal score_updated(new_score: int)
 
 const DIFFICULTY_SETTINGS: Dictionary = {
 	"Easy": {
-		"quota": 12,
-		"fill_time": 3.0,
-		"empty_time": 2.0,
+		"quota": 15,
+		"fill_time": 3.5,
+		"empty_time": 2.5,
 		"bucket_count": 3
 	},
 	"Medium": {
-		"quota": 20,
-		"fill_time": 2.0,
-		"empty_time": 1.5,
+		"quota": 22,
+		"fill_time": 2.5,
+		"empty_time": 1.8,
 		"bucket_count": 4
 	},
 	"Hard": {
-		"quota": 30,
-		"fill_time": 1.5,
-		"empty_time": 1.0,
+		"quota": 32,
+		"fill_time": 1.8,
+		"empty_time": 1.2,
 		"bucket_count": 5
 	}
 }
@@ -271,8 +271,10 @@ func _sync_bucket_state(index: int, status: String, fill_level: float) -> void:
 		buckets[index]["status"] = status
 		buckets[index]["fill_level"] = fill_level
 
-func _on_resource_received(from_player: int, resource_type: String, _amount: int, _quality: float) -> void:
-	"""Receive resources from partner - creates interconnected gameplay"""
+func _on_resource_received(
+	from_player: int, resource_type: String, _amount: int, _quality: float
+) -> void:
+	# Receive resources from partner to support interconnected gameplay.
 	if resource_type == "filled_bucket" and not is_player_one:
 		# P2 receives notification when P1 fills buckets
 		print("📥 Received filled bucket notification from P%d" % from_player)
