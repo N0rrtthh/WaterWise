@@ -37,4 +37,6 @@ func _on_language_changed(_new_lang: String) -> void:
 	_update_translations()
 
 func _on_back_pressed() -> void:
+	if AudioManager:
+		AudioManager.play_click()
 	get_tree().change_scene_to_file("res://scenes/ui/MainMenu.tscn")

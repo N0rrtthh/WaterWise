@@ -1,0 +1,67 @@
+﻿[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scenes/ui/cutscenes/MiniGameOutroCutscene.gd" id="1_script"]
+
+[node name="MudPieMakerWinOutro" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_script")
+
+[node name="Overlay" type="ColorRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.01, 0.05, 0.09, 0.8)
+
+[node name="Panel" type="PanelContainer" parent="."]
+custom_minimum_size = Vector2(900, 360)
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -450.0
+offset_top = -180.0
+offset_right = 450.0
+offset_bottom = 180.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="Center" type="CenterContainer" parent="Panel"]
+layout_mode = 2
+
+[node name="VBox" type="VBoxContainer" parent="Panel/Center"]
+layout_mode = 2
+theme_override_constants/separation = 14
+
+[node name="Title" type="Label" parent="Panel/Center/VBox"]
+layout_mode = 2
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 7
+theme_override_font_sizes/font_size = 52
+text = "Scene Complete"
+horizontal_alignment = 1
+
+[node name="Line" type="Label" parent="Panel/Center/VBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 30
+text = "Round summary"
+horizontal_alignment = 1
+
+[node name="Stats" type="Label" parent="Panel/Center/VBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0.9, 0.45, 1)
+theme_override_font_sizes/font_size = 30
+text = "+0 pts | Combo x0 | Lives <3<3<3"
+horizontal_alignment = 1
+
+[node name="AnimationPlayer" type="AnimationPlayer" parent="."]
+

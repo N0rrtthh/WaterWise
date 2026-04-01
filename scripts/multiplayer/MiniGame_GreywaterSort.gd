@@ -20,28 +20,28 @@ enum PlayerMode { MODE_1_COLLECTOR, MODE_2_PROCESSOR }
 
 const DIFFICULTY_SETTINGS: Dictionary = {
 	"Easy": {
-		"quota": 15,
+		"quota": 20,
 		"mode1_spawn_rate": 2.5,
-		"mode1_water_speed": 180.0,
-		"mode1_bad_chance": 0.2,
+		"mode1_water_speed": 160.0,
+		"mode1_bad_chance": 0.15,
 		"mode2_spawn_rate": 3.0,
 		"mode2_filter_speed": 100.0
 	},
 	"Medium": {
-		"quota": 25,
+		"quota": 30,
 		"mode1_spawn_rate": 1.8,
-		"mode1_water_speed": 250.0,
-		"mode1_bad_chance": 0.3,
+		"mode1_water_speed": 220.0,
+		"mode1_bad_chance": 0.25,
 		"mode2_spawn_rate": 2.2,
 		"mode2_filter_speed": 150.0
 	},
 	"Hard": {
-		"quota": 40,
-		"mode1_spawn_rate": 1.0,
-		"mode1_water_speed": 350.0,
-		"mode1_bad_chance": 0.4,
+		"quota": 45,
+		"mode1_spawn_rate": 1.2,
+		"mode1_water_speed": 300.0,
+		"mode1_bad_chance": 0.35,
 		"mode2_spawn_rate": 1.5,
-		"mode2_filter_speed": 220.0
+		"mode2_filter_speed": 200.0
 	}
 }
 
@@ -101,7 +101,11 @@ func _ready() -> void:
 
 func _get_assigned_mode() -> PlayerMode:
 	if GameManager and GameManager.has_method("get_my_player_mode"):
-		return PlayerMode.MODE_1_COLLECTOR if GameManager.get_my_player_mode() == 1 else PlayerMode.MODE_2_PROCESSOR
+		return (
+			PlayerMode.MODE_1_COLLECTOR
+			if GameManager.get_my_player_mode() == 1
+			else PlayerMode.MODE_2_PROCESSOR
+		)
 	return PlayerMode.MODE_1_COLLECTOR if _is_host() else PlayerMode.MODE_2_PROCESSOR
 
 func _is_host() -> bool:
@@ -183,7 +187,11 @@ func _start_game() -> void:
 	if GameManager:
 		GameManager.set_minigame_quota(current_settings["quota"])
 	
-	spawn_timer.wait_time = current_settings["mode1_spawn_rate"] if my_mode == PlayerMode.MODE_1_COLLECTOR else current_settings["mode2_spawn_rate"]
+	spawn_timer.wait_time = (
+		current_settings["mode1_spawn_rate"]
+		if my_mode == PlayerMode.MODE_1_COLLECTOR
+		else current_settings["mode2_spawn_rate"]
+	)
 	spawn_timer.start()
 	_update_score_display()
 
@@ -223,14 +231,34 @@ func _sync_timer(remaining_time: float) -> void:
 func _on_spawn_timer_timeout() -> void:
 	if not game_active:
 		return
-	if my_mode == PlayerMode.MODE_1_COLLECTOR:
-		_spawn_greywater()
-	else:
-		_spawn_filter()
+	
+	# Only host spawns to ensure synchronization
+	if not _is_host():
+		return
+	
+	# Spawn for both modes
+	_spawn_greywater_synced()
+	_spawn_filter_synced()
 
-func _spawn_greywater() -> void:
+func _spawn_greywater_synced() -> void:
+	# HOST: spawn greywater and sync.
+	if not _is_host():
+		return
+	
+	var spawn_x: float = randf_range(50, screen_size.x - 50)
+	var spawn_id: int = Time.get_ticks_msec()
+	var is_bad: bool = randf() < current_settings["mode1_bad_chance"]
+	
+	rpc("_create_greywater_at", spawn_x, spawn_id, is_bad)
+
+@rpc("authority", "call_local", "reliable")
+func _create_greywater_at(spawn_x: float, spawn_id: int, is_bad: bool) -> void:
+	# Create greywater (Mode 1 only).
+	if my_mode != PlayerMode.MODE_1_COLLECTOR:
+		return
+	
 	var water = Area2D.new()
-	water.name = "Greywater"
+	water.name = "Greywater_" + str(spawn_id)
 	water.input_pickable = true
 	
 	var collision = CollisionShape2D.new()
@@ -239,8 +267,6 @@ func _spawn_greywater() -> void:
 	collision.shape = shape
 	water.add_child(collision)
 	
-	# Determine if good or bad water
-	var is_bad = randf() < current_settings["mode1_bad_chance"]
 	water.set_meta("is_bad", is_bad)
 	
 	var visual = ColorRect.new()
@@ -255,24 +281,39 @@ func _spawn_greywater() -> void:
 	label.position = Vector2(-10, -15)
 	water.add_child(label)
 	
-	water.position = Vector2(randf_range(50, screen_size.x - 50), -80)
+	water.position = Vector2(spawn_x, -80)
 	water.set_meta("fall_speed", current_settings["mode1_water_speed"])
 	
-	# Connect drag signals
 	water.input_event.connect(func(_viewport, event, _shape_idx):
-		if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+		if (
+			event is InputEventMouseButton
+			and event.pressed
+			and event.button_index == MOUSE_BUTTON_LEFT
+		):
 			_start_dragging_water(water)
 	)
 	
 	objects_container.add_child(water)
-	
-	# Movement in _physics_process
 	water.set_physics_process(true)
 	water.set_script(preload("res://scripts/multiplayer/FallingObject.gd"))
 
-func _spawn_filter() -> void:
+func _spawn_filter_synced() -> void:
+	# HOST: spawn filter and sync.
+	if not _is_host():
+		return
+	
+	var spawn_id: int = Time.get_ticks_msec() + 1000
+	
+	rpc("_create_filter_at", spawn_id)
+
+@rpc("authority", "call_local", "reliable")
+func _create_filter_at(spawn_id: int) -> void:
+	# Create filter (Mode 2 only).
+	if my_mode != PlayerMode.MODE_2_PROCESSOR:
+		return
+	
 	var filter = Area2D.new()
-	filter.name = "Filter"
+	filter.name = "Filter_" + str(spawn_id)
 	filter.input_pickable = true
 	
 	var collision = CollisionShape2D.new()
@@ -321,7 +362,11 @@ func _input(event: InputEvent) -> void:
 	if not game_active or my_mode != PlayerMode.MODE_1_COLLECTOR:
 		return
 	
-	if event is InputEventMouseButton and not event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+	if (
+		event is InputEventMouseButton
+		and not event.pressed
+		and event.button_index == MOUSE_BUTTON_LEFT
+	):
 		if dragging_water:
 			_drop_water()
 	
@@ -372,10 +417,15 @@ func _on_filter_activated(filter: Area2D) -> void:
 		_update_score_display()
 	filter.queue_free()
 
-func _on_resource_received(from_player: int, resource_type: String, amount: int, _quality: float) -> void:
-	"""Receive resources from partner - creates interconnected gameplay"""
+func _on_resource_received(
+	from_player: int, resource_type: String, amount: int, _quality: float
+) -> void:
+	# Receive resources from partner to support interconnected gameplay.
 	if resource_type == "sorted_greywater":
-		print("📥 Received %d sorted greywater from P%d - partner is helping!" % [amount, from_player])
+		print(
+			"📥 Received %d sorted greywater from P%d - partner is helping!"
+			% [amount, from_player]
+		)
 		# Partner's sorted water could provide bonus or reduce filter load
 
 func _update_score_display() -> void:

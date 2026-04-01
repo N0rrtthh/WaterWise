@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://fjed22wgyfgj"]
+
+[ext_resource type="Script" path="res://test/SafeAreaInfoTest.gd" id="1"]
+
+[node name="SafeAreaInfoTest" type="Node"]
+script = ExtResource("1")

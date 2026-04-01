@@ -1,31 +1,34 @@
 class_name MultiplayerMiniGameBase
 extends Node2D
 
-## ═══════════════════════════════════════════════════════════════════
+## 
 ## MULTIPLAYER MINIGAME BASE CLASS
-## ═══════════════════════════════════════════════════════════════════
+## 
 ## Base template for all multiplayer cooperative mini-games
 ## Handles G-Counter scoring, shared lives, pause sync, and resource transfer
-## ═══════════════════════════════════════════════════════════════════
+## 
 
 signal game_started()
 signal game_completed(success: bool)
-signal player_ready() # Used by NetworkManager
 signal countdown_tick(count: int)
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 
 # GAME CONFIGURATION
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 
 
 @export var game_name: String = "CoopMiniGame"
 @export var game_duration: float = 30.0
 @export var requires_countdown: bool = true  # Show 3-2-1-GO before starting
-@export var connection_type: String = "resource_transfer"  # or "task_marking" or "combined_efficiency"
+@export var connection_type: String = "resource_transfer"
+# Options: resource_transfer, task_marking, combined_efficiency.
 @export var win_quota: int = 0 # If > 0, reaching this score triggers win
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+const FONT_TITLE: Font = preload("res://fonts/Cubao_Free_Wide.otf")
+const FONT_BODY: Font = preload("res://fonts/NTBrickSans.otf")
+
+# 
 # STATE VARIABLES
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 
 
 var game_active: bool = false
 var game_started_time: int = 0
@@ -44,22 +47,22 @@ var pause_menu: Control
 var instruction_overlay: Control
 var timer_label: Label
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 
 # INITIALIZATION
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 
 
 func _ready() -> void:
 	await get_tree().process_frame
 	
 	if not NetworkManager or not NetworkManager.is_multiplayer_connected():
-		push_error("❌ MultiplayerMiniGameBase: Not connected to multiplayer")
+		push_error(" MultiplayerMiniGameBase: Not connected to multiplayer")
 		return
 	
 	# Get player info
 	my_player_num = NetworkManager.get_local_player_num()
 	my_role = NetworkManager.get_player_role(my_player_num)
 	
-	_log("🎮 Multiplayer game starting - Player %d (%s)" % [my_player_num, my_role])
+	_log(" Multiplayer game starting - Player %d (%s)" % [my_player_num, my_role])
 	
 	# Initialize game-specific setup FIRST (sets game_name and game_duration)
 	_on_multiplayer_ready()
@@ -94,7 +97,7 @@ func _ready() -> void:
 			start_game()
 
 func _create_background() -> void:
-	"""Create procedural background for the game"""
+	# Create procedural background for the game
 	# Create a TextureRect instead of ColorRect for gradient support
 	var bg = TextureRect.new()
 	bg.name = "Background"
@@ -118,14 +121,14 @@ func _create_background() -> void:
 	bg.z_index = -100
 
 func _setup_multiplayer_ui() -> void:
-	"""Setup HUD for multiplayer game"""
+	# Setup HUD for multiplayer game
 	hud_layer = CanvasLayer.new()
 	hud_layer.layer = 100  # Above game elements
 	add_child(hud_layer)
 	
-	# Load Fonts
-	var font_title = load("res://fonts/Cubao_Free_Wide.otf")
-	var font_body = load("res://fonts/NTBrickSans.otf")
+	# Load fonts.
+	var font_title = FONT_TITLE
+	var font_body = FONT_BODY
 	
 	# Top Bar Background
 	var top_bar = PanelContainer.new()
@@ -165,7 +168,7 @@ func _setup_multiplayer_ui() -> void:
 	var lives_container = HBoxContainer.new()
 	var lives_label = Label.new()
 	lives_label.name = "LivesLabel"
-	lives_label.text = "❤️ x%d" % NetworkManager.team_lives
+	lives_label.text = " x%d" % NetworkManager.team_lives
 	if font_title: lives_label.add_theme_font_override("font", font_title)
 	lives_label.add_theme_font_size_override("font_size", 32)
 	lives_label.add_theme_color_override("font_outline_color", Color.BLACK)
@@ -178,7 +181,7 @@ func _setup_multiplayer_ui() -> void:
 	var score_container = HBoxContainer.new()
 	var score_label = Label.new()
 	score_label.name = "ScoreLabel"
-	score_label.text = "⭐ %d" % NetworkManager.get_total_score()
+	score_label.text = " %d" % NetworkManager.get_total_score()
 	if font_title: score_label.add_theme_font_override("font", font_title)
 	score_label.add_theme_font_size_override("font_size", 32)
 	score_label.add_theme_color_override("font_outline_color", Color.BLACK)
@@ -290,7 +293,7 @@ func _setup_multiplayer_ui() -> void:
 	
 	# Pause button
 	var pause_btn = Button.new()
-	pause_btn.text = "⏸"
+	pause_btn.text = ""
 	pause_btn.custom_minimum_size = Vector2(50, 50)
 	pause_btn.add_theme_font_size_override("font_size", 24)
 	pause_btn.pressed.connect(_on_pause_pressed)
@@ -306,7 +309,7 @@ func _setup_multiplayer_ui() -> void:
 	_create_controls_panel()
 
 func _create_pause_menu() -> void:
-	"""Create pause menu overlay"""
+	# Create pause menu overlay
 	pause_menu = Control.new()
 	pause_menu.set_anchors_preset(Control.PRESET_FULL_RECT)
 	pause_menu.visible = false
@@ -345,7 +348,7 @@ func _create_pause_menu() -> void:
 	vbox.add_child(quit_btn)
 
 func _create_waiting_overlay() -> void:
-	"""Create 'Waiting for partner' overlay"""
+	# Create 'Waiting for partner' overlay
 	waiting_overlay = Control.new()
 	waiting_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
 	waiting_overlay.visible = false
@@ -366,7 +369,7 @@ func _create_waiting_overlay() -> void:
 	center.add_child(label)
 
 func _create_countdown_overlay() -> void:
-	"""Create countdown overlay (3-2-1-GO!)"""
+	# Create countdown overlay (3-2-1-GO!)
 	var countdown_overlay = Control.new()
 	countdown_overlay.name = "CountdownOverlay"
 	countdown_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -387,7 +390,7 @@ func _create_countdown_overlay() -> void:
 	countdown_label.text = "3"
 	countdown_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	
-	var font_title = load("res://fonts/Cubao_Free_Wide.otf")
+	var font_title = FONT_TITLE
 	if font_title: countdown_label.add_theme_font_override("font", font_title)
 	
 	countdown_label.add_theme_font_size_override("font_size", 160)
@@ -398,24 +401,25 @@ func _create_countdown_overlay() -> void:
 	center.add_child(countdown_label)
 
 func _show_countdown_overlay() -> void:
-	"""Show countdown overlay"""
+	# Show countdown overlay
 	var overlay = hud_layer.get_node_or_null("CountdownOverlay")
 	if overlay:
 		overlay.visible = true
 
 func _hide_countdown_overlay() -> void:
-	"""Hide countdown overlay"""
+	# Hide countdown overlay
 	var overlay = hud_layer.get_node_or_null("CountdownOverlay")
 	if overlay:
 		overlay.visible = false
 
 func _create_instruction_overlay() -> void:
-	"""Create instruction overlay shown before game starts"""
+	# Create instruction overlay shown before game starts
 	instruction_overlay = Control.new()
 	instruction_overlay.name = "InstructionOverlay"
 	instruction_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
 	instruction_overlay.visible = false
-	instruction_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE # Ensure it doesn't block input when hidden/fading
+	# Ensure it does not block input when hidden/fading.
+	instruction_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hud_layer.add_child(instruction_overlay)
 	
 	var bg = ColorRect.new()
@@ -455,8 +459,8 @@ func _create_instruction_overlay() -> void:
 	vbox.custom_minimum_size = Vector2(600, 0)
 	panel.add_child(vbox)
 	
-	var font_title = load("res://fonts/Cubao_Free_Wide.otf")
-	var font_body = load("res://fonts/NTBrickSans.otf")
+	var font_title = FONT_TITLE
+	var font_body = FONT_BODY
 	
 	var title = Label.new()
 	title.name = "Title"
@@ -507,17 +511,23 @@ func _create_instruction_overlay() -> void:
 	tween.tween_property(start_label, "modulate:a", 1.0, 0.8)
 
 func show_instructions(instructions_text: String) -> void:
-	"""Show instruction overlay with custom text"""
+	# Show instruction overlay with custom text
 	if instruction_overlay:
-		var instructions_label = instruction_overlay.get_node_or_null("CenterContainer/PanelContainer/VBoxContainer/Instructions")
+		var instructions_label = instruction_overlay.get_node_or_null(
+			"CenterContainer/PanelContainer/VBoxContainer/Instructions"
+		)
 		if instructions_label:
 			instructions_label.text = instructions_text
 		
-		var title_label = instruction_overlay.get_node_or_null("CenterContainer/PanelContainer/VBoxContainer/Title")
+		var title_label = instruction_overlay.get_node_or_null(
+			"CenterContainer/PanelContainer/VBoxContainer/Title"
+		)
 		if title_label:
 			title_label.text = game_name
 		
-		var role_label = instruction_overlay.get_node_or_null("CenterContainer/PanelContainer/VBoxContainer/Role")
+		var role_label = instruction_overlay.get_node_or_null(
+			"CenterContainer/PanelContainer/VBoxContainer/Role"
+		)
 		if role_label:
 			role_label.text = "Your Role: " + my_role
 		
@@ -528,7 +538,7 @@ func show_instructions(instructions_text: String) -> void:
 		instruction_overlay.gui_input.connect(_on_instruction_clicked)
 
 func _on_instruction_clicked(event: InputEvent) -> void:
-	"""Handle click on instruction overlay"""
+	# Handle click on instruction overlay
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
 		if instruction_overlay and instruction_overlay.visible:
 			instruction_overlay.gui_input.disconnect(_on_instruction_clicked)
@@ -553,7 +563,7 @@ func _on_instruction_clicked(event: InputEvent) -> void:
 				_show_countdown_overlay()
 
 func _show_waiting_for_start() -> void:
-	"""Show waiting message while waiting for partner to click ready"""
+	# Show waiting message while waiting for partner to click ready
 	if not hud_layer: return
 	
 	var overlay = Control.new()
@@ -573,7 +583,7 @@ func _show_waiting_for_start() -> void:
 	overlay.add_child(label)
 
 func _on_countdown_tick(count: int) -> void:
-	"""Countdown tick received"""
+	# Countdown tick received
 	# Remove waiting overlay if exists
 	var waiting = hud_layer.get_node_or_null("WaitingStartOverlay")
 	if waiting: waiting.queue_free()
@@ -597,12 +607,12 @@ func _on_countdown_tick(count: int) -> void:
 		tween.tween_property(countdown_label, "scale", Vector2(1.5, 1.5), 0.2).from(Vector2.ZERO)
 		tween.tween_property(countdown_label, "scale", Vector2(1.0, 1.0), 0.2)
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 
 # GAME FLOW
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 
 
 func start_game() -> void:
-	"""Start the game (called after countdown or immediately)"""
+	# Start the game (called after countdown or immediately)
 	game_active = true
 	game_started_time = Time.get_ticks_msec()
 	game_started.emit()
@@ -614,12 +624,12 @@ func start_game() -> void:
 	add_child(ui_timer)
 	ui_timer.start()
 	
-	_log("🎮 Game started! Duration: %.0fs | Inputs enabled" % game_duration)
-	_log("🎮 Player %d (%s) - Ready to play!" % [my_player_num, my_role])
+	_log(" Game started! Duration: %.0fs | Inputs enabled" % game_duration)
+	_log(" Player %d (%s) - Ready to play!" % [my_player_num, my_role])
 	_on_game_start()
 
 func _update_timer_display() -> void:
-	"""Update timer label and progress bar"""
+	# Update timer label and progress bar
 	if not game_active:
 		ui_timer.stop()
 		return
@@ -640,7 +650,9 @@ func _update_timer_display() -> void:
 				timer_label.add_theme_color_override("font_color", Color(1.0, 0.9, 0.3))
 	
 	# Update progress bar
-	var progress_bar = hud_layer.get_node_or_null("PanelContainer/MarginContainer/HBoxContainer/VBoxContainer/VBoxContainer/TimerProgress")
+	var progress_bar = hud_layer.get_node_or_null(
+		"PanelContainer/MarginContainer/HBoxContainer/VBoxContainer/VBoxContainer/TimerProgress"
+	)
 	if progress_bar and game_duration < 999999.0:
 		progress_bar.value = remaining
 		
@@ -658,31 +670,31 @@ func _update_timer_display() -> void:
 		_on_time_up()
 
 func _on_time_up() -> void:
-	"""Called when time runs out"""
-	_log("⏰ Time up!")
+	# Called when time runs out
+	_log(" Time up!")
 	# Default behavior: If quota exists and not met, fail. Else success.
 	if win_quota > 0:
 		if local_score >= win_quota:
 			end_game(true)
 		else:
-			_log("❌ Quota not met (%d/%d)" % [local_score, win_quota])
+			_log(" Quota not met (%d/%d)" % [local_score, win_quota])
 			end_game(false)
 	else:
 		end_game(true) # Survival success
 
 func _on_countdown_complete() -> void:
-	"""Called when countdown reaches GO"""
+	# Called when countdown reaches GO
 	_hide_countdown_overlay()
 	start_game()
 
 func end_game(success: bool) -> void:
-	"""End the game and report results"""
+	# End the game and report results
 	if not game_active:
 		return
 	
 	game_active = false
 	
-	_log("🏁 Game ended - %s" % ("Success" if success else "Failed"))
+	_log(" Game ended - %s" % ("Success" if success else "Failed"))
 	
 	# Show results/waiting overlay
 	_show_results_screen(success)
@@ -694,42 +706,42 @@ func end_game(success: bool) -> void:
 		NetworkManager.report_player_completion(success, local_score)
 
 func show_waiting_overlay() -> void:
-	"""Show waiting for partner overlay"""
+	# Show waiting for partner overlay
 	is_waiting_for_partner = true
 	# waiting_overlay is now handled by _show_results_screen(true)
-	_log("⏳ Waiting for partner...")
+	_log(" Waiting for partner...")
 
 func hide_waiting_overlay() -> void:
-	"""Hide waiting overlay"""
+	# Hide waiting overlay
 	is_waiting_for_partner = false
 	var results = hud_layer.get_node_or_null("ResultsOverlay")
 	if results:
 		results.visible = false
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 
 # SCORING (G-Counter)
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 
 
 func add_score(points: int) -> void:
-	"""Add points to local score and sync via G-Counter"""
+	# Add points to local score and sync via G-Counter
 	local_score += points
 	
 	if NetworkManager:
 		NetworkManager.increment_local(points)
 	
-	_log("⭐ +%d points (Local: %d)" % [points, local_score])
+	_log(" +%d points (Local: %d)" % [points, local_score])
 	
 	# Check quota
 	if win_quota > 0 and local_score >= win_quota:
-		_log("✅ Quota met! (%d/%d)" % [local_score, win_quota])
+		_log(" Quota met! (%d/%d)" % [local_score, win_quota])
 		end_game(true)
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 
 # PAUSE HANDLING
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 
 
 func _on_pause_pressed() -> void:
-	"""Local player pressed pause"""
+	# Local player pressed pause
 	if NetworkManager:
 		NetworkManager.request_pause()
 	
@@ -737,7 +749,7 @@ func _on_pause_pressed() -> void:
 		pause_menu.visible = true
 
 func _on_resume_pressed() -> void:
-	"""Local player pressed resume"""
+	# Local player pressed resume
 	if NetworkManager:
 		NetworkManager.request_resume()
 	
@@ -745,11 +757,11 @@ func _on_resume_pressed() -> void:
 		pause_menu.visible = false
 
 func _on_quit_pressed() -> void:
-	"""Quit button pressed - terminate session for both players"""
+	# Quit button pressed - terminate session for both players
 	if pause_menu:
 		pause_menu.visible = false
 	
-	_log("🚪 Player quitting session")
+	_log(" Player quitting session")
 	
 	if NetworkManager:
 		# Disconnect and return both players to lobby
@@ -759,18 +771,18 @@ func _on_quit_pressed() -> void:
 	get_tree().change_scene_to_file("res://scenes/ui/MultiplayerLobby.tscn")
 
 func _on_remote_pause() -> void:
-	"""Partner paused the game"""
+	# Partner paused the game
 	if pause_menu:
 		pause_menu.visible = true
 
 func _on_remote_resume() -> void:
-	"""Partner resumed the game"""
+	# Partner resumed the game
 	if pause_menu:
 		pause_menu.visible = false
 
 func _on_player_left_session(_peer_id: int) -> void:
-	"""Handle when any player leaves - terminate session for both players"""
-	_log("👋 Player left session - terminating for all players")
+	# Handle when any player leaves - terminate session for both players
+	_log(" Player left session - terminating for all players")
 	
 	game_active = false
 	
@@ -806,30 +818,34 @@ func _on_player_left_session(_peer_id: int) -> void:
 	vbox.add_child(message)
 	
 	# Wait 2 seconds then return to lobby
-	await get_tree().create_timer(2.0).timeout
-	
-	if NetworkManager:
-		NetworkManager.disconnect_multiplayer()
-	
-	get_tree().change_scene_to_file("res://scenes/ui/MultiplayerLobby.tscn")
+	var tree = get_tree()
+	if tree:
+		await tree.create_timer(2.0).timeout
+		
+		if NetworkManager:
+			NetworkManager.disconnect_multiplayer()
+		
+		if is_inside_tree():
+			tree.change_scene_to_file("res://scenes/ui/MultiplayerLobby.tscn")
 
 func _on_server_disconnected() -> void:
-	"""Handle when server disconnects (Host quits)"""
-	_log("⚠️ Server disconnected - terminating session")
-	_on_player_left_session(1) # Reuse same logic
-
+	# Handle when server disconnects (Host quits)
+	_log(" Server disconnected - terminating session")
 	
+	# Don't call _on_player_left_session to avoid duplicate UI
 	if NetworkManager:
 		NetworkManager.disconnect_multiplayer()
 	
-	get_tree().change_scene_to_file("res://scenes/ui/MultiplayerLobby.tscn")
+	var tree = get_tree()
+	if tree and is_inside_tree():
+		tree.change_scene_to_file("res://scenes/ui/MultiplayerLobby.tscn")
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 
 # MAIN LOOP
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 
 
 func _process(_delta: float) -> void:
-	"""Update timer display with countdown colors"""
+	# Update timer display with countdown colors
 	if not game_active or not timer_label:
 		return
 	
@@ -868,15 +884,15 @@ func _process(_delta: float) -> void:
 			timer_label.add_theme_color_override("font_color", Color(1, 0.3, 0.3))
 			end_game(false)
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 
 # NETWORK CALLBACKS
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 
 
 func _on_team_score_updated(total_score: int) -> void:
-	"""Team score updated via G-Counter"""
+	# Team score updated via G-Counter
 	var score_label = hud_layer.find_child("ScoreLabel", true, false)
 	if score_label:
-		score_label.text = "⭐ %d" % total_score
+		score_label.text = " %d" % total_score
 		
 		# Pop animation
 		var tween = create_tween()
@@ -885,10 +901,10 @@ func _on_team_score_updated(total_score: int) -> void:
 		tween.tween_property(score_label, "scale", Vector2(1.0, 1.0), 0.1)
 
 func _on_team_lives_updated(remaining_lives: int) -> void:
-	"""Team lives updated"""
+	# Team lives updated
 	var lives_label = hud_layer.find_child("LivesLabel", true, false)
 	if lives_label:
-		lives_label.text = "❤️ x%d" % remaining_lives
+		lives_label.text = " x%d" % remaining_lives
 		
 		# Flash red and shake if life lost
 		var tween = create_tween()
@@ -905,32 +921,44 @@ func _on_team_lives_updated(remaining_lives: int) -> void:
 	if remaining_lives <= 0:
 		_on_game_over()
 
-func _on_resource_received(from_player: int, resource_type: String, amount: int, quality: float) -> void:
-	"""Resource received from partner"""
+func _on_resource_received(
+	from_player: int,
+	resource_type: String,
+	amount: int,
+	quality: float
+) -> void:
+	# Resource received from partner
 	# Override in child class to handle resource
-	_log("📥 Received %s x%d (quality: %.1f) from P%d" % [resource_type, amount, quality, from_player])
+	_log(
+		" Received %s x%d (quality: %.1f) from P%d" % [
+			resource_type,
+			amount,
+			quality,
+			from_player
+		]
+	)
 
 func _on_task_marked(from_player: int, task_id: int, pos: Vector2) -> void:
-	"""Task marked by partner"""
+	# Task marked by partner
 	# Override in child class to handle task marking
-	_log("📍 Task #%d marked by P%d at %s" % [task_id, from_player, pos])
+	_log(" Task #%d marked by P%d at %s" % [task_id, from_player, pos])
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 
 # HELPER FUNCTIONS
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 
 
 func send_resource_to_partner(resource_type: String, amount: int, quality: float = 1.0) -> void:
-	"""Send resource to partner player"""
+	# Send resource to partner player
 	if NetworkManager:
 		NetworkManager.send_resource(resource_type, amount, quality)
 
 func mark_task_for_partner(task_id: int, task_position: Vector2) -> void:
-	"""Mark a task for partner to complete"""
+	# Mark a task for partner to complete
 	if NetworkManager:
 		NetworkManager.mark_task(task_id, task_position)
 
 func _create_controls_panel() -> void:
-	"""Create persistent controls panel at bottom right"""
+	# Create persistent controls panel at bottom right
 	var panel = PanelContainer.new()
 	panel.name = "ControlsPanel"
 	panel.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
@@ -990,38 +1018,38 @@ func _create_controls_panel() -> void:
 	controls_vbox.add_child(controls_label)
 
 func get_controls_text() -> String:
-	"""Override this to provide game-specific controls"""
-	return "⬅️ ➡️ Arrow Keys\n🖱️ Click to interact\n⏸ Pause button"
+	# Override this to provide game-specific controls
+	return "  Arrow Keys\n Click to interact\n Pause button"
 
 func _log(message: String) -> void:
-	"""Internal logging"""
+	# Internal logging
 	print("[%s P%d] %s" % [game_name, my_player_num, message])
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 
 # OVERRIDE THESE IN CHILD CLASSES
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 
 
 func get_instructions() -> String:
-	"""Override: Return instruction text for this game"""
+	# Override: Return instruction text for this game
 	return ""
 
 func _on_multiplayer_ready() -> void:
-	"""Override: Called when multiplayer setup is complete"""
+	# Override: Called when multiplayer setup is complete
 	pass
 
 func _on_game_start() -> void:
-	"""Override: Called when game actually starts"""
+	# Override: Called when game actually starts
 	pass
 
 func _on_game_over() -> void:
-	"""Override: Called when team runs out of lives"""
-	_log("💀 GAME OVER")
+	# Override: Called when team runs out of lives
+	_log(" GAME OVER")
 	_show_results_screen(false)
 
 
 
 func _show_game_over_screen() -> void:
-	"""Show game over screen when lives are depleted"""
+	# Show game over screen when lives are depleted
 	var overlay = Control.new()
 	overlay.name = "GameOverOverlay"
 	overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -1056,7 +1084,10 @@ func _show_game_over_screen() -> void:
 	vbox.add_child(sub)
 	
 	var score_label = Label.new()
-	score_label.text = "Final Score: %d\nRounds Survived: %d" % [NetworkManager.get_total_score(), NetworkManager.rounds_survived]
+	score_label.text = "Final Score: %d\nRounds Survived: %d" % [
+		NetworkManager.get_total_score(),
+		NetworkManager.rounds_survived
+	]
 	score_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	score_label.add_theme_font_size_override("font_size", 36)
 	score_label.add_theme_color_override("font_color", Color.YELLOW)
@@ -1077,7 +1108,7 @@ func _show_game_over_screen() -> void:
 	vbox.add_child(btn_container)
 
 func _show_results_screen(success: bool) -> void:
-	"""Show Game Over or Success screen"""
+	# Show Game Over or Success screen
 	var overlay = Control.new()
 	overlay.name = "ResultsOverlay"
 	overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -1100,7 +1131,10 @@ func _show_results_screen(success: bool) -> void:
 	title.text = "LEVEL COMPLETE!" if success else "GAME OVER"
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title.add_theme_font_size_override("font_size", 72)
-	title.add_theme_color_override("font_color", Color(0.4, 1.0, 0.4) if success else Color(1.0, 0.3, 0.3))
+	title.add_theme_color_override(
+		"font_color",
+		Color(0.4, 1.0, 0.4) if success else Color(1.0, 0.3, 0.3)
+	)
 	title.add_theme_constant_override("outline_size", 8)
 	title.add_theme_color_override("font_outline_color", Color.BLACK)
 	vbox.add_child(title)
@@ -1122,12 +1156,20 @@ func _show_results_screen(success: bool) -> void:
 	is_waiting_for_partner = true
 	
 	# Connect to NetworkManager signal for round transition
-	if NetworkManager and not NetworkManager.both_players_completed.is_connected(_on_both_players_completed):
+	if (
+		NetworkManager
+		and not NetworkManager.both_players_completed.is_connected(_on_both_players_completed)
+	):
 		NetworkManager.both_players_completed.connect(_on_both_players_completed)
 
-func _on_both_players_completed(p1_success: bool, p2_success: bool, p1_score: int, p2_score: int) -> void:
-	"""Called when both players complete their games"""
-	_log("📊 Round Complete - P1: %s (%d), P2: %s (%d)" % [
+func _on_both_players_completed(
+	p1_success: bool,
+	p2_success: bool,
+	p1_score: int,
+	p2_score: int
+) -> void:
+	# Called when both players complete their games
+	_log(" Round Complete - P1: %s (%d), P2: %s (%d)" % [
 		"Win" if p1_success else "Fail", p1_score,
 		"Win" if p2_success else "Fail", p2_score
 	])
@@ -1135,8 +1177,13 @@ func _on_both_players_completed(p1_success: bool, p2_success: bool, p1_score: in
 	# Update results screen
 	_show_round_summary(p1_success, p2_success, p1_score, p2_score)
 
-func _show_round_summary(p1_success: bool, p2_success: bool, p1_score: int, p2_score: int) -> void:
-	"""Show detailed round summary"""
+func _show_round_summary(
+	p1_success: bool,
+	p2_success: bool,
+	p1_score: int,
+	p2_score: int
+) -> void:
+	# Show detailed round summary
 	var overlay = hud_layer.get_node_or_null("ResultsOverlay")
 	if not overlay:
 		return
@@ -1167,23 +1214,35 @@ func _show_round_summary(p1_success: bool, p2_success: bool, p1_score: int, p2_s
 	
 	# Player 1 results
 	var p1_label = Label.new()
-	p1_label.text = "Player 1: %s - %d points" % ["✅ WIN" if p1_success else "❌ FAIL", p1_score]
+	p1_label.text = "Player 1: %s - %d points" % [
+		" WIN" if p1_success else " FAIL",
+		p1_score
+	]
 	p1_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	p1_label.add_theme_font_size_override("font_size", 32)
-	p1_label.add_theme_color_override("font_color", Color(0.4, 1.0, 0.4) if p1_success else Color(1.0, 0.4, 0.4))
+	p1_label.add_theme_color_override(
+		"font_color",
+		Color(0.4, 1.0, 0.4) if p1_success else Color(1.0, 0.4, 0.4)
+	)
 	vbox.add_child(p1_label)
 	
 	# Player 2 results
 	var p2_label = Label.new()
-	p2_label.text = "Player 2: %s - %d points" % ["✅ WIN" if p2_success else "❌ FAIL", p2_score]
+	p2_label.text = "Player 2: %s - %d points" % [
+		" WIN" if p2_success else " FAIL",
+		p2_score
+	]
 	p2_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	p2_label.add_theme_font_size_override("font_size", 32)
-	p2_label.add_theme_color_override("font_color", Color(0.4, 1.0, 0.4) if p2_success else Color(1.0, 0.4, 0.4))
+	p2_label.add_theme_color_override(
+		"font_color",
+		Color(0.4, 1.0, 0.4) if p2_success else Color(1.0, 0.4, 0.4)
+	)
 	vbox.add_child(p2_label)
 	
 	# Team totals
 	var total_label = Label.new()
-	total_label.text = "Team Score: %d\nLives: ❤️ x%d\nRounds: %d" % [
+	total_label.text = "Team Score: %d\nLives:  x%d\nRounds: %d" % [
 		p1_score + p2_score,
 		NetworkManager.team_lives,
 		NetworkManager.rounds_survived
@@ -1196,7 +1255,7 @@ func _show_round_summary(p1_success: bool, p2_success: bool, p1_score: int, p2_s
 	# Life deduction notice
 	if not p1_success or not p2_success:
 		var life_notice = Label.new()
-		life_notice.text = "💔 Life Lost!"
+		life_notice.text = " Life Lost!"
 		life_notice.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		life_notice.add_theme_font_size_override("font_size", 36)
 		life_notice.add_theme_color_override("font_color", Color(1.0, 0.3, 0.3))

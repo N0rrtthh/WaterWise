@@ -13,29 +13,33 @@ var num_pipes: int = 3
 var active_leak: Node2D = null
 
 func _apply_difficulty_settings() -> void:
-	match current_difficulty:
-		"Easy":
-			num_pipes = 2
-			leak_rate = 6.0
-			plug_rate = 20.0
-			max_water_waste = 120.0
-			game_duration = 10.0
-		"Medium":
-			num_pipes = 3
-			leak_rate = 10.0
-			plug_rate = 15.0
-			max_water_waste = 100.0
-			game_duration = 12.0
-		"Hard":
-			num_pipes = 4
-			leak_rate = 18.0
-			plug_rate = 12.0
-			max_water_waste = 70.0
-			game_duration = 15.0
+	super._apply_difficulty_settings()
+
+	var complexity = int(difficulty_settings.get("task_complexity", 2))
+	var speed_mult = float(difficulty_settings.get("speed_multiplier", 1.0))
+	var base_time = float(difficulty_settings.get("time_limit", game_duration))
+
+	num_pipes = clamp(complexity + 1, 2, 4)
+	leak_rate = 8.0 * clamp(speed_mult, 0.8, 1.3)
+	plug_rate = 17.0 / max(clamp(speed_mult, 0.8, 1.3), 0.8)
+
+	# Keep challenge fair as count increases.
+	max_water_waste = 80.0 + float(5 - num_pipes) * 15.0
+	game_duration = base_time + float(num_pipes) * 2.5
+
+	if current_difficulty == "Hard":
+		leak_rate *= 1.12
+		plug_rate *= 0.92
+		max_water_waste = max(60.0, max_water_waste - 10.0)
+		game_duration = max(14.0, game_duration - 1.5)
 
 func _ready():
 	game_name = "Plug The Leak"
-	game_instruction_text = Localization.get_text("plug_the_leak_instructions") if Localization else "HOLD on leaking pipes to plug them!\nDon't waste water! 🔧"
+	game_instruction_text = (
+		Localization.get_text("plug_the_leak_instructions")
+		if Localization
+		else "HOLD on leaking pipes to plug them!\nDon't waste water! 🔧"
+	)
 	game_duration = 25.0
 	game_mode = "survival"
 	show_quota = false
@@ -114,7 +118,9 @@ func _create_pipe(index: int) -> Node2D:
 	# Water spray effect
 	for j in range(5):
 		var drop = Polygon2D.new()
-		drop.polygon = PackedVector2Array([Vector2(0, -8), Vector2(5, 0), Vector2(0, 8), Vector2(-5, 0)])
+		drop.polygon = PackedVector2Array([
+			Vector2(0, -8), Vector2(5, 0), Vector2(0, 8), Vector2(-5, 0)
+		])
 		drop.color = Color(0.3, 0.6, 1.0, 0.8)
 		drop.position = Vector2(40 + j * 10, randf_range(-15, 15))
 		leak.add_child(drop)

@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://d8w9zh4yrs3xe"]
+
+[ext_resource type="Script" path="res://test/AssetLoadingErrorHandlingTest.gd" id="1_asset_test"]
+
+[node name="AssetLoadingErrorHandlingTest" type="Node"]
+script = ExtResource("1_asset_test")

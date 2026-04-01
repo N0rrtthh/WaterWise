@@ -1,0 +1,147 @@
+{
+  "version": "1.0",
+  "minigame_key": "default",
+  "cutscene_type": "fail",
+  "duration": 2.5,
+  "character": {
+    "expression": "sad",
+    "deformation_enabled": true
+  },
+  "background_color": "#0a1e0f",
+  "keyframes": [
+    {
+      "time": 0.0,
+      "transforms": [
+        {
+          "type": "scale",
+          "value": [0.4, 0.4],
+          "relative": false
+        },
+        {
+          "type": "position",
+          "value": [0, -50],
+          "relative": true
+        },
+        {
+          "type": "rotation",
+          "value": 0.0,
+          "relative": false
+        }
+      ],
+      "easing": "ease_in"
+    },
+    {
+      "time": 0.5,
+      "transforms": [
+        {
+          "type": "scale",
+          "value": [1.2, 1.2],
+          "relative": false
+        },
+        {
+          "type": "position",
+          "value": [0, 0],
+          "relative": false
+        },
+        {
+          "type": "rotation",
+          "value": -0.2,
+          "relative": false
+        }
+      ],
+      "easing": "bounce"
+    },
+    {
+      "time": 1.0,
+      "transforms": [
+        {
+          "type": "scale",
+          "value": [0.9, 0.9],
+          "relative": false
+        },
+        {
+          "type": "position",
+          "value": [0, 10],
+          "relative": true
+        },
+        {
+          "type": "rotation",
+          "value": 0.15,
+          "relative": false
+        }
+      ],
+      "easing": "ease_out"
+    },
+    {
+      "time": 1.5,
+      "transforms": [
+        {
+          "type": "scale",
+          "value": [1.1, 1.1],
+          "relative": false
+        },
+        {
+          "type": "position",
+          "value": [0, -5],
+          "relative": true
+        },
+        {
+          "type": "rotation",
+          "value": -0.08,
+          "relative": false
+        }
+      ],
+      "easing": "ease_in_out"
+    },
+    {
+      "time": 2.0,
+      "transforms": [
+        {
+          "type": "scale",
+          "value": [1.0, 1.0],
+          "relative": false
+        },
+        {
+          "type": "position",
+          "value": [0, 0],
+          "relative": false
+        },
+        {
+          "type": "rotation",
+          "value": 0.0,
+          "relative": false
+        }
+      ],
+      "easing": "ease_in_out"
+    },
+    {
+      "time": 2.5,
+      "transforms": [
+        {
+          "type": "scale",
+          "value": [0.5, 0.5],
+          "relative": false
+        }
+      ],
+      "easing": "ease_in"
+    }
+  ],
+  "particles": [
+    {
+      "time": 0.5,
+      "type": "smoke",
+      "duration": 1.5,
+      "density": "medium"
+    }
+  ],
+  "audio_cues": [
+    {
+      "time": 0.0,
+      "sound": "failure"
+    },
+    {
+      "time": 0.5,
+      "sound": "damage"
+    }
+  ]
+}
