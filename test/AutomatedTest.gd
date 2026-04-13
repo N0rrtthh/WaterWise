@@ -77,12 +77,12 @@ func _kickoff_tests() -> void:
 	_run_tests()
 
 func _log(text: String) -> void:
-	"""Add text to output"""
+	# Add text to output
 	output_label.text += text + "\n"
 	print(text)
 
 func _run_tests() -> void:
-	"""Run all automated tests"""
+	# Run all automated tests
 	test_running = true
 	
 	# Validate autoload
@@ -122,7 +122,7 @@ func _run_tests() -> void:
 	test_running = false
 
 func _test_poor_performance() -> void:
-	"""Test: Poor performance should lead to Easy difficulty"""
+	# Test: Poor performance should lead to Easy difficulty
 	_log("[color=yellow]━━━ TEST 1: Poor Performance ━━━[/color]")
 	_log("Simulating 3 games with low accuracy...")
 	_log("")
@@ -150,7 +150,7 @@ func _test_poor_performance() -> void:
 	_log("")
 
 func _test_improved_performance() -> void:
-	"""Test: Improved performance should lead to Medium difficulty"""
+	# Test: Improved performance should lead to Medium difficulty
 	_log("[color=yellow]━━━ TEST 2: Improved Performance ━━━[/color]")
 	_log("Simulating 5 games with moderate accuracy...")
 	_log("")
@@ -170,7 +170,7 @@ func _test_improved_performance() -> void:
 	_log("")
 
 func _test_expert_performance() -> void:
-	"""Test: Expert performance should lead to Hard difficulty"""
+	# Test: Expert performance should lead to Hard difficulty
 	_log("[color=yellow]━━━ TEST 3: Expert Performance ━━━[/color]")
 	_log("Simulating 5 games with high accuracy...")
 	_log("")
@@ -190,6 +190,6 @@ func _test_expert_performance() -> void:
 	_log("")
 
 func _on_back() -> void:
-	"""Return to launcher"""
+	# Return to launcher
 	if not test_running:
 		get_tree().change_scene_to_file("res://test/DemoLauncher.tscn")
