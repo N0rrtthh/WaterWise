@@ -374,7 +374,10 @@ func _build_success_scene(vp: Vector2) -> void:
 	var sp_pts = PackedVector2Array()
 	for i in range(20):
 		var a = i * TAU / 20
-		sp_pts.append(Vector2(cos(a) * vp.x * 0.3, sin(a) * vp.y * 0.15) + Vector2(vp.x * 0.5, vp.y * 0.72))
+		sp_pts.append(
+			Vector2(cos(a) * vp.x * 0.3, sin(a) * vp.y * 0.15)
+			+ Vector2(vp.x * 0.5, vp.y * 0.72)
+		)
 	spotlight.polygon = sp_pts
 	spotlight.color = Color(1.0, 1.0, 0.85, 0.2)
 	_scene_bg.add_child(spotlight)
@@ -469,7 +472,10 @@ func _build_failure_scene(vp: Vector2) -> void:
 	var pill_pts = PackedVector2Array()
 	for i in range(10):
 		var a = i * TAU / 10
-		pill_pts.append(Vector2(cos(a) * 14, sin(a) * 8) + Vector2(vp.x * 0.65 + 30, vp.y * 0.68 - 16))
+		pill_pts.append(
+			Vector2(cos(a) * 14, sin(a) * 8)
+			+ Vector2(vp.x * 0.65 + 30, vp.y * 0.68 - 16)
+		)
 	pillow.polygon = pill_pts
 	pillow.color = Color(0.98, 0.98, 1.0)
 	_scene_bg.add_child(pillow)
@@ -1393,9 +1399,15 @@ func _run_outro_character_vfx() -> void:
 			dance.tween_interval(1.8)
 			var d_loop = dance.set_loops(4)
 			d_loop.tween_property(_water_droplet, "scale", Vector2(1.2, 0.75), 0.18)
-			d_loop.tween_property(_water_droplet, "position:y", target_pos.y - 20, 0.22).set_ease(Tween.EASE_OUT)
+			d_loop.tween_property(
+				_water_droplet, "position:y",
+				target_pos.y - 20, 0.22
+			).set_ease(Tween.EASE_OUT)
 			d_loop.tween_property(_water_droplet, "scale", Vector2(0.85, 1.2), 0.18)
-			d_loop.tween_property(_water_droplet, "position:y", target_pos.y, 0.22).set_ease(Tween.EASE_IN)
+			d_loop.tween_property(
+				_water_droplet, "position:y",
+				target_pos.y, 0.22
+			).set_ease(Tween.EASE_IN)
 			d_loop.tween_property(_water_droplet, "scale", Vector2(1.4, 0.55), 0.14)
 			d_loop.tween_property(_water_droplet, "scale", Vector2(1.0, 1.0), 0.16)
 
@@ -1441,7 +1453,10 @@ func _run_outro_character_vfx() -> void:
 			var stars = _water_droplet.get_node_or_null("DizzyStars")
 			if stars:
 				var star_spin = create_tween().set_loops(6)
-				star_spin.tween_property(stars, "rotation", stars.rotation + TAU, 1.2).set_trans(Tween.TRANS_LINEAR)
+				star_spin.tween_property(
+					stars, "rotation",
+					stars.rotation + TAU, 1.2
+				).set_trans(Tween.TRANS_LINEAR)
 
 			# Limp arm swing
 			var arm_l = _water_droplet.get_node_or_null("Arm_L")

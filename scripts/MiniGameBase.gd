@@ -46,6 +46,15 @@ var chaos_effects_active: Array = []
 ## Audio Timer
 var _last_tick_second: int = -1
 
+## Internal timer reference (so we can stop it in end_game)
+var _game_timer: Timer
+
+## Chaos effect timer references (stopped on game end to prevent leaks)
+var _chaos_timers: Array[Timer] = []
+
+## Control reverse flag — child classes check this to invert input
+var controls_reversed: bool = false
+
 ## UI References
 var timer_label: Label
 var score_label: Label
@@ -119,6 +128,20 @@ func _load_difficulty_settings() -> void:
 		chaos_effects_active = difficulty_settings.get("chaos_effects", [])
 		
 		print("🎮 %s | Difficulty: %s" % [game_name, current_difficulty])
+	else:
+		# Fallback defaults when no difficulty system is available
+		difficulty_settings = {
+			"speed_multiplier": 1.0,
+			"time_limit": 15,
+			"chaos_effects": [],
+			"task_complexity": 1,
+			"item_count": 3,
+			"distractors": 0,
+			"progressive_level": 0,
+			"progression_bonus": 0
+		}
+		current_difficulty = "Medium"
+		print("🎮 %s | Difficulty: %s (fallback)" % [game_name, current_difficulty])
 
 func _apply_difficulty_settings() -> void:
 	# Override this in child classes to apply specific settings
@@ -172,6 +195,18 @@ func end_game(success: bool = true) -> void:
 	timer_running = false
 	get_tree().paused = false
 	
+	# Stop the game timer so it can't double-trigger
+	if _game_timer and is_instance_valid(_game_timer):
+		_game_timer.stop()
+	
+	# Stop all chaos effect timers to prevent memory leaks
+	for t in _chaos_timers:
+		if is_instance_valid(t):
+			t.stop()
+			t.queue_free()
+	_chaos_timers.clear()
+	controls_reversed = false
+	
 	# Stop gameplay music
 	if AudioManager:
 		AudioManager.stop_music(0.5)
@@ -189,7 +224,7 @@ func end_game(success: bool = true) -> void:
 		if success:
 			droplets_earned = 10 # Base reward
 			if accuracy > 0.9: droplets_earned += 5 # Perfect bonus
-			if reaction_time < game_duration * 500: droplets_earned += 5 # Speed bonus
+			if reaction_time < game_duration * 1000: droplets_earned += 5 # Speed bonus
 			GameManager.water_droplets += droplets_earned
 		
 		# Always complete minigame (records performance for algorithm)
@@ -273,12 +308,15 @@ func record_action(is_correct: bool) -> void:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func _start_timer() -> void:
-	var timer = Timer.new()
-	timer.wait_time = game_duration
-	timer.one_shot = true
-	timer.timeout.connect(_on_timer_timeout)
-	add_child(timer)
-	timer.start()
+	if _game_timer:
+		_game_timer.stop()
+		_game_timer.queue_free()
+	_game_timer = Timer.new()
+	_game_timer.wait_time = game_duration
+	_game_timer.one_shot = true
+	_game_timer.timeout.connect(_on_timer_timeout)
+	add_child(_game_timer)
+	_game_timer.start()
 
 func _on_timer_timeout() -> void:
 	if game_active:
@@ -323,9 +361,12 @@ func _start_screen_shake(intensity: float) -> void:
 					randf_range(-intensity * 5, intensity * 5),
 					randf_range(-intensity * 5, intensity * 5)
 				)
+			else:
+				camera.offset = Vector2.ZERO
 		)
 		add_child(shake_timer)
 		shake_timer.start()
+		_chaos_timers.append(shake_timer)
 
 func _spawn_mud_splatters() -> void:
 	# Create random mud splatter sprites
@@ -334,6 +375,7 @@ func _spawn_mud_splatters() -> void:
 	splatter_timer.timeout.connect(_create_mud_splatter)
 	add_child(splatter_timer)
 	splatter_timer.start()
+	_chaos_timers.append(splatter_timer)
 
 func _create_mud_splatter() -> void:
 	var splatter = ColorRect.new()
@@ -371,11 +413,11 @@ func _spawn_buzzing_fly() -> void:
 	)
 	add_child(move_timer)
 	move_timer.start()
+	_chaos_timers.append(move_timer)
 
 func _activate_control_reverse() -> void:
-	# This would be implemented per-game basis
-	# Flag that controls should be reversed
-	pass
+	# Set flag — child classes should check controls_reversed to invert input
+	controls_reversed = true
 
 func _create_visual_obstruction() -> void:
 	# Create semi-transparent overlays
@@ -664,7 +706,7 @@ func _setup_ui() -> void:
 	_create_pause_menu()
 
 func _setup_animated_cutscene_player() -> void:
-	"""Initialize the SimpleCutscenePlayer for win/fail cutscenes"""
+	# Initialize the SimpleCutscenePlayer for win/fail cutscenes
 	animated_cutscene_player = SimpleCutscenePlayer.new()
 	animated_cutscene_player.visible = false
 	animated_cutscene_player.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -1004,7 +1046,7 @@ func _show_tally_screen(success: bool, _accuracy: float, _reaction_time: int):
 	print("❌ No outro cutscene found at all")
 	await get_tree().create_timer(0.55).timeout
 
-func _resolve_narrative_outro_scene(success: bool) -> PackedScene:
+func _resolve_narrative_outro_scene(_success: bool) -> PackedScene:
 	var key = _get_minigame_key()
 
 	# Try to use generic narrative scene (shows character outcome animation)
@@ -1069,7 +1111,7 @@ func _get_outro_anim_profile(success: bool) -> Dictionary:
 		"pop": 1.05 if success else 0.95
 	}
 
-func _show_round_score_page(success: bool, accuracy: float, reaction_time: int) -> void:
+func _show_round_score_page(success: bool, accuracy: float, _reaction_time: int) -> void:
 	# ═══════════════════════════════════════════════════════════════════════
 	# DWTD-STYLE SCORING PAGE  — Water Drop Characters + Evaporation
 	# ═══════════════════════════════════════════════════════════════════════
@@ -1444,7 +1486,7 @@ func _get_result_line_for_key(success: bool, key: String) -> String:
 
 func _show_failure_micro_cutscene() -> void:
 	# Try to use SimpleCutscenePlayer
-	if animated_cutscene_player:
+	if animated_cutscene_player and animated_cutscene_player.has_method("play_cutscene"):
 		animated_cutscene_player.visible = true
 		animated_cutscene_player.play_cutscene(_get_minigame_key(), 1)  # 1 = FAIL
 		await animated_cutscene_player.cutscene_finished
@@ -1498,7 +1540,7 @@ func _show_failure_micro_cutscene() -> void:
 
 func _show_success_micro_cutscene() -> void:
 	# Try to use SimpleCutscenePlayer
-	if animated_cutscene_player:
+	if animated_cutscene_player and animated_cutscene_player.has_method("play_cutscene"):
 		animated_cutscene_player.visible = true
 		animated_cutscene_player.play_cutscene(_get_minigame_key(), 0)  # 0 = WIN
 		await animated_cutscene_player.cutscene_finished
