@@ -30,7 +30,8 @@ signal case_study_exported(file_path: String)
 @export_category("Algorithm Settings")
 @export var window_size: int = 5  # Rolling window keeps last 5 games (as per outline)
 @export var adaptation_frequency: int = 1  # Every N games (Paper: evaluate each new game)
-@export var min_games_before_adaptation: int = 5  # Need full window before adapting (Paper: window_size = 5)
+# Need full window before adapting (Paper: window_size = 5)
+@export var min_games_before_adaptation: int = 5
 @export var target_latency_ms: float = 100.0
 
 ## Behavioral Thresholds
@@ -351,7 +352,9 @@ func add_performance(
 
 	# Record latency for ISO 25010 compliance
 	if PerformanceProfiler and _lat_start > 0:
-		PerformanceProfiler.end_latency_measurement(_lat_start, "AdaptiveDifficulty.add_performance")
+		PerformanceProfiler.end_latency_measurement(
+			_lat_start, "AdaptiveDifficulty.add_performance"
+		)
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # RULE-BASED ALGORITHM - ROLLING WINDOW DECISION TREE
@@ -440,10 +443,8 @@ func _print_algorithm_debug(
 	metrics: Dictionary, decision: Dictionary,
 	old_difficulty: String
 ) -> void:
-	"""
-	SIMPLIFIED OUTPUT for panelist demonstration
-	Shows key algorithm metrics in an easy-to-read format
-	"""
+	# SIMPLIFIED OUTPUT for panelist demonstration
+	# Shows key algorithm metrics in an easy-to-read format
 	# Get the key values from the algorithm calculation
 	var phi = metrics.get("proficiency_index", 0.0)  # Main metric: Proficiency Index
 	var new_diff = decision.get("new_difficulty", "Medium")  # Result: New difficulty
@@ -469,84 +470,82 @@ func _print_algorithm_debug(
 	])
 
 func _calculate_window_metrics() -> Dictionary:
-	"""
-	╔════════════════════════════════════════════════════════════════════════╗
-	║ WEIGHTED PROFICIENCY INDEX WITH CONSISTENCY PENALTY                    ║
-	║ Research-Based Mathematical Model for Adaptive Difficulty              ║
-	╚════════════════════════════════════════════════════════════════════════╝
-	
-	This function implements a sophisticated weighted moving average algorithm
-	with consistency penalty to calculate player proficiency. Unlike simple
-	averaging, this approach:
-	
-	1. Gives MORE WEIGHT to recent performance (recency bias)
-	2. PENALIZES erratic/inconsistent timing (standard deviation)
-	3. Produces a PROFICIENCY INDEX (Phi) that better predicts skill level
-	
-	Mathematical Foundation:
-	━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-	
-	PART A: Weighted Accuracy (Recency Bias)
-	─────────────────────────────────────────
-	Formula: WMA = Σ(w_i * x_i) / Σ(w_i)
-	
-	Where:
-	  - w_i = weight for game i (linear: 1, 2, 3, 4, 5)
-	  - x_i = accuracy for game i (0.0 to 1.0)
-	  - Most recent game has highest weight
-	
-	Example (5 games):
-	  Game 1 (oldest):  accuracy = 0.6, weight = 1
-	  Game 2:           accuracy = 0.7, weight = 2
-	  Game 3:           accuracy = 0.8, weight = 3
-	  Game 4:           accuracy = 0.9, weight = 4
-	  Game 5 (newest):  accuracy = 0.95, weight = 5
-	  
-	  WMA = (1×0.6 + 2×0.7 + 3×0.8 + 4×0.9 + 5×0.95) / (1+2+3+4+5)
-	      = (0.6 + 1.4 + 2.4 + 3.6 + 4.75) / 15
-	      = 12.75 / 15
-	      = 0.85
-	
-	PART B: Consistency Penalty (Standard Deviation)
-	─────────────────────────────────────────────────
-	Formula: σ = sqrt(Σ(x_i - μ)² / N)
-	
-	Where:
-	  - σ (sigma) = standard deviation
-	  - x_i = reaction time for game i
-	  - μ (mu) = mean reaction time
-	  - N = number of games
-	
-	Normalized Penalty = min(σ / 5000.0, 0.2)
-	  - Dividing by 5000ms normalizes erratic timing
-	  - Capped at 0.2 (20% maximum penalty)
-	  - Erratic timing → high penalty → lower proficiency
-	
-	Example:
-	  Times: [5000ms, 6000ms, 5500ms, 5200ms, 8000ms]
-	  Mean: 5940ms
-	  Deviations: [-940, 60, -440, -740, 2060]
-	  Squared: [883600, 3600, 193600, 547600, 4243600]
-	  Variance: (883600+3600+193600+547600+4243600) / 5 = 1174400
-	  σ = sqrt(1174400) ≈ 1083.7ms
-	  Penalty = min(1083.7 / 5000, 0.2) = 0.217 → clamped to 0.2
-	
-	PART C: Proficiency Index (Phi - Φ)
-	────────────────────────────────────
-	Formula: Φ = WMA - Penalty
-	
-	Where:
-	  - Φ (Phi) = Proficiency Index
-	  - WMA = Weighted Moving Average of accuracy
-	  - Penalty = Consistency Penalty
-	
-	Range: -0.2 to 1.0
-	  - High Φ = Skilled + Consistent
-	  - Low Φ = Struggling OR Erratic
-	
-	This index is used for adaptive difficulty decisions.
-	━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-	"""
+	# ╔════════════════════════════════════════════════════════════════════════╗
+	# ║ WEIGHTED PROFICIENCY INDEX WITH CONSISTENCY PENALTY                    ║
+	# ║ Research-Based Mathematical Model for Adaptive Difficulty              ║
+	# ╚════════════════════════════════════════════════════════════════════════╝
+	#
+	# This function implements a sophisticated weighted moving average algorithm
+	# with consistency penalty to calculate player proficiency. Unlike simple
+	# averaging, this approach:
+	#
+	# 1. Gives MORE WEIGHT to recent performance (recency bias)
+	# 2. PENALIZES erratic/inconsistent timing (standard deviation)
+	# 3. Produces a PROFICIENCY INDEX (Phi) that better predicts skill level
+	#
+	# Mathematical Foundation:
+	# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+	#
+	# PART A: Weighted Accuracy (Recency Bias)
+	# ─────────────────────────────────────────
+	# Formula: WMA = Σ(w_i * x_i) / Σ(w_i)
+	#
+	# Where:
+	# - w_i = weight for game i (linear: 1, 2, 3, 4, 5)
+	# - x_i = accuracy for game i (0.0 to 1.0)
+	# - Most recent game has highest weight
+	#
+	# Example (5 games):
+	# Game 1 (oldest):  accuracy = 0.6, weight = 1
+	# Game 2:           accuracy = 0.7, weight = 2
+	# Game 3:           accuracy = 0.8, weight = 3
+	# Game 4:           accuracy = 0.9, weight = 4
+	# Game 5 (newest):  accuracy = 0.95, weight = 5
+	#
+	# WMA = (1×0.6 + 2×0.7 + 3×0.8 + 4×0.9 + 5×0.95) / (1+2+3+4+5)
+	# = (0.6 + 1.4 + 2.4 + 3.6 + 4.75) / 15
+	# = 12.75 / 15
+	# = 0.85
+	#
+	# PART B: Consistency Penalty (Standard Deviation)
+	# ─────────────────────────────────────────────────
+	# Formula: σ = sqrt(Σ(x_i - μ)² / N)
+	#
+	# Where:
+	# - σ (sigma) = standard deviation
+	# - x_i = reaction time for game i
+	# - μ (mu) = mean reaction time
+	# - N = number of games
+	#
+	# Normalized Penalty = min(σ / 5000.0, 0.2)
+	# - Dividing by 5000ms normalizes erratic timing
+	# - Capped at 0.2 (20% maximum penalty)
+	# - Erratic timing → high penalty → lower proficiency
+	#
+	# Example:
+	# Times: [5000ms, 6000ms, 5500ms, 5200ms, 8000ms]
+	# Mean: 5940ms
+	# Deviations: [-940, 60, -440, -740, 2060]
+	# Squared: [883600, 3600, 193600, 547600, 4243600]
+	# Variance: (883600+3600+193600+547600+4243600) / 5 = 1174400
+	# σ = sqrt(1174400) ≈ 1083.7ms
+	# Penalty = min(1083.7 / 5000, 0.2) = 0.217 → clamped to 0.2
+	#
+	# PART C: Proficiency Index (Phi - Φ)
+	# ────────────────────────────────────
+	# Formula: Φ = WMA - Penalty
+	#
+	# Where:
+	# - Φ (Phi) = Proficiency Index
+	# - WMA = Weighted Moving Average of accuracy
+	# - Penalty = Consistency Penalty
+	#
+	# Range: -0.2 to 1.0
+	# - High Φ = Skilled + Consistent
+	# - Low Φ = Struggling OR Erratic
+	#
+	# This index is used for adaptive difficulty decisions.
+	# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 	
 	# Edge case: No data available
 	if performance_window.is_empty():
@@ -735,82 +734,80 @@ func _calculate_window_metrics() -> Dictionary:
 	}
 
 func _evaluate_decision_tree(metrics: Dictionary) -> Dictionary:
-	"""
-	╔════════════════════════════════════════════════════════════════════════╗
-	║ PROFICIENCY-BASED DECISION TREE                                        ║
-	║ Mathematical Adaptive Difficulty Algorithm                             ║
-	╚════════════════════════════════════════════════════════════════════════╝
-	
-	This function uses the Proficiency Index (Φ) to make difficulty decisions.
-	Unlike rule-based systems that check multiple conditions, this uses a
-	single robust metric that already encodes:
-	  - Performance quality (weighted accuracy)
-	  - Consistency (standard deviation penalty)
-	
-	Decision Tree Logic:
-	━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-	
-	RULE 1: STRUGGLING / ERRATIC (Φ < 0.5)
-	───────────────────────────────────────
-	Threshold: Proficiency Index < 0.5
-	
-	Interpretation:
-	  - Low weighted accuracy (poor recent performance), OR
-	  - High consistency penalty (erratic/unstable timing)
-	
-	Example Case 1 (Struggling):
-	  WMA = 0.45, Penalty = 0.05 → Φ = 0.40
-	  → Player is genuinely struggling, needs easier tasks
-	
-	Example Case 2 (Erratic):
-	  WMA = 0.65, Penalty = 0.20 → Φ = 0.45
-	  → Player has okay accuracy but very inconsistent timing
-	  → Could indicate confusion, stress, or lack of understanding
-	  → Easier difficulty helps stabilize performance
-	
-	Action: Set difficulty to "Easy"
-	Rationale: Provide scaffolding and support
-	
-	RULE 2: MASTERY + CONSISTENCY (Φ > 0.85)
-	─────────────────────────────────────────
-	Threshold: Proficiency Index > 0.85
-	
-	Interpretation:
-	  - High weighted accuracy (strong recent performance), AND
-	  - Low consistency penalty (stable/consistent timing)
-	
-	Example Case:
-	  WMA = 0.92, Penalty = 0.05 → Φ = 0.87
-	  → Player consistently performs well
-	  → Ready for challenge to maintain engagement
-	
-	Action: Set difficulty to "Hard"
-	Rationale: Prevent boredom, maintain flow state
-	
-	RULE 3: FLOW STATE (0.5 ≤ Φ ≤ 0.85)
-	────────────────────────────────────
-	Threshold: 0.5 ≤ Proficiency Index ≤ 0.85
-	
-	Interpretation:
-	  - Moderate performance with acceptable consistency
-	  - Player is in optimal learning zone
-	
-	Example Cases:
-	  WMA = 0.70, Penalty = 0.10 → Φ = 0.60 (Lower flow)
-	  WMA = 0.82, Penalty = 0.08 → Φ = 0.74 (Upper flow)
-	
-	Action: Set difficulty to "Medium"
-	Rationale: Maintain engagement without frustration
-	
-	Mathematical Advantages:
-	━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-	1. Single robust metric (easier to tune/validate)
-	2. Recency bias (recent performance matters more)
-	3. Consistency enforcement (stable timing = higher proficiency)
-	4. Clearer thresholds (no compound conditions)
-	5. Better research documentation (formula-based)
-	━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-	"""
+	# ╔════════════════════════════════════════════════════════════════════════╗
+	# ║ PROFICIENCY-BASED DECISION TREE                                        ║
+	# ║ Mathematical Adaptive Difficulty Algorithm                             ║
+	# ╚════════════════════════════════════════════════════════════════════════╝
+	#
+	# This function uses the Proficiency Index (Φ) to make difficulty decisions.
+	# Unlike rule-based systems that check multiple conditions, this uses a
+	# single robust metric that already encodes:
+	# - Performance quality (weighted accuracy)
+	# - Consistency (standard deviation penalty)
+	#
+	# Decision Tree Logic:
+	# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+	#
+	# RULE 1: STRUGGLING / ERRATIC (Φ < 0.5)
+	# ───────────────────────────────────────
+	# Threshold: Proficiency Index < 0.5
+	#
+	# Interpretation:
+	# - Low weighted accuracy (poor recent performance), OR
+	# - High consistency penalty (erratic/unstable timing)
+	#
+	# Example Case 1 (Struggling):
+	# WMA = 0.45, Penalty = 0.05 → Φ = 0.40
+	# → Player is genuinely struggling, needs easier tasks
+	#
+	# Example Case 2 (Erratic):
+	# WMA = 0.65, Penalty = 0.20 → Φ = 0.45
+	# → Player has okay accuracy but very inconsistent timing
+	# → Could indicate confusion, stress, or lack of understanding
+	# → Easier difficulty helps stabilize performance
+	#
+	# Action: Set difficulty to "Easy"
+	# Rationale: Provide scaffolding and support
+	#
+	# RULE 2: MASTERY + CONSISTENCY (Φ > 0.85)
+	# ─────────────────────────────────────────
+	# Threshold: Proficiency Index > 0.85
+	#
+	# Interpretation:
+	# - High weighted accuracy (strong recent performance), AND
+	# - Low consistency penalty (stable/consistent timing)
+	#
+	# Example Case:
+	# WMA = 0.92, Penalty = 0.05 → Φ = 0.87
+	# → Player consistently performs well
+	# → Ready for challenge to maintain engagement
+	#
+	# Action: Set difficulty to "Hard"
+	# Rationale: Prevent boredom, maintain flow state
+	#
+	# RULE 3: FLOW STATE (0.5 ≤ Φ ≤ 0.85)
+	# ────────────────────────────────────
+	# Threshold: 0.5 ≤ Proficiency Index ≤ 0.85
+	#
+	# Interpretation:
+	# - Moderate performance with acceptable consistency
+	# - Player is in optimal learning zone
+	#
+	# Example Cases:
+	# WMA = 0.70, Penalty = 0.10 → Φ = 0.60 (Lower flow)
+	# WMA = 0.82, Penalty = 0.08 → Φ = 0.74 (Upper flow)
+	#
+	# Action: Set difficulty to "Medium"
+	# Rationale: Maintain engagement without frustration
+	#
+	# Mathematical Advantages:
+	# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+	# 1. Single robust metric (easier to tune/validate)
+	# 2. Recency bias (recent performance matters more)
+	# 3. Consistency enforcement (stable timing = higher proficiency)
+	# 4. Clearer thresholds (no compound conditions)
+	# 5. Better research documentation (formula-based)
+	# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 	
 	# Extract the primary metric: Proficiency Index (Φ)
 	var proficiency: float = metrics.get("proficiency_index", 0.0)
@@ -1076,10 +1073,8 @@ func get_difficulty_settings() -> Dictionary:
 ##       Perfect for showing panelists "Here's what the algorithm is doing!"
 ## ═══════════════════════════════════════════════════════════════════════
 func get_algorithm_status() -> Dictionary:
-	"""
-	Returns comprehensive algorithm state for research/demo purposes.
-	Use this to display the algorithm's work to panelists or in debug UI.
-	"""
+	# Returns comprehensive algorithm state for research/demo purposes.
+	# Use this to display the algorithm's work to panelists or in debug UI.
 	var metrics = _get_window_metrics() if performance_window.size() > 0 else {}
 	
 	var status = {

@@ -135,14 +135,12 @@ func add_game_result(
 	p2_performance: Dictionary,
 	team_success: bool
 ) -> void:
-	"""
-	Add cooperative game result and update adaptive difficulty
-	
-	Parameters:
-	- p1_performance: {accuracy: float, time: float, errors: int}
-	- p2_performance: {accuracy: float, time: float, errors: int}
-	- team_success: bool (both players succeeded)
-	"""
+	# Add cooperative game result and update adaptive difficulty
+	#
+	# Parameters:
+	# - p1_performance: {accuracy: float, time: float, errors: int}
+	# - p2_performance: {accuracy: float, time: float, errors: int}
+	# - team_success: bool (both players succeeded)
 	
 	# Validate input
 	var p1_valid = _validate_performance_data(p1_performance)
@@ -250,19 +248,17 @@ func add_game_result(
 ##      partner is learning (Φ=0.4). We need to track each person separately!
 ## ═══════════════════════════════════════════════════════════════════════════
 func calculate_proficiency_index(rolling_window: Array[Dictionary]) -> float:
-	"""
-	Calculate Proficiency Index (Φ) using EXACT formula from the paper:
-	
-	Formula: Φ = WMA - CP
-	
-	Where:
-	- WMA = Weighted Moving Average with linear weights [1,2,3,4,5]
-	- CP  = min(σ / 5000.0, 0.2) — standard deviation in ms, capped at 20%
-	
-	Identical to AdaptiveDifficulty._calculate_proficiency_index()
-	
-	Returns: Φ value between -0.2 and 1.0
-	"""
+	# Calculate Proficiency Index (Φ) using EXACT formula from the paper:
+	#
+	# Formula: Φ = WMA - CP
+	#
+	# Where:
+	# - WMA = Weighted Moving Average with linear weights [1,2,3,4,5]
+	# - CP  = min(σ / 5000.0, 0.2) — standard deviation in ms, capped at 20%
+	#
+	# Identical to AdaptiveDifficulty._calculate_proficiency_index()
+	#
+	# Returns: Φ value between -0.2 and 1.0
 	
 	# ────────────────────────────────────────────────────────────────────────
 	# EDGE CASE: No data yet for this player
@@ -364,18 +360,16 @@ func calculate_proficiency_index(rolling_window: Array[Dictionary]) -> float:
 ## 5. Apply synchronization adjustments (help with coordination)
 ## ═══════════════════════════════════════════════════════════════════════════
 func adjust_coop_difficulty() -> void:
-	"""
-	Main adaptive difficulty adjustment logic for cooperative mode
-	
-	Algorithm Steps:
-	1. Calculate Φ1 and Φ2 using Proficiency Index formula
-	2. Calculate skill gap: |Φ1 - Φ2|
-	3. Apply adjustment strategy:
-	   - Large gap (>0.15): ASYMMETRIC (different difficulties)
-	   - Small gap (≤0.15): SYMMETRIC (same difficulty based on team average)
-	4. Apply load balancing if asymmetric
-	5. Consider synchronization for coordination adjustments
-	"""
+	# Main adaptive difficulty adjustment logic for cooperative mode
+	#
+	# Algorithm Steps:
+	# 1. Calculate Φ1 and Φ2 using Proficiency Index formula
+	# 2. Calculate skill gap: |Φ1 - Φ2|
+	# 3. Apply adjustment strategy:
+	# - Large gap (>0.15): ASYMMETRIC (different difficulties)
+	# - Small gap (≤0.15): SYMMETRIC (same difficulty based on team average)
+	# 4. Apply load balancing if asymmetric
+	# 5. Consider synchronization for coordination adjustments
 	
 	# ────────────────────────────────────────────────────────────────────────
 	# STEP 1: Calculate Proficiency Indexes for EACH player
@@ -434,14 +428,12 @@ func adjust_coop_difficulty() -> void:
 	_apply_synchronization_adjustments()
 
 func _apply_asymmetric_adjustment() -> void:
-	"""
-	ASYMMETRIC adjustment for large skill gaps (>15%)
-	
-	Logic:
-	- Weaker player: Φ_adjusted = Φ_weaker - (skill_gap × 0.3)
-	- Stronger player: Φ_adjusted = Φ_stronger + (skill_gap × 0.2)
-	- Apply load balancing (task count, hints, time)
-	"""
+	# ASYMMETRIC adjustment for large skill gaps (>15%)
+	#
+	# Logic:
+	# - Weaker player: Φ_adjusted = Φ_weaker - (skill_gap × 0.3)
+	# - Stronger player: Φ_adjusted = Φ_stronger + (skill_gap × 0.2)
+	# - Apply load balancing (task count, hints, time)
 	is_asymmetric = true
 	_log("⚖️ ASYMMETRIC adjustment (Large skill gap)")
 	
@@ -492,14 +484,12 @@ func _apply_asymmetric_adjustment() -> void:
 				adjusted_weaker_phi])
 
 func _apply_symmetric_adjustment() -> void:
-	"""
-	SYMMETRIC adjustment for small skill gaps (≤15%)
-	
-	Logic:
-	- Team_Φ = (Φ1 + Φ2) / 2
-	- Both players get same difficulty based on Team_Φ
-	- No load balancing needed
-	"""
+	# SYMMETRIC adjustment for small skill gaps (≤15%)
+	#
+	# Logic:
+	# - Team_Φ = (Φ1 + Φ2) / 2
+	# - Both players get same difficulty based on Team_Φ
+	# - No load balancing needed
 	is_asymmetric = false
 	_log("⚖️ SYMMETRIC adjustment (Small skill gap)")
 	
@@ -569,21 +559,19 @@ func get_difficulty_params(player_num: int) -> Dictionary:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func get_player_parameters(player_num: int) -> Dictionary:
-	"""
-	Get difficulty parameters for specific player with load balancing
-	
-	Returns:
-	{
-		difficulty: String,
-		time_limit: int,
-		task_count: int,
-		hints_enabled: bool,
-		visual_guidance: bool,
-		hint_frequency: String,
-		complexity: String,
-		load_balanced: bool
-	}
-	"""
+	# Get difficulty parameters for specific player with load balancing
+	#
+	# Returns:
+	# {
+	# difficulty: String,
+	# time_limit: int,
+	# task_count: int,
+	# hints_enabled: bool,
+	# visual_guidance: bool,
+	# hint_frequency: String,
+	# complexity: String,
+	# load_balanced: bool
+	# }
 	
 	var difficulty = player1_difficulty if player_num == 1 else player2_difficulty
 	var base_params = BASE_SETTINGS[difficulty].duplicate(true)
@@ -627,12 +615,10 @@ func get_player_parameters(player_num: int) -> Dictionary:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func _apply_synchronization_adjustments() -> void:
-	"""
-	Apply coordination adjustments based on synchronization score
-	
-	Poor sync (<60%): Add coordination cues, slow initial pace
-	Excellent sync (>85%): Increase pace, add challenge elements
-	"""
+	# Apply coordination adjustments based on synchronization score
+	#
+	# Poor sync (<60%): Add coordination cues, slow initial pace
+	# Excellent sync (>85%): Increase pace, add challenge elements
 	
 	if synchronization_history.is_empty():
 		return

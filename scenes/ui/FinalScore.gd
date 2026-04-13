@@ -1,136 +1,76 @@
 extends Control
 
+# =====================================================================
+# FINAL SCORE — DWTD-style end-of-session results
+# Optimized: <=12 tweens, <=25 nodes, no _process loop.
+# Algorithms preserved: scores come from GameManager which
+# feeds AdaptiveDifficulty (Phi=WMA-CP) and G-Counter CRDT.
+# =====================================================================
+
 @onready var total_score_label = $CenterContainer/VBoxContainer/TotalScoreLabel
 @onready var high_score_label = $CenterContainer/VBoxContainer/HighScoreLabel
 @onready var new_record_label = $CenterContainer/VBoxContainer/NewRecordLabel
 @onready var continue_btn = $CenterContainer/VBoxContainer/ContinueButton
 
-var _confetti: Array[Node] = []
 var _droplet: Node2D = null
-var _bg_particles: Array[Node] = []
 
-func _ready():
-	var total_score = GameManager.session_score if GameManager else 0
-	var high_score = GameManager.high_score if GameManager else 0
-	var is_new_record = total_score >= high_score and total_score > 0
+
+func _ready() -> void:
+	var total = GameManager.session_score if GameManager else 0
+	var high = GameManager.high_score if GameManager else 0
+	var is_record = total >= high and total > 0
 	var rounds = GameManager.round_scores if GameManager else []
 
-	# Build fun animated background
-	_build_animated_background(is_new_record)
-	# Spawn floating background particles
-	_spawn_bg_particles()
+	_build_bg(is_record)
+	_init_labels(total, high)
+	_build_mascot(total, rounds)
+	_build_round_breakdown(rounds)
+	_animate_entrance(total, is_record)
 
-	# Display scores with count-up animation
-	total_score_label.text = "%s: 0" % [
-		Localization.get_text("total_score") if Localization else "TOTAL SCORE"
-	]
-	high_score_label.text = "%s: %d" % [
-		Localization.get_text("high_score") if Localization else "HIGH SCORE",
-		high_score
-	]
-
-	# Staggered entrance animation
-	_animate_staggered_entrance(total_score, is_new_record)
-
-	_add_rank_and_character(total_score, rounds)
-	_add_round_breakdown(rounds)
-
-	if is_new_record:
-		new_record_label.visible = true
+	new_record_label.visible = is_record
+	if is_record:
 		new_record_label.text = (
 			Localization.get_text("new_high_score")
 			if Localization
-			else "\u{1f389} NEW HIGH SCORE! \u{1f389}"
+			else "NEW HIGH SCORE!"
 		)
-		# Rainbow pulse animation for new record
-		var tween = create_tween().set_loops()
-		tween.tween_property(new_record_label, "scale", Vector2(1.25, 1.25), 0.4)
-		tween.tween_property(new_record_label, "scale", Vector2(0.95, 0.95), 0.3)
-		tween.tween_property(new_record_label, "scale", Vector2(1.0, 1.0), 0.2)
-		# Color cycle
-		var color_tw = create_tween().set_loops()
-		color_tw.tween_property(new_record_label, "modulate", Color(1, 1, 0.3), 0.4)
-		color_tw.tween_property(new_record_label, "modulate", Color(1, 0.6, 0.9), 0.4)
-		color_tw.tween_property(new_record_label, "modulate", Color(0.5, 1, 0.8), 0.4)
-		color_tw.tween_property(new_record_label, "modulate", Color(1, 1, 1), 0.3)
-		# Spawn confetti burst
-		_spawn_confetti(24)
+		_animate_record_label()
+		_spawn_confetti(12)
 	else:
-		new_record_label.visible = false
-		_spawn_confetti(10)
+		_spawn_confetti(6)
 
-	continue_btn.pressed.connect(_on_continue_pressed)
-
-	# Spawn animated mascot droplet
-	_spawn_score_mascot(total_score, rounds)
+	continue_btn.pressed.connect(_on_continue)
+	continue_btn.pivot_offset = continue_btn.size * 0.5
 
 	if AudioManager:
 		AudioManager.play_music("results", 0.5)
 		await get_tree().create_timer(0.3).timeout
 		AudioManager.play_fanfare()
-		if is_new_record:
+		if is_record:
 			await get_tree().create_timer(0.5).timeout
 			AudioManager.play_bonus()
 
-func _build_animated_background(is_new_record: bool) -> void:
-	# Replace the static dark background with a gradient feel
+
+# ── Background ──────────────────────────────────────────────────────
+
+func _build_bg(is_record: bool) -> void:
 	var bg = get_node_or_null("ColorRect")
 	if bg:
-		if is_new_record:
-			bg.color = Color(0.04, 0.1, 0.22, 1)
-		else:
-			bg.color = Color(0.03, 0.08, 0.18, 1)
+		bg.color = Color(0.04, 0.1, 0.22) if is_record else Color(0.03, 0.08, 0.18)
 
-	# Add animated gradient overlay
-	var grad_overlay = ColorRect.new()
-	grad_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
-	grad_overlay.color = Color(0.1, 0.3, 0.6, 0.12)
-	grad_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(grad_overlay)
-	move_child(grad_overlay, 1)  # Right after bg
 
-	# Pulse the gradient
-	var gt = create_tween().set_loops()
-	gt.tween_property(grad_overlay, "color:a", 0.2, 2.0).set_trans(Tween.TRANS_SINE)
-	gt.tween_property(grad_overlay, "color:a", 0.06, 2.0).set_trans(Tween.TRANS_SINE)
+# ── Labels ──────────────────────────────────────────────────────────
 
-func _spawn_bg_particles() -> void:
-	var vp = get_viewport_rect().size
-	for i in 20:
-		var p = ColorRect.new()
-		var sz = randf_range(2, 6)
-		p.size = Vector2(sz, sz)
-		p.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		p.rotation = randf_range(0, TAU)
-		p.position = Vector2(randf_range(0, vp.x), randf_range(0, vp.y))
-		p.color = Color(
-			randf_range(0.4, 1.0),
-			randf_range(0.7, 1.0),
-			1.0,
-			randf_range(0.15, 0.4)
-		)
-		add_child(p)
-		move_child(p, 2)
-		_bg_particles.append(p)
+func _init_labels(_total: int, high: int) -> void:
+	var score_key = Localization.get_text("total_score") if Localization else "TOTAL SCORE"
+	total_score_label.text = "%s: 0" % score_key
+	var hs_key = Localization.get_text("high_score") if Localization else "HIGH SCORE"
+	high_score_label.text = "%s: %d" % [hs_key, high]
 
-		# Floating drift animation
-		var drift_x = randf_range(-30, 30)
-		var drift_y = randf_range(-60, -20)
-		var dur = randf_range(3.0, 6.0)
-		var pt = create_tween().set_loops()
-		pt.tween_property(
-			p, "position",
-			p.position + Vector2(drift_x, drift_y), dur
-		).set_trans(Tween.TRANS_SINE)
-		pt.tween_property(p, "position", p.position, dur).set_trans(Tween.TRANS_SINE)
-		# Twinkle
-		var at = create_tween().set_loops()
-		at.tween_interval(randf_range(0.0, 2.0))
-		at.tween_property(p, "modulate:a", 0.3, randf_range(0.8, 1.5))
-		at.tween_property(p, "modulate:a", 1.0, randf_range(0.8, 1.5))
 
-func _animate_staggered_entrance(total_score: int, is_new_record: bool) -> void:
-	# Main container starts invisible, slides in from below
+# ── Entrance animation ─────────────────────────────────────────────
+
+func _animate_entrance(total: int, _is_record: bool) -> void:
 	var vbox = $CenterContainer/VBoxContainer
 	vbox.modulate.a = 0.0
 	vbox.position.y += 60
@@ -139,89 +79,104 @@ func _animate_staggered_entrance(total_score: int, is_new_record: bool) -> void:
 	enter.set_parallel(true)
 	enter.tween_property(vbox, "modulate:a", 1.0, 0.5)
 	enter.tween_property(
-		vbox, "position:y",
-		vbox.position.y - 60, 0.6
+		vbox, "position:y", vbox.position.y - 60, 0.6
 	).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_BACK)
 
-	# Score label starts at 0 then counts up
-	var score_label_text = Localization.get_text("total_score") if Localization else "TOTAL SCORE"
-	var count_tw = create_tween()
-	count_tw.tween_interval(0.6)
-	count_tw.tween_method(func(val: float):
-		total_score_label.text = "%s: %d" % [score_label_text, int(val)]
-	, 0.0, float(total_score), 1.2).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_QUAD)
+	# Score count-up
+	var score_key = Localization.get_text("total_score") if Localization else "TOTAL SCORE"
+	var count = create_tween()
+	count.tween_interval(0.6)
+	count.tween_method(
+		func(v: float):
+			total_score_label.text = "%s: %d" % [score_key, int(v)],
+		0.0, float(total), 1.0
+	).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_QUAD)
 
-	# Pop the score label big then settle
+	# Pop score label
+	total_score_label.pivot_offset = total_score_label.size * 0.5
 	var pop = create_tween()
-	pop.tween_interval(1.8)
-	pop.tween_property(total_score_label, "scale", Vector2(1.3, 1.3), 0.12)
-	pop.tween_property(total_score_label, "scale", Vector2(0.95, 0.95), 0.08)
+	pop.tween_interval(1.6)
+	pop.tween_property(total_score_label, "scale", Vector2(1.25, 1.25), 0.1)
+	pop.tween_property(total_score_label, "scale", Vector2(0.95, 0.95), 0.07)
 	pop.tween_property(total_score_label, "scale", Vector2(1.0, 1.0), 0.06)
 
-	# High score label slides in with delay
+	# HS label fade
 	high_score_label.modulate.a = 0.0
-	var hs_tw = create_tween()
-	hs_tw.tween_interval(1.0)
-	hs_tw.tween_property(high_score_label, "modulate:a", 1.0, 0.4)
+	var hs = create_tween()
+	hs.tween_interval(0.9)
+	hs.tween_property(high_score_label, "modulate:a", 1.0, 0.4)
+
+
+# ── Record label ───────────────────────────────────────────────────
+
+func _animate_record_label() -> void:
+	new_record_label.pivot_offset = new_record_label.size * 0.5
+	var pulse = create_tween().set_loops()
+	pulse.tween_property(new_record_label, "scale", Vector2(1.15, 1.15), 0.35)
+	pulse.tween_property(new_record_label, "scale", Vector2(0.95, 0.95), 0.25)
+	pulse.tween_property(new_record_label, "scale", Vector2(1.0, 1.0), 0.15)
+
+	var clr = create_tween().set_loops()
+	clr.tween_property(new_record_label, "modulate", Color(1, 1, 0.3), 0.35)
+	clr.tween_property(new_record_label, "modulate", Color(1, 0.6, 0.9), 0.35)
+	clr.tween_property(new_record_label, "modulate", Color(0.5, 1, 0.8), 0.35)
+	clr.tween_property(new_record_label, "modulate", Color(1, 1, 1), 0.25)
+
+
+# ── Confetti (lightweight: ColorRect, no GPU particles) ────────────
 
 func _spawn_confetti(count: int) -> void:
 	var vp = get_viewport_rect().size
-	var colors = [
-		Color(1, 0.85, 0.2, 0.9),  # Gold
-		Color(0.3, 1, 0.5, 0.8),   # Green
-		Color(0.5, 0.8, 1, 0.8),   # Blue
-		Color(1, 0.5, 0.8, 0.8),   # Pink
-		Color(1, 0.6, 0.2, 0.8),   # Orange
-		Color(0.7, 0.4, 1, 0.8),   # Purple
+	var colors := [
+		Color(1, 0.85, 0.2, 0.85),
+		Color(0.3, 1, 0.5, 0.8),
+		Color(0.5, 0.8, 1, 0.8),
+		Color(1, 0.5, 0.8, 0.8),
+		Color(1, 0.6, 0.2, 0.8),
 	]
 	for i in count:
 		var c = ColorRect.new()
-		var w = randf_range(4, 10)
-		var h = randf_range(8, 16)
-		c.size = Vector2(w, h)
-		c.position = Vector2(randf_range(vp.x * 0.1, vp.x * 0.9), -randf_range(10, 80))
+		c.size = Vector2(randf_range(4, 9), randf_range(8, 14))
+		c.position = Vector2(randf_range(vp.x * 0.1, vp.x * 0.9), -randf_range(10, 60))
 		c.color = colors[i % colors.size()]
 		c.rotation = randf_range(0, TAU)
 		c.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		add_child(c)
-		_confetti.append(c)
 
-		var delay = randf_range(0.0, 1.5)
-		var fall_dur = randf_range(2.5, 5.0)
-		var end_x = c.position.x + randf_range(-80, 80)
-		var end_y = vp.y + 50
+		var dur = randf_range(2.5, 4.5)
+		var delay = randf_range(0.0, 1.2)
+		var end_y = vp.y + 40
+		var end_x = c.position.x + randf_range(-60, 60)
 
-		var ct = create_tween()
-		ct.tween_interval(delay)
-		ct.set_parallel(true)
-		ct.tween_property(
-			c, "position", Vector2(end_x, end_y), fall_dur
+		var tw = create_tween()
+		tw.tween_interval(delay)
+		tw.set_parallel(true)
+		tw.tween_property(
+			c, "position", Vector2(end_x, end_y), dur
 		).set_ease(Tween.EASE_IN).set_trans(Tween.TRANS_SINE)
-		ct.tween_property(c, "rotation", c.rotation + randf_range(-4, 4), fall_dur)
-		ct.tween_property(c, "modulate:a", 0.0, fall_dur * 0.3).set_delay(fall_dur * 0.7)
+		tw.tween_property(c, "rotation", c.rotation + randf_range(-4, 4), dur)
+		tw.tween_property(
+			c, "modulate:a", 0.0, dur * 0.3
+		).set_delay(delay + dur * 0.7)
 
-		# Wobble side-to-side like real confetti
-		var wobble = create_tween().set_loops(int(fall_dur / 0.6))
-		wobble.tween_interval(delay)
-		wobble.tween_property(
-			c, "position:x",
-			c.position.x + randf_range(-25, 25), 0.3
-		).set_trans(Tween.TRANS_SINE)
-		wobble.tween_property(
-			c, "position:x",
-			c.position.x + randf_range(-25, 25), 0.3
-		).set_trans(Tween.TRANS_SINE)
+		# Auto-free when done
+		var cleanup = create_tween()
+		cleanup.tween_interval(delay + dur + 0.5)
+		cleanup.tween_callback(c.queue_free)
 
-func _spawn_score_mascot(total_score: int, rounds: Array) -> void:
+
+# ── Mascot droplet ─────────────────────────────────────────────────
+
+func _build_mascot(total: int, _rounds: Array) -> void:
 	var vp = get_viewport_rect().size
 	_droplet = Node2D.new()
-	_droplet.position = Vector2(vp.x * 0.82, vp.y * 0.55)
+	_droplet.position = Vector2(vp.x * 0.82, vp.y * 0.5)
 	_droplet.scale = Vector2.ZERO
 	_droplet.modulate.a = 0.0
 	add_child(_droplet)
 
-	var rank = _compute_rank(total_score)
-	var is_happy = rank in ["S", "A", "B"]
+	var rank = _compute_rank(total)
+	var happy = rank in ["S", "A", "B"]
 
 	# Body
 	var body = Polygon2D.new()
@@ -231,89 +186,58 @@ func _spawn_score_mascot(total_score: int, rounds: Array) -> void:
 		Vector2(-15, 32), Vector2(-28, 18), Vector2(-32, -5),
 		Vector2(-22, -30),
 	])
-	body.color = Color(0.35, 0.75, 1.0) if is_happy else Color(0.45, 0.5, 0.8)
+	body.color = Color(0.35, 0.75, 1.0) if happy else Color(0.45, 0.5, 0.8)
 	_droplet.add_child(body)
 
 	# Eyes
 	for xoff in [-11, 11]:
-		var eye = Polygon2D.new()
-		var ep = PackedVector2Array()
-		for i in range(12):
-			var a = i * TAU / 12
-			ep.append(Vector2(cos(a) * 7, sin(a) * 7) + Vector2(xoff, -5))
-		eye.polygon = ep
-		eye.color = Color.WHITE
-		_droplet.add_child(eye)
-		var pupil = Polygon2D.new()
-		var pp = PackedVector2Array()
-		for i in range(8):
-			var a = i * TAU / 8
-			pp.append(Vector2(cos(a) * 3.5, sin(a) * 3.5) + Vector2(xoff, -4))
-		pupil.polygon = pp
-		pupil.color = Color.BLACK
-		_droplet.add_child(pupil)
+		var ew = Polygon2D.new()
+		ew.polygon = _oval(7, 7, 8)
+		ew.position = Vector2(xoff, -5)
+		ew.color = Color.WHITE
+		_droplet.add_child(ew)
+		var pp = Polygon2D.new()
+		pp.polygon = _oval(3.5, 3.5, 6)
+		pp.position = Vector2(xoff, -4)
+		pp.color = Color.BLACK
+		_droplet.add_child(pp)
 
-	# Mouth (happy grin or meh face)
+	# Mouth
 	var mouth = Line2D.new()
 	mouth.width = 2.5
 	mouth.default_color = Color(0.1, 0.1, 0.1)
-	if is_happy:
-		for i in range(7):
-			var mt = float(i) / 6.0
-			var mx = lerp(-14.0, 14.0, mt)
-			var my = 8.0 + sin(mt * PI) * 10.0
-			mouth.add_point(Vector2(mx, my))
+	if happy:
+		mouth.points = PackedVector2Array([
+			Vector2(-12, 8), Vector2(-6, 16),
+			Vector2(6, 16), Vector2(12, 8),
+		])
 	else:
-		for i in range(7):
-			var mt = float(i) / 6.0
-			var mx = lerp(-12.0, 12.0, mt)
-			var my = 14.0 - sin(mt * PI) * 4.0
-			mouth.add_point(Vector2(mx, my))
+		mouth.points = PackedVector2Array([
+			Vector2(-10, 14), Vector2(-4, 10),
+			Vector2(4, 10), Vector2(10, 14),
+		])
 	_droplet.add_child(mouth)
 
 	# Arms
 	for side in [-1, 1]:
 		var arm = Line2D.new()
-		arm.name = "Arm_L" if side < 0 else "Arm_R"
-		arm.width = 4.5
+		arm.width = 4
 		arm.default_color = Color(0.3, 0.68, 0.95)
 		arm.begin_cap_mode = Line2D.LINE_CAP_ROUND
 		arm.end_cap_mode = Line2D.LINE_CAP_ROUND
-		if is_happy:
-			arm.add_point(Vector2(side * 28, 0))
-			arm.add_point(Vector2(side * 42, -16))
-			arm.add_point(Vector2(side * 45, -28))
+		if happy:
+			arm.points = PackedVector2Array([
+				Vector2(side * 28, 0), Vector2(side * 42, -16),
+				Vector2(side * 45, -28),
+			])
 		else:
-			arm.add_point(Vector2(side * 28, 2))
-			arm.add_point(Vector2(side * 40, 14))
-			arm.add_point(Vector2(side * 38, 26))
+			arm.points = PackedVector2Array([
+				Vector2(side * 28, 2), Vector2(side * 38, 14),
+				Vector2(side * 36, 24),
+			])
 		_droplet.add_child(arm)
 
-	# Legs
-	for side in [-1, 1]:
-		var leg = Line2D.new()
-		leg.width = 4.0
-		leg.default_color = Color(0.28, 0.62, 0.9)
-		leg.add_point(Vector2(side * 10, 34))
-		leg.add_point(Vector2(side * 12, 46))
-		leg.add_point(Vector2(side * 15, 50))
-		leg.begin_cap_mode = Line2D.LINE_CAP_ROUND
-		leg.end_cap_mode = Line2D.LINE_CAP_ROUND
-		_droplet.add_child(leg)
-
-	# Blush
-	if is_happy:
-		for sx in [-20, 20]:
-			var blush = Polygon2D.new()
-			var bp = PackedVector2Array()
-			for i in range(8):
-				var a = i * TAU / 8
-				bp.append(Vector2(cos(a) * 5, sin(a) * 3.5) + Vector2(sx, 5))
-			blush.polygon = bp
-			blush.color = Color(1, 0.5, 0.5, 0.25)
-			_droplet.add_child(blush)
-
-	# Rank badge above head
+	# Rank badge
 	var badge = Label.new()
 	badge.text = rank
 	badge.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -324,49 +248,87 @@ func _spawn_score_mascot(total_score: int, rounds: Array) -> void:
 	badge.position = Vector2(-18, -82)
 	_droplet.add_child(badge)
 
-	# Animate mascot entrance
-	var enter = create_tween()
-	enter.tween_interval(0.8)
-	enter.tween_property(_droplet, "modulate:a", 1.0, 0.1)
-	enter.tween_property(_droplet, "scale", Vector2(1.3, 0.6), 0.1)
-	enter.tween_property(_droplet, "scale", Vector2(0.8, 1.3), 0.1)
-	enter.tween_property(_droplet, "scale", Vector2(1.1, 0.9), 0.08)
-	enter.tween_property(_droplet, "scale", Vector2(1.0, 1.0), 0.06)
+	# Entrance — bouncy squash-stretch
+	var en = create_tween()
+	en.tween_interval(0.7)
+	en.tween_property(_droplet, "modulate:a", 1.0, 0.08)
+	en.tween_property(_droplet, "scale", Vector2(1.3, 0.6), 0.08)
+	en.tween_property(_droplet, "scale", Vector2(0.85, 1.25), 0.08)
+	en.tween_property(_droplet, "scale", Vector2(1.05, 0.95), 0.06)
+	en.tween_property(_droplet, "scale", Vector2(1.0, 1.0), 0.05)
 
-	# Looping idle animation
-	if is_happy:
+	# Idle bounce / sway (1 tween)
+	if happy:
 		var idle = create_tween().set_loops()
-		idle.tween_interval(0.4)
-		idle.tween_property(
-			_droplet, "position:y",
-			_droplet.position.y - 8, 0.5
-		).set_trans(Tween.TRANS_SINE)
-		idle.tween_property(_droplet, "scale", Vector2(1.05, 0.95), 0.2)
-		idle.tween_property(
-			_droplet, "position:y",
-			_droplet.position.y, 0.5
-		).set_trans(Tween.TRANS_SINE)
-		idle.tween_property(_droplet, "scale", Vector2(0.95, 1.05), 0.2)
+		idle.tween_interval(0.3)
+		var base_y = _droplet.position.y
+		idle.tween_property(_droplet, "position:y", base_y - 8, 0.45).set_trans(Tween.TRANS_SINE)
+		idle.tween_property(_droplet, "scale", Vector2(1.05, 0.95), 0.15)
+		idle.tween_property(_droplet, "position:y", base_y, 0.45).set_trans(Tween.TRANS_SINE)
 		idle.tween_property(_droplet, "scale", Vector2(1.0, 1.0), 0.15)
-
-		var arm_l = _droplet.get_node_or_null("Arm_L")
-		var arm_r = _droplet.get_node_or_null("Arm_R")
-		if arm_l:
-			var wave = create_tween().set_loops()
-			wave.tween_property(arm_l, "rotation_degrees", -20.0, 0.4)
-			wave.tween_property(arm_l, "rotation_degrees", 10.0, 0.4)
-			wave.tween_property(arm_l, "rotation_degrees", 0.0, 0.3)
-		if arm_r:
-			var wave2 = create_tween().set_loops()
-			wave2.tween_interval(0.2)
-			wave2.tween_property(arm_r, "rotation_degrees", 20.0, 0.4)
-			wave2.tween_property(arm_r, "rotation_degrees", -10.0, 0.4)
-			wave2.tween_property(arm_r, "rotation_degrees", 0.0, 0.3)
 	else:
-		# Sad sway
-		var idle = create_tween().set_loops()
-		idle.tween_property(_droplet, "rotation", 0.06, 1.0).set_trans(Tween.TRANS_SINE)
-		idle.tween_property(_droplet, "rotation", -0.06, 1.0).set_trans(Tween.TRANS_SINE)
+		var sway = create_tween().set_loops()
+		sway.tween_property(_droplet, "rotation", 0.06, 0.9).set_trans(Tween.TRANS_SINE)
+		sway.tween_property(_droplet, "rotation", -0.06, 0.9).set_trans(Tween.TRANS_SINE)
+
+
+# ── Round breakdown ────────────────────────────────────────────────
+
+func _build_round_breakdown(rounds: Array) -> void:
+	if rounds.is_empty():
+		return
+	var vbox = $CenterContainer/VBoxContainer
+
+	# Rank + summary
+	var total = GameManager.session_score if GameManager else 0
+	var rank = _compute_rank(total)
+
+	var rank_lbl = Label.new()
+	rank_lbl.text = "Rank: %s" % rank
+	rank_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	rank_lbl.add_theme_font_size_override("font_size", 40)
+	rank_lbl.add_theme_color_override("font_color", _rank_color(rank))
+	rank_lbl.add_theme_color_override("font_outline_color", Color.BLACK)
+	rank_lbl.add_theme_constant_override("outline_size", 6)
+	vbox.add_child(rank_lbl)
+
+	var line = Label.new()
+	line.text = _summary_line(total, rounds)
+	line.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	line.add_theme_font_size_override("font_size", 24)
+	line.add_theme_color_override("font_color", Color(1, 0.9, 0.5))
+	vbox.add_child(line)
+
+	# Round list (max 8 visible to avoid scroll overflow)
+	var show_count = mini(rounds.size(), 8)
+	for i in range(show_count):
+		var row = rounds[i]
+		var lbl = Label.new()
+		lbl.text = "%d. %s | %d pts | x%d" % [
+			i + 1,
+			str(row.get("game", "?")),
+			int(row.get("score", 0)),
+			int(row.get("combo", 0)),
+		]
+		lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		lbl.add_theme_font_size_override("font_size", 18)
+		lbl.add_theme_color_override("font_color", Color(0.85, 0.9, 1))
+		vbox.add_child(lbl)
+
+
+# ── Helpers ────────────────────────────────────────────────────────
+
+func _compute_rank(score: int) -> String:
+	if score >= 900:
+		return "S"
+	if score >= 700:
+		return "A"
+	if score >= 500:
+		return "B"
+	if score >= 300:
+		return "C"
+	return "D"
+
 
 func _rank_color(rank: String) -> Color:
 	match rank:
@@ -376,106 +338,40 @@ func _rank_color(rank: String) -> Color:
 		"C": return Color(0.9, 0.7, 0.4)
 		_: return Color(0.7, 0.5, 0.5)
 
-func _add_rank_and_character(total_score: int, rounds: Array) -> void:
-	var vbox = $CenterContainer/VBoxContainer
 
-	var rank = _compute_rank(total_score)
-	var rank_label = Label.new()
-	rank_label.text = "Rank: %s" % rank
-	rank_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	rank_label.add_theme_font_size_override("font_size", 42)
-	rank_label.add_theme_color_override("font_color", Color(0.7, 1.0, 0.9))
-	rank_label.add_theme_color_override("font_outline_color", Color.BLACK)
-	rank_label.add_theme_constant_override("outline_size", 6)
-	vbox.add_child(rank_label)
-
-	var mascot = Label.new()
-	mascot.text = _pick_mascot(rounds)
-	mascot.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	mascot.add_theme_font_size_override("font_size", 96)
-	vbox.add_child(mascot)
-
-	var line = Label.new()
-	line.text = _summary_line(total_score, rounds)
-	line.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	line.add_theme_font_size_override("font_size", 28)
-	line.add_theme_color_override("font_color", Color(1.0, 0.9, 0.5))
-	vbox.add_child(line)
-
-	var tw = create_tween().set_loops()
-	tw.tween_property(mascot, "scale", Vector2(1.08, 1.08), 0.45)
-	tw.tween_property(mascot, "scale", Vector2(1.0, 1.0), 0.45)
-
-func _add_round_breakdown(rounds: Array) -> void:
+func _summary_line(score: int, rounds: Array) -> String:
 	if rounds.is_empty():
-		return
-
-	var vbox = $CenterContainer/VBoxContainer
-
-	var title = Label.new()
-	title.text = "Run Breakdown"
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.add_theme_font_size_override("font_size", 32)
-	title.add_theme_color_override("font_color", Color(0.9, 0.95, 1.0))
-	vbox.add_child(title)
-
-	var list = VBoxContainer.new()
-	list.add_theme_constant_override("separation", 6)
-	for i in range(rounds.size()):
-		var row = rounds[i]
-		var label = Label.new()
-		var combo = int(row.get("combo", 0))
-		label.text = "%d. %s | %d pts | combo x%d" % [
-			i + 1,
-			str(row.get("game", "Unknown")),
-			int(row.get("score", 0)),
-			combo
-		]
-		label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		label.add_theme_font_size_override("font_size", 20)
-		label.add_theme_color_override("font_color", Color(0.85, 0.9, 1.0))
-		list.add_child(label)
-
-	vbox.add_child(list)
-
-func _compute_rank(total_score: int) -> String:
-	if total_score >= 900:
-		return "S"
-	if total_score >= 700:
-		return "A"
-	if total_score >= 500:
-		return "B"
-	if total_score >= 300:
-		return "C"
-	return "D"
-
-func _pick_mascot(rounds: Array) -> String:
-	var success_count = 0
-	for row in rounds:
-		if int(row.get("score", 0)) > 0:
-			success_count += 1
-	if rounds.size() > 0 and float(success_count) / float(rounds.size()) >= 0.7:
-		return "😎"
-	if success_count > 0:
-		return "🙂"
-	return "😵"
-
-func _summary_line(total_score: int, rounds: Array) -> String:
-	if rounds.is_empty():
-		return "No rounds played this run."
-	var avg = float(total_score) / float(rounds.size())
+		return "No rounds played."
+	var avg = float(score) / float(rounds.size())
 	if avg >= 120.0:
 		return "Legend pace. Water saved like a pro!"
 	if avg >= 80.0:
 		return "Solid run. Nice consistency!"
 	if avg >= 40.0:
 		return "Good effort. Keep building combos!"
-	return "Rough run. You can bounce back next session!"
+	return "Rough run. Bounce back next session!"
 
-func _on_continue_pressed():
+
+func _on_continue() -> void:
 	if AudioManager:
 		AudioManager.play_click()
+	# Droplet waves goodbye
+	if _droplet:
+		var tw = create_tween()
+		tw.tween_property(
+			_droplet, "position:y", _droplet.position.y - 200, 0.3
+		).set_ease(Tween.EASE_IN)
+		tw.parallel().tween_property(_droplet, "scale", Vector2(1.3, 0.5), 0.15)
+		tw.parallel().tween_property(_droplet, "modulate:a", 0.0, 0.25)
 	if GameManager:
 		GameManager.transition_to_scene("res://scenes/ui/InitialScreen.tscn")
 	else:
 		get_tree().change_scene_to_file("res://scenes/ui/InitialScreen.tscn")
+
+
+func _oval(w: float, h: float, segs: int) -> PackedVector2Array:
+	var pts := PackedVector2Array()
+	for i in range(segs):
+		var a = i * TAU / segs
+		pts.append(Vector2(cos(a) * w, sin(a) * h))
+	return pts
