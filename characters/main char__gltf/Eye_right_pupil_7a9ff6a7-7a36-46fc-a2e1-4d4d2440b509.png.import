@@ -4,15 +4,16 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://dklmwudtrwj4a"
 path.s3tc="res://.godot/imported/Eye_right_pupil_7a9ff6a7-7a36-46fc-a2e1-4d4d2440b509.png-7034053fd039ebcd1777a3beab3621aa.s3tc.ctex"
+path.etc2="res://.godot/imported/Eye_right_pupil_7a9ff6a7-7a36-46fc-a2e1-4d4d2440b509.png-7034053fd039ebcd1777a3beab3621aa.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 
 [deps]
 
 source_file="res://characters/main char__gltf/Eye_right_pupil_7a9ff6a7-7a36-46fc-a2e1-4d4d2440b509.png"
-dest_files=["res://.godot/imported/Eye_right_pupil_7a9ff6a7-7a36-46fc-a2e1-4d4d2440b509.png-7034053fd039ebcd1777a3beab3621aa.s3tc.ctex"]
+dest_files=["res://.godot/imported/Eye_right_pupil_7a9ff6a7-7a36-46fc-a2e1-4d4d2440b509.png-7034053fd039ebcd1777a3beab3621aa.s3tc.ctex", "res://.godot/imported/Eye_right_pupil_7a9ff6a7-7a36-46fc-a2e1-4d4d2440b509.png-7034053fd039ebcd1777a3beab3621aa.etc2.ctex"]
 
 [params]
 

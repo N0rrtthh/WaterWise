@@ -11,23 +11,37 @@ const DROP_SPEED: float = 200.0
 const SPAWN_INTERVAL: float = 1.5
 const BUCKET_SPEED: float = 400.0
 const MAX_ALLOWED_MISSES: int = 3
+const QUOTA: int = 50  # Team needs 50 points total to win
 
 var bucket: Area2D
 var spawn_timer: Timer
 var drops_caught: int = 0
 var drops_missed: int = 0
 
+func get_instructions() -> String:
+	return "Move the bucket with LEFT/RIGHT keys to catch raindrops.\nAvoid missing drops!"
+
+func get_controls_text() -> String:
+	return "⬅️ ➡️ Arrows or Mouse\n🪣 Move bucket\n💧 Catch raindrops"
+
 func _on_multiplayer_ready() -> void:
 	"""Setup game when multiplayer is ready"""
 	game_name = "Catch the Rain"
 	connection_type = "resource_transfer"
+	
+	# Set quota for this round (use Rolling Window from GameManager)
+	if GameManager:
+		var difficulty_mult = GameManager.difficulty_multiplier
+		var adjusted_quota = int(QUOTA * difficulty_mult)
+		GameManager.set_minigame_quota(adjusted_quota)
+		_log("🎯 Team quota set to: %d (base: %d, mult: %.2f)" % [adjusted_quota, QUOTA, difficulty_mult])
 	
 	# Create bucket
 	_create_bucket()
 	
 	# Create spawn timer
 	spawn_timer = Timer.new()
-	spawn_timer.wait_time = SPAWN_INTERVAL
+	spawn_timer.wait_time = SPAWN_INTERVAL / max(1.0, GameManager.difficulty_multiplier if GameManager else 1.0)
 	spawn_timer.timeout.connect(_spawn_raindrop)
 	add_child(spawn_timer)
 	
@@ -51,12 +65,11 @@ func _create_bucket() -> void:
 	collision.shape = shape
 	bucket.add_child(collision)
 	
-	# Visual (simple rect)
-	var rect = ColorRect.new()
-	rect.size = Vector2(100, 30)
-	rect.color = Color(0.4, 0.6, 0.8)
-	rect.position = Vector2(-50, -15)
-	bucket.add_child(rect)
+	# Visual (Sprite)
+	var sprite = Sprite2D.new()
+	sprite.texture = MiniGameAssets.create_bucket_texture(100, 40, Color(1.0, 0.6, 0.2)) # Orange bucket
+	sprite.position = Vector2(0, 0)
+	bucket.add_child(sprite)
 	
 	# Connect collision
 	bucket.area_entered.connect(_on_bucket_collision)
@@ -79,35 +92,30 @@ func _spawn_raindrop() -> void:
 	
 	# Visual
 	var sprite = Sprite2D.new()
-	sprite.texture = _create_drop_texture()
+	sprite.texture = MiniGameAssets.create_drop_texture(15, Color(0.3, 0.7, 1.0))
 	drop.add_child(sprite)
 	
 	# Add to moving group
 	drop.set_meta("velocity", Vector2(0, DROP_SPEED))
 	drop.set_meta("type", "raindrop")
 
-func _create_drop_texture() -> ImageTexture:
-	"""Create a simple water drop texture"""
-	var image = Image.create(30, 30, false, Image.FORMAT_RGBA8)
-	image.fill(Color.TRANSPARENT)
-	
-	# Draw circle
-	for x in range(30):
-		for y in range(30):
-			var dist = Vector2(x - 15, y - 15).length()
-			if dist < 12:
-				image.set_pixel(x, y, Color(0.3, 0.7, 1.0, 0.8))
-	
-	return ImageTexture.create_from_image(image)
-
 func _process(delta: float) -> void:
 	if not game_active:
 		return
 	
-	# Move bucket with input
-	var input_dir = Input.get_axis("ui_left", "ui_right")
-	if input_dir != 0 and bucket:
-		bucket.position.x += input_dir * BUCKET_SPEED * delta
+	# Move bucket with input (Keyboard or Mouse)
+	if bucket:
+		var input_dir = Input.get_axis("ui_left", "ui_right")
+		if input_dir != 0:
+			bucket.position.x += input_dir * BUCKET_SPEED * delta
+		else:
+			# Mouse control fallback
+			var mouse_x = get_global_mouse_position().x
+			# Only move if mouse is inside window horizontally
+			if mouse_x > 0 and mouse_x < get_viewport_rect().size.x:
+				# Smoothly move towards mouse
+				bucket.position.x = lerp(bucket.position.x, mouse_x, 10 * delta)
+		
 		bucket.position.x = clamp(bucket.position.x, 50, get_viewport_rect().size.x - 50)
 	
 	# Move all drops
@@ -174,3 +182,4 @@ func _on_game_over() -> void:
 	"""Game over handling"""
 	spawn_timer.stop()
 	_log("Game over! Caught: %d, Missed: %d" % [drops_caught, drops_missed])
+	super._on_game_over()

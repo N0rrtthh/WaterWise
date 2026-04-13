@@ -20,7 +20,7 @@ var spawn_interval: float = 3.0
 var screen_size: Vector2
 
 # Animation
-var bucket_move_speed: float = 400.0
+var bucket_move_speed: float = 700.0
 var person_colors: Array = [
 	Color(1.0, 0.8, 0.6),  # Light skin
 	Color(0.9, 0.7, 0.5),  # Medium skin  
@@ -31,17 +31,17 @@ var person_colors: Array = [
 func _apply_difficulty_settings() -> void:
 	match current_difficulty:
 		"Easy":
-			target_buckets = 6
-			spawn_interval = 4.0
-			game_duration = 45.0
+			target_buckets = 3
+			spawn_interval = 1.5
+			game_duration = 20.0
 		"Medium":
-			target_buckets = 8
-			spawn_interval = 3.0
-			game_duration = 40.0
+			target_buckets = 4
+			spawn_interval = 1.0
+			game_duration = 20.0
 		"Hard":
-			target_buckets = 10
-			spawn_interval = 2.5
-			game_duration = 35.0
+			target_buckets = 5
+			spawn_interval = 0.8
+			game_duration = 20.0
 
 func _ready():
 	game_name = "Bucket Brigade"

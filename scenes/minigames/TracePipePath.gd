@@ -12,19 +12,32 @@ var target_paths: int = 4
 var path_tolerance: float = 40.0
 
 func _apply_difficulty_settings() -> void:
+	# Get progressive difficulty settings
+	var settings = AdaptiveDifficulty.get_difficulty_settings() if AdaptiveDifficulty else {}
+	var progressive_level = settings.get("progressive_level", 0)
+	
 	match current_difficulty:
 		"Easy":
-			target_paths = 3
+			target_paths = 2  # 25s / 2 = 12.5s per path
 			path_tolerance = 50.0
-			game_duration = 35.0
-		"Medium":
-			target_paths = 4
-			path_tolerance = 40.0
-			game_duration = 30.0
-		"Hard":
-			target_paths = 5
-			path_tolerance = 25.0
 			game_duration = 25.0
+		"Medium":
+			target_paths = 3  # 25s / 3 = 8.3s per path
+			path_tolerance = 40.0
+			game_duration = 25.0
+		"Hard":
+			target_paths = 3  # 18s / 3 = 6.0s per path
+			path_tolerance = 25.0
+			game_duration = 18.0
+	
+	# Apply PROGRESSIVE DIFFICULTY (NO CEILING!)
+	if progressive_level > 0:
+		target_paths += mini(progressive_level, 2)  # +1 path per level, max +2
+		path_tolerance = max(15.0, path_tolerance - progressive_level * 2.0)  # Stricter accuracy
+		game_duration += progressive_level * 3.0  # Give more time for extra paths
+		if settings.has("time_limit"):
+			game_duration = max(game_duration, settings.get("time_limit", game_duration))
+		print("🔥 Progressive Lvl %d: %d paths, %.1f tolerance" % [progressive_level, target_paths, path_tolerance])
 
 func _ready():
 	game_name = "Trace Pipe Path"

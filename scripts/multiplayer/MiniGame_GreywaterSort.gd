@@ -63,10 +63,18 @@ var round_start_time: int = 0
 var screen_size: Vector2
 var game_timer: float = 60.0
 var dragging_water: Area2D = null
+var drag_offset: Vector2 = Vector2.ZERO
 var timer_sync_timer: Timer = null
 
 func _ready() -> void:
 	screen_size = get_viewport_rect().size
+	
+	# Verify multiplayer is active
+	if not multiplayer or not multiplayer.has_multiplayer_peer():
+		push_error("❌ Multiplayer not active! Returning to lobby...")
+		get_tree().change_scene_to_file("res://scenes/ui/MultiplayerLobby.tscn")
+		return
+	
 	my_mode = _get_assigned_mode()
 	_load_difficulty()
 	_setup_ui()
@@ -76,6 +84,10 @@ func _ready() -> void:
 		GameManager.team_won.connect(_on_team_won)
 		GameManager.team_lost.connect(_on_team_lost)
 		GameManager.team_life_lost.connect(_on_life_lost)
+	
+	# Connect NetworkManager resource transfer signal for interconnected gameplay
+	if NetworkManager and NetworkManager.has_signal("resource_sent"):
+		NetworkManager.resource_sent.connect(_on_resource_received)
 
 	# Timer sync keeps countdown consistent for both modes
 	timer_sync_timer = Timer.new()
@@ -246,6 +258,12 @@ func _spawn_greywater() -> void:
 	water.position = Vector2(randf_range(50, screen_size.x - 50), -80)
 	water.set_meta("fall_speed", current_settings["mode1_water_speed"])
 	
+	# Connect drag signals
+	water.input_event.connect(func(_viewport, event, _shape_idx):
+		if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+			_start_dragging_water(water)
+	)
+	
 	objects_container.add_child(water)
 	
 	# Movement in _physics_process
@@ -291,6 +309,62 @@ func _spawn_filter() -> void:
 	filter.set_physics_process(true)
 	filter.set_script(preload("res://scripts/multiplayer/HorizontalObject.gd"))
 
+func _start_dragging_water(water: Area2D) -> void:
+	if my_mode != PlayerMode.MODE_1_COLLECTOR:
+		return
+	dragging_water = water
+	drag_offset = water.position - get_global_mouse_position()
+	# Stop physics while dragging
+	water.set_physics_process(false)
+
+func _input(event: InputEvent) -> void:
+	if not game_active or my_mode != PlayerMode.MODE_1_COLLECTOR:
+		return
+	
+	if event is InputEventMouseButton and not event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+		if dragging_water:
+			_drop_water()
+	
+	if event is InputEventMouseMotion and dragging_water:
+		dragging_water.position = get_global_mouse_position() + drag_offset
+
+func _drop_water() -> void:
+	if not dragging_water or not is_instance_valid(dragging_water):
+		dragging_water = null
+		return
+	
+	var is_bad = dragging_water.get_meta("is_bad", false)
+	
+	# Check if dropped in tank
+	var dropped_in_tank = false
+	if tank and tank.visible:
+		var tank_rect = Rect2(tank.global_position - Vector2(50, 50), Vector2(100, 100))
+		if tank_rect.has_point(dragging_water.global_position):
+			dropped_in_tank = true
+	
+	if dropped_in_tank:
+		if is_bad:
+			print("☠️ Sorted BAD water into tank!")
+			if GameManager:
+				GameManager.rpc("report_damage")
+		else:
+			print("♻️ Sorted GOOD water!")
+			if GameManager:
+				GameManager.rpc("submit_score", 1)
+				_update_score_display()
+			
+			# RESOURCE TRANSFER: Send sorted greywater to partner
+			if NetworkManager and NetworkManager.has_method("send_resource"):
+				NetworkManager.send_resource("sorted_greywater", 1, 1.0)
+				print("📤 Sent sorted greywater to partner")
+		
+		dragging_water.queue_free()
+	else:
+		# Resume falling
+		dragging_water.set_physics_process(true)
+	
+	dragging_water = null
+
 func _on_filter_activated(filter: Area2D) -> void:
 	print("⚙️ Filter activated!")
 	if GameManager:
@@ -298,10 +372,26 @@ func _on_filter_activated(filter: Area2D) -> void:
 		_update_score_display()
 	filter.queue_free()
 
+func _on_resource_received(from_player: int, resource_type: String, amount: int, _quality: float) -> void:
+	"""Receive resources from partner - creates interconnected gameplay"""
+	if resource_type == "sorted_greywater":
+		print("📥 Received %d sorted greywater from P%d - partner is helping!" % [amount, from_player])
+		# Partner's sorted water could provide bonus or reduce filter load
+
 func _update_score_display() -> void:
 	var score = GameManager.get_global_score() if GameManager else 0
 	score_label.text = "♻️ Treated: %d / %d" % [score, current_settings["quota"]]
 	quota_bar.value = score
+	
+	# Check if quota reached (host only)
+	if _is_host() and game_active and score >= current_settings["quota"]:
+		print("🎯 Quota reached! Score: %d >= %d" % [score, current_settings["quota"]])
+		game_active = false
+		spawn_timer.stop()
+		if timer_sync_timer:
+			timer_sync_timer.stop()
+		if GameManager:
+			GameManager.rpc("_announce_team_won")
 
 func _update_lives_display() -> void:
 	lives_label.text = "❤️".repeat(GameManager.team_lives if GameManager else 3)

@@ -266,8 +266,9 @@ func _on_player_connected(_peer_id: int, player_num: int) -> void:
 
 func _on_player_disconnected(_peer_id: int) -> void:
 	print("❌ Player disconnected")
-	status_label.text = _t("waiting_for_player")
-	_update_player_list()
+	
+	# Always reset to mode selection so UI stays interactive
+	_on_disconnect_pressed()
 
 func _on_connection_succeeded() -> void:
 	print("✅ Connection successful!")
@@ -291,34 +292,37 @@ func _on_both_players_ready() -> void:
 		start_game_button.disabled = false
 
 func _load_level_set_games(level_set: Dictionary) -> void:
-	"""Load the correct game scene for each player based on level set"""
-	var my_player_num = NetworkManager.get_local_player_num()
+	"""Load the correct game scene for EACH PLAYER based on level set"""
+	# P1 and P2 load DIFFERENT scenes with interconnected gameplay
+	var p1_scene: String = level_set["player1_game"]
+	var p2_scene: String = level_set["player2_game"]
 	
-	# Validate player number
-	if my_player_num < 1 or my_player_num > 2:
-		push_error("Invalid player number: %d" % my_player_num)
-		_show_error("Invalid player number!")
+	print("🎮 Loading INTERCONNECTED multiplayer games:")
+	print("   P1 (%s): %s" % [level_set["player1_role"], p1_scene])
+	print("   P2 (%s): %s" % [level_set["player2_role"], p2_scene])
+	
+	# Validate both scenes exist
+	if not ResourceLoader.exists(p1_scene):
+		push_error("❌ P1 game scene not found: " + p1_scene)
+		_show_error("P1 game scene not found!")
 		return
 	
-	var my_game_scene: String
-	if my_player_num == 1:
-		my_game_scene = level_set["player1_game"]
-	else:
-		my_game_scene = level_set["player2_game"]
+	if not ResourceLoader.exists(p2_scene):
+		push_error("❌ P2 game scene not found: " + p2_scene)
+		_show_error("P2 game scene not found!")
+		return
 	
-	print("🎮 Loading game for Player %d: %s" % [my_player_num, my_game_scene])
-	
-	# Load the scene
-	if ResourceLoader.exists(my_game_scene):
-		get_tree().change_scene_to_file(my_game_scene)
+	# Use NetworkManager to load DIFFERENT scenes for each player
+	if NetworkManager:
+		NetworkManager.start_multiplayer_game_pair(p1_scene, p2_scene)
 	else:
-		push_error("❌ Game scene not found: " + my_game_scene)
-		_show_error("Game scene not found!")
+		push_error("❌ NetworkManager not available!")
+		_show_error("Network error!")
 
 func _on_game_started(scenario_id: String, _roles: Dictionary) -> void:
-	print("🎮 Navigating to game: " + scenario_id)
-	# Navigate to the co-op game scene
-	get_tree().change_scene_to_file("res://scenes/minigames/coop/" + scenario_id + ".tscn")
+	print("🎮 Game started: " + scenario_id)
+	# Scene change is handled by NetworkManager via RPC
+	pass
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # PLAYER LIST UPDATE

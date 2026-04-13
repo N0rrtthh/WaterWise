@@ -1,0 +1,9 @@
+[gd_scene load_steps=2 format=3 uid="uid://cauyq1xk2m5dp"]
+
+[ext_resource type="Script" path="res://scripts/multiplayer/MP_FillAquarium.gd" id="1_fill_aquarium"]
+
+[node name="MP_FillAquarium" type="Node2D"]
+script = ExtResource("1_fill_aquarium")
+
+[node name="Camera2D" type="Camera2D" parent="."]
+position = Vector2(576, 324)

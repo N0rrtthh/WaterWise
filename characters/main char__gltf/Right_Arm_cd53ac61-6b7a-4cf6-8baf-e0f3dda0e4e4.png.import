@@ -4,15 +4,16 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://bbjiskxlg8ann"
 path.s3tc="res://.godot/imported/Right_Arm_cd53ac61-6b7a-4cf6-8baf-e0f3dda0e4e4.png-85bcb1b1d0b6202658453581778a0eb3.s3tc.ctex"
+path.etc2="res://.godot/imported/Right_Arm_cd53ac61-6b7a-4cf6-8baf-e0f3dda0e4e4.png-85bcb1b1d0b6202658453581778a0eb3.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 
 [deps]
 
 source_file="res://characters/main char__gltf/Right_Arm_cd53ac61-6b7a-4cf6-8baf-e0f3dda0e4e4.png"
-dest_files=["res://.godot/imported/Right_Arm_cd53ac61-6b7a-4cf6-8baf-e0f3dda0e4e4.png-85bcb1b1d0b6202658453581778a0eb3.s3tc.ctex"]
+dest_files=["res://.godot/imported/Right_Arm_cd53ac61-6b7a-4cf6-8baf-e0f3dda0e4e4.png-85bcb1b1d0b6202658453581778a0eb3.s3tc.ctex", "res://.godot/imported/Right_Arm_cd53ac61-6b7a-4cf6-8baf-e0f3dda0e4e4.png-85bcb1b1d0b6202658453581778a0eb3.etc2.ctex"]
 
 [params]
 
