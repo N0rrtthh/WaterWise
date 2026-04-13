@@ -48,7 +48,7 @@ func _ready() -> void:
 		theme_mgr.theme_changed.connect(_on_theme_changed)
 
 func _setup_accessibility_section() -> void:
-	"""Add accessibility options to settings"""
+	# Add accessibility options to settings
 	var vbox = $CenterContainer/PanelCard/MarginContainer/VBoxContainer
 	if not vbox:
 		return

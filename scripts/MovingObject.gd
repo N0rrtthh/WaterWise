@@ -82,7 +82,7 @@ func _process(delta: float) -> void:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func _on_input_event(_viewport: Node, event: InputEvent, _shape_idx: int) -> void:
-	"""Handle direct input on this object"""
+	# Handle direct input on this object
 	if not _is_active:
 		return
 	
@@ -96,7 +96,7 @@ func _on_input_event(_viewport: Node, event: InputEvent, _shape_idx: int) -> voi
 		_handle_tap()
 
 func _handle_tap() -> void:
-	"""Process tap based on object type and player role"""
+	# Process tap based on object type and player role
 	if object_type == ObjectType.DROP:
 		# Only Host can catch drops
 		if GameManager.is_host:
@@ -111,7 +111,7 @@ func _handle_tap() -> void:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func _on_collected() -> void:
-	"""Called when a Drop is caught by Host"""
+	# Called when a Drop is caught by Host
 	if not _is_active:
 		return
 	
@@ -129,7 +129,7 @@ func _on_collected() -> void:
 	print("💧 Drop collected!")
 
 func _on_destroyed() -> void:
-	"""Called when a Leaf is destroyed by Client"""
+	# Called when a Leaf is destroyed by Client
 	if not _is_active:
 		return
 	
@@ -147,7 +147,7 @@ func _on_destroyed() -> void:
 	print("🍃 Leaf destroyed!")
 
 func _on_missed() -> void:
-	"""Called when object falls off screen without being caught/destroyed"""
+	# Called when object falls off screen without being caught/destroyed
 	if not _is_active:
 		return
 	
@@ -163,7 +163,7 @@ func _on_missed() -> void:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func _play_collect_effect() -> void:
-	"""Visual feedback for collecting a drop"""
+	# Visual feedback for collecting a drop
 	# Scale up briefly
 	var tween: Tween = create_tween()
 	tween.tween_property(self, "scale", Vector2(1.3, 1.3), 0.1)
@@ -173,7 +173,7 @@ func _play_collect_effect() -> void:
 	modulate = Color(0.5, 0.8, 1.0, 1.0)  # Light blue flash
 
 func _play_destroy_effect() -> void:
-	"""Visual feedback for destroying a leaf"""
+	# Visual feedback for destroying a leaf
 	# Spin and shrink
 	var tween: Tween = create_tween()
 	tween.set_parallel(true)
@@ -185,11 +185,11 @@ func _play_destroy_effect() -> void:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func set_fall_speed(speed: float) -> void:
-	"""Override fall speed"""
+	# Override fall speed
 	fall_speed = speed
 
 func set_sway(amount: float, speed: float) -> void:
-	"""Configure horizontal sway"""
+	# Configure horizontal sway
 	sway_amount = amount
 	sway_speed = speed
 

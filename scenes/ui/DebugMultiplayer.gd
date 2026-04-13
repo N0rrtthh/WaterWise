@@ -120,16 +120,21 @@ func _update_debug_info() -> void:
 	
 	info += "🎯 G-COUNTER STATE:\n"
 	info += "  G-Counter: " + str(GameManager.g_counter) + "\n"
-	info += "  Global Score: " + str(GameManager.get_global_score()) + " / " + str(GameManager.LEVEL_QUOTA) + "\n"
+	var gs = str(GameManager.get_global_score())
+	var lq = str(GameManager.LEVEL_QUOTA)
+	info += "  Global Score: " + gs + " / " + lq + "\n"
 	info += "  My Score: " + str(GameManager.g_counter.get(multiplayer.get_unique_id(), 0)) + "\n\n"
 	
 	info += "📊 ROLLING WINDOW:\n"
 	info += "  Window: " + str(GameManager.rolling_window) + "\n"
 	info += "  Difficulty Multiplier: %.2f×\n" % GameManager.difficulty_multiplier
-	info += "  Current Difficulty: " + GameManager._get_current_difficulty() + "\n\n"
+	var diff = GameManager.get_current_difficulty()
+	info += "  Current Difficulty: " + diff + "\n\n"
 	
 	info += "❤️ TEAM STATUS:\n"
-	info += "  Lives: " + "❤️".repeat(GameManager.team_lives) + " (" + str(GameManager.team_lives) + ")\n"
+	var hearts = "❤️".repeat(GameManager.team_lives)
+	var tl = str(GameManager.team_lives)
+	info += "  Lives: " + hearts + " (" + tl + ")\n"
 	info += "  Game Mode: " + GameManager.GameMode.keys()[GameManager.current_game_mode] + "\n\n"
 	
 	info += "═══════════════════════════════════════\n"

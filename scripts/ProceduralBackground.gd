@@ -129,7 +129,7 @@ func _draw() -> void:
 		_draw_drop(drop.pos, drop.size)
 
 func _draw_cloud(pos: Vector2, size: float) -> void:
-	"""Draw a fluffy cloud"""
+	# Draw a fluffy cloud
 	var cloud_color := Color(1.0, 1.0, 1.0, 0.9)
 	# Main blob
 	draw_circle(pos, size * 0.4, cloud_color)
@@ -140,7 +140,7 @@ func _draw_cloud(pos: Vector2, size: float) -> void:
 	draw_circle(pos + Vector2(size * 0.15, -size * 0.15), size * 0.25, cloud_color)
 
 func _draw_plant(pos: Vector2, height: float, is_healthy: bool) -> void:
-	"""Draw a plant/flower"""
+	# Draw a plant/flower
 	var stem_color := Color(0.3, 0.6, 0.3) if is_healthy else Color(0.5, 0.5, 0.3)
 	var flower_color := Color(0.9, 0.3, 0.5) if is_healthy else Color(0.6, 0.5, 0.4)
 	
@@ -165,7 +165,7 @@ func _draw_plant(pos: Vector2, height: float, is_healthy: bool) -> void:
 		draw_circle(flower_pos, 5.0, flower_color)
 
 func _draw_bucket(pos: Vector2, fill_level: float) -> void:
-	"""Draw a water bucket with water inside"""
+	# Draw a water bucket with water inside
 	var bucket_width := 30.0
 	var bucket_height := 25.0
 	
@@ -192,7 +192,7 @@ func _draw_bucket(pos: Vector2, fill_level: float) -> void:
 	draw_arc(pos + Vector2(0, -bucket_height - 8), 12.0, PI * 0.2, PI * 0.8, 12, Color(0.3, 0.3, 0.4), 3.0)
 
 func _draw_drop(pos: Vector2, size: float) -> void:
-	"""Draw a water droplet"""
+	# Draw a water droplet
 	var drop_color := Color(0.4, 0.7, 1.0, 0.7)
 	
 	# Teardrop shape using circle and triangle

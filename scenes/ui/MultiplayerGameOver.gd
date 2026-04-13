@@ -24,7 +24,7 @@ func _ready() -> void:
 		return_button.pressed.connect(_on_return_button_pressed)
 
 func show_game_over(final_score: int, rounds: int, p1_score: int, p2_score: int) -> void:
-	"""Display game over screen with team stats"""
+	# Display game over screen with team stats
 	visible = true
 	get_tree().paused = true
 	
@@ -50,7 +50,7 @@ func show_game_over(final_score: int, rounds: int, p1_score: int, p2_score: int)
 	tween.tween_property(title_label, "scale", Vector2(1.0, 1.0), 0.5).from(Vector2(0.5, 0.5)).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_ELASTIC)
 
 func _on_return_button_pressed() -> void:
-	"""Return to multiplayer lobby"""
+	# Return to multiplayer lobby
 	get_tree().paused = false
 	return_to_lobby_pressed.emit()
 	

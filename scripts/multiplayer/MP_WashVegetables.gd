@@ -53,7 +53,7 @@ func _on_game_start() -> void:
 	_log("🚿 Start washing!")
 
 func _create_sink() -> void:
-	"""Create sink area where vegetables are washed"""
+	# Create sink area where vegetables are washed
 	sink_area = Area2D.new()
 	sink_area.position = Vector2(576, 500)
 	add_child(sink_area)
@@ -81,7 +81,7 @@ func _create_sink() -> void:
 	sink_area.add_child(label)
 
 func _spawn_vegetables() -> void:
-	"""Initial spawn"""
+	# Initial spawn
 	for i in range(3):
 		_spawn_vegetable()
 
@@ -172,7 +172,7 @@ func _wash_vegetable() -> void:
 	dragging_vegetable = null
 
 func _on_vegetable_missed() -> void:
-	"""Vegetable fell off screen or timeout"""
+	# Vegetable fell off screen or timeout
 	vegetables_missed += 1
 	_log("❌ Missed vegetable! (%d/%d)" % [vegetables_missed, MAX_MISSES])
 	

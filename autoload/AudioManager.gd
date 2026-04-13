@@ -120,7 +120,7 @@ func _load_volume_settings() -> void:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func play_music(music_id: String, fade_duration: float = 1.0) -> void:
-	"""Play background music with crossfade"""
+	# Play background music with crossfade
 	if music_id == current_music and music_player.playing:
 		return
 	
@@ -144,7 +144,7 @@ func play_music(music_id: String, fade_duration: float = 1.0) -> void:
 	fade_in_tween.tween_property(music_player, "volume_db", linear_to_db(music_volume), fade_duration / 2)
 
 func stop_music(fade_duration: float = 1.0) -> void:
-	"""Stop music with fade out"""
+	# Stop music with fade out
 	if not music_player.playing:
 		return
 	
@@ -154,7 +154,7 @@ func stop_music(fade_duration: float = 1.0) -> void:
 	current_music = ""
 
 func _generate_ambient_music(music_id: String) -> AudioStreamWAV:
-	"""Generate procedural music that varies by scene type"""
+	# Generate procedural music that varies by scene type
 	var sample_rate := 44100.0
 	var duration := 10.0  # 10 second loop
 	var num_samples := int(sample_rate * duration)
@@ -183,7 +183,7 @@ func _generate_ambient_music(music_id: String) -> AudioStreamWAV:
 	return audio
 
 func _fill_menu_music(data: PackedByteArray, num_samples: int, sample_rate: float) -> void:
-	"""Happy, bouncy, uplifting — DWTD-style cheerful main menu vibe"""
+	# Happy, bouncy, uplifting — DWTD-style cheerful main menu vibe
 	# C major pentatonic in upper octave — bright and joyful
 	var melody = [523.3, 587.3, 659.3, 784.0, 880.0, 784.0, 659.3, 784.0,
 		880.0, 1047.0, 880.0, 784.0, 659.3, 587.3, 523.3, 659.3]
@@ -226,7 +226,7 @@ func _fill_menu_music(data: PackedByteArray, num_samples: int, sample_rate: floa
 		data[i * 2 + 1] = (sample_int >> 8) & 0xFF
 
 func _fill_gameplay_music(data: PackedByteArray, num_samples: int, sample_rate: float) -> void:
-	"""Upbeat, driving rhythm — energetic like DWTD gameplay"""
+	# Upbeat, driving rhythm — energetic like DWTD gameplay
 	var bass_line = [130.8, 130.8, 164.8, 146.8, 130.8, 174.6, 164.8, 146.8]
 	var beat_samples = int(sample_rate * 0.3125)
 	for i in range(num_samples):
@@ -254,7 +254,7 @@ func _fill_gameplay_music(data: PackedByteArray, num_samples: int, sample_rate: 
 		data[i * 2 + 1] = (sample_int >> 8) & 0xFF
 
 func _fill_results_music(data: PackedByteArray, num_samples: int, sample_rate: float) -> void:
-	"""Triumphant, warm — score reveal feel"""
+	# Triumphant, warm — score reveal feel
 	var chord_notes = [
 		[261.6, 329.6, 392.0],
 		[293.7, 370.0, 440.0],
@@ -282,7 +282,7 @@ func _fill_results_music(data: PackedByteArray, num_samples: int, sample_rate: f
 		data[i * 2 + 1] = (sample_int >> 8) & 0xFF
 
 func _fill_cutscene_music(data: PackedByteArray, num_samples: int, sample_rate: float) -> void:
-	"""Dramatic, cinematic — tension/reveal for cutscene moments"""
+	# Dramatic, cinematic — tension/reveal for cutscene moments
 	var tension_notes = [130.8, 155.6, 164.8, 196.0, 164.8, 155.6, 146.8, 130.8]
 	var note_dur = sample_rate * 1.25
 	for i in range(num_samples):
@@ -315,7 +315,7 @@ func set_music_volume(volume: float) -> void:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func play_sfx(sfx_type: SFXType) -> void:
-	"""Play a sound effect"""
+	# Play a sound effect
 	if sfx_volume <= 0:
 		return
 	
@@ -333,7 +333,7 @@ func play_sfx(sfx_type: SFXType) -> void:
 	player.play()
 
 func _get_available_sfx_player() -> AudioStreamPlayer:
-	"""Get an available SFX player from the pool"""
+	# Get an available SFX player from the pool
 	for player in sfx_players:
 		if not player.playing:
 			return player
@@ -341,7 +341,7 @@ func _get_available_sfx_player() -> AudioStreamPlayer:
 	return sfx_players[0]
 
 func _generate_sfx(frequency: float, duration: float, wave_type: String) -> AudioStreamWAV:
-	"""Generate a procedural sound effect"""
+	# Generate a procedural sound effect
 	var sample_rate := 44100.0
 	var num_samples := int(sample_rate * duration)
 	

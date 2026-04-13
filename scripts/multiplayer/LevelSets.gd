@@ -85,7 +85,7 @@ func _ready() -> void:
 	print("🎮 LevelSets initialized with %d sets" % available_sets.size())
 
 func get_random_level_set() -> Dictionary:
-	"""Get a random level set with role swapping every round"""
+	# Get a random level set with role swapping every round
 	if available_sets.is_empty():
 		# All sets played, reshuffle
 		available_sets = LEVEL_SETS.duplicate()
@@ -113,7 +113,7 @@ func get_random_level_set() -> Dictionary:
 	return level_set
 
 func get_level_set_by_id(set_id: String) -> Dictionary:
-	"""Get a specific level set by ID"""
+	# Get a specific level set by ID
 	for level_set in LEVEL_SETS:
 		if level_set["id"] == set_id:
 			return level_set
@@ -122,7 +122,7 @@ func get_level_set_by_id(set_id: String) -> Dictionary:
 	return {}
 
 func get_difficulty_params(level_set: Dictionary, difficulty: String) -> Dictionary:
-	"""Get difficulty parameters for a level set"""
+	# Get difficulty parameters for a level set
 	var key = "difficulty_" + difficulty.to_lower()
 	return level_set.get(key, level_set.get("difficulty_medium", {}))
 
@@ -131,11 +131,11 @@ func get_difficulty_params(level_set: Dictionary, difficulty: String) -> Diction
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func get_all_level_sets() -> Array:
-	"""Get all available level sets"""
+	# Get all available level sets
 	return LEVEL_SETS.duplicate()
 
 func reset() -> void:
-	"""Reset level set selection"""
+	# Reset level set selection
 	available_sets = LEVEL_SETS.duplicate()
 	available_sets.shuffle()
 	current_set_index = 0
