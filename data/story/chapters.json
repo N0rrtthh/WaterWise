@@ -1,0 +1,160 @@
+{
+	"chapters": [
+		{
+			"id": "ch1_awakening",
+			"title_en": "The Waking River",
+			"title_tl": "Ang Paggising ng Ilog",
+			"unlocks_after_games": 0,
+			"pages": [
+				{
+					"text_en": "In a small barrio by the river, a young water droplet named Droppy wakes up with a splash.",
+					"text_tl": "Sa isang maliit na baryo sa tabi ng ilog, isang batang patak ng tubig na nagngangalang Droppy ay nagising na may malakas na sabog.",
+					"emoji": "💧🌅",
+					"bg_color": "#1a3a5c"
+				},
+				{
+					"text_en": "\"The river is getting smaller!\" cries Lola Tubig, the wise elder of the water spirits.",
+					"text_tl": "\"Pumapaliit na ang ilog!\" sigaw ni Lola Tubig, ang matalinong matanda ng mga espiritu ng tubig.",
+					"emoji": "👵💦",
+					"bg_color": "#1a3a5c"
+				},
+				{
+					"text_en": "\"Droppy, you must teach the children of the barrio how to save water. Every drop counts!\"",
+					"text_tl": "\"Droppy, kailangan mong turuan ang mga bata sa baryo kung paano magtipid ng tubig. Bawat patak ay mahalaga!\"",
+					"emoji": "✨📖",
+					"bg_color": "#1a3a5c"
+				}
+			]
+		},
+		{
+			"id": "ch2_kitchen",
+			"title_en": "Lessons in the Kitchen",
+			"title_tl": "Mga Aral sa Kusina",
+			"unlocks_after_games": 3,
+			"pages": [
+				{
+					"text_en": "Droppy arrives at Ate Rosa's kitchen. Rice water is flowing down the drain!",
+					"text_tl": "Dumating si Droppy sa kusina ni Ate Rosa. Ang hugas-bigas ay tumutulo sa kanal!",
+					"emoji": "🍚🚰",
+					"bg_color": "#2d4a3e"
+				},
+				{
+					"text_en": "\"Wait! Rice water can be used to water plants and clean dishes!\" Droppy shows Ate Rosa a better way.",
+					"text_tl": "\"Teka! Ang hugas-bigas ay maaaring gamitin para diligan ang halaman at hugasan ang pinggan!\" Ipinakita ni Droppy kay Ate Rosa ang mas magandang paraan.",
+					"emoji": "🌱🍽️",
+					"bg_color": "#2d4a3e"
+				},
+				{
+					"text_en": "Thanks to you, the kitchen now saves 20 liters of water every day!",
+					"text_tl": "Salamat sa iyo, nakakatipid na ang kusina ng 20 litro ng tubig araw-araw!",
+					"emoji": "🎉💧",
+					"bg_color": "#2d4a3e"
+				}
+			]
+		},
+		{
+			"id": "ch3_garden",
+			"title_en": "The Thirsty Garden",
+			"title_tl": "Ang Nauuhaw na Hardin",
+			"unlocks_after_games": 6,
+			"pages": [
+				{
+					"text_en": "Kuya Ben uses a big hose to water his garden. So much water is wasted!",
+					"text_tl": "Gumagamit si Kuya Ben ng malaking hose para diligan ang kanyang hardin. Napakaraming tubig ang nasasayang!",
+					"emoji": "🌿💦",
+					"bg_color": "#3a5c2d"
+				},
+				{
+					"text_en": "Droppy teaches him: \"Use a watering can! Water plants in the morning when it's cool. Reuse greywater from the laundry!\"",
+					"text_tl": "Tinuruan siya ni Droppy: \"Gumamit ng regadera! Diligan ang halaman sa umaga kapag malamig. Gamitin muli ang greywater mula sa labahan!\"",
+					"emoji": "🪴🧺",
+					"bg_color": "#3a5c2d"
+				},
+				{
+					"text_en": "The garden blooms beautifully, using only half the water it used to need!",
+					"text_tl": "Ang hardin ay namumulaklak nang maganda, gamit lamang ang kalahati ng tubig na dating kailangan!",
+					"emoji": "🌸🌻",
+					"bg_color": "#3a5c2d"
+				}
+			]
+		},
+		{
+			"id": "ch4_bathroom",
+			"title_en": "Quick Shower Challenge",
+			"title_tl": "Hamon ng Mabilis na Paligo",
+			"unlocks_after_games": 9,
+			"pages": [
+				{
+					"text_en": "Little Maria loves long showers. She sings three songs every time! But 50 liters of water go down the drain.",
+					"text_tl": "Mahilig si maliit na Maria sa mahabang paligo. Tatlong kanta ang kinakanta niya bawat oras! Pero 50 litro ng tubig ang nasasayang.",
+					"emoji": "🚿🎵",
+					"bg_color": "#4a3a5c"
+				},
+				{
+					"text_en": "Droppy shows Maria: \"Challenge yourself! Can you shower in just one song? That saves 30 liters!\"",
+					"text_tl": "Ipinakita ni Droppy kay Maria: \"Hamunin mo ang sarili mo! Kaya mo bang maligo sa isang kanta lang? Makakatipid ka ng 30 litro!\"",
+					"emoji": "⏱️💪",
+					"bg_color": "#4a3a5c"
+				},
+				{
+					"text_en": "Maria takes the challenge and wins! Now she's a Quick Shower Champion!",
+					"text_tl": "Tinanggap ni Maria ang hamon at nanalo! Ngayon siya na ang Quick Shower Champion!",
+					"emoji": "🏆🎊",
+					"bg_color": "#4a3a5c"
+				}
+			]
+		},
+		{
+			"id": "ch5_community",
+			"title_en": "The Community Bucket Brigade",
+			"title_tl": "Ang Bayanihan ng Timba",
+			"unlocks_after_games": 12,
+			"pages": [
+				{
+					"text_en": "Uh-oh! A big pipe burst on the main road! Water is gushing everywhere!",
+					"text_tl": "Ay naku! Pumutok ang malaking tubo sa kalsada! Bumubuhos ang tubig sa lahat ng dako!",
+					"emoji": "🔧💥",
+					"bg_color": "#5c3a2d"
+				},
+				{
+					"text_en": "The whole barrio works together. Everyone grabs buckets to save the water before it's lost!",
+					"text_tl": "Nagtulungan ang buong baryo. Kumuha ng timba ang bawat isa para isalba ang tubig bago ito mawala!",
+					"emoji": "🪣🤝",
+					"bg_color": "#5c3a2d"
+				},
+				{
+					"text_en": "Together, the barrio saved 500 liters! Teamwork makes water conservation work!",
+					"text_tl": "Magkakasama, naisalba ng baryo ang 500 litro! Ang pagtutulungan ang susi sa pagtitipid ng tubig!",
+					"emoji": "🎉💧",
+					"bg_color": "#5c3a2d"
+				}
+			]
+		},
+		{
+			"id": "ch6_victory",
+			"title_en": "Droppy's Promise",
+			"title_tl": "Ang Pangako ni Droppy",
+			"unlocks_after_games": 15,
+			"pages": [
+				{
+					"text_en": "The river is flowing strong again! The barrio is green and beautiful.",
+					"text_tl": "Malakas na ulit ang daloy ng ilog! Ang baryo ay berde at maganda.",
+					"emoji": "🏞️✨",
+					"bg_color": "#1a4a5c"
+				},
+				{
+					"text_en": "Lola Tubig smiles: \"You did it, Droppy! The children have learned to be water guardians!\"",
+					"text_tl": "Ngumiti si Lola Tubig: \"Nagawa mo, Droppy! Natuto na ang mga bata na maging mga tagapag-ingat ng tubig!\"",
+					"emoji": "👵💖",
+					"bg_color": "#1a4a5c"
+				},
+				{
+					"text_en": "Droppy promises: \"I'll always be here to remind everyone — every drop counts! Bawat patak ay mahalaga!\"",
+					"text_tl": "Nangako si Droppy: \"Palagi akong nandito para ipaalala sa lahat — bawat patak ay mahalaga!\"",
+					"emoji": "💧🌟",
+					"bg_color": "#1a4a5c"
+				}
+			]
+		}
+	]
+}

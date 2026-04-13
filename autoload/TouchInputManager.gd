@@ -166,12 +166,8 @@ func vibrate_error() -> void:
 		Input.vibrate_handheld(150)
 
 func vibrate_button_press() -> void:
-	"""Provide haptic feedback for button presses on mobile platforms
-	
-	This method should be called when a button is pressed to provide
-	tactile feedback to the user. Only triggers on mobile platforms.
-	Requirement 2.5: Haptic feedback on button press
-	"""
+	## Provide haptic feedback for button presses on mobile.
+	## Requirement 2.5: Haptic feedback on button press
 	if is_mobile:
 		Input.vibrate_handheld(50)  # 50ms light vibration for button press
 
@@ -206,13 +202,8 @@ func get_safe_area_margins() -> Dictionary:
 	}
 
 func enable_button_haptics(button: BaseButton) -> void:
-	"""Enable haptic feedback for a button on mobile platforms
-	
-	Connects the button's pressed signal to trigger haptic feedback.
-	This should be called for all interactive buttons in the UI.
-	
-	@param button: The button to enable haptics for
-	"""
+	## Enable haptic feedback for a button on mobile.
+	## Connects the button's pressed signal to trigger haptic feedback.
 	if not button:
 		push_warning("TouchInputManager.enable_button_haptics: button is null")
 		return
@@ -224,13 +215,7 @@ func enable_button_haptics(button: BaseButton) -> void:
 			button.pressed.connect(vibrate_button_press)
 
 func enable_haptics_for_scene(root: Node) -> void:
-	"""Recursively enable haptic feedback for all buttons in a scene
-	
-	Traverses the scene tree and enables haptics for all BaseButton nodes.
-	This is a convenience method for enabling haptics across an entire scene.
-	
-	@param root: The root node to start traversal from
-	"""
+	## Recursively enable haptic feedback for all buttons in a scene.
 	if not root:
 		return
 	
@@ -274,15 +259,8 @@ func get_pinch_distance() -> float:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func is_touch_in_expanded_bounds(touch_pos: Vector2, control: Control) -> bool:
-	"""Check if touch position is within expanded bounds of a control node
-	
-	Expands the hit area by hit_expansion pixels on all sides to make
-	touch targets easier to hit on mobile devices.
-	
-	@param touch_pos: The touch position in screen coordinates
-	@param control: The control node to check against
-	@return: True if touch is within expanded bounds
-	"""
+	## Check if touch position is within expanded bounds of a control.
+	## Expands hit area by hit_expansion pixels on all sides.
 	if not control or not control.is_visible_in_tree():
 		return false
 	
@@ -292,15 +270,8 @@ func is_touch_in_expanded_bounds(touch_pos: Vector2, control: Control) -> bool:
 	return expanded_rect.has_point(touch_pos)
 
 func find_touch_target(touch_pos: Vector2, root: Node) -> Control:
-	"""Find the best touch target at the given position with expanded hit detection
-	
-	Searches for Control nodes that contain the touch position, considering
-	expanded hit areas. Prioritizes smaller/closer targets for disambiguation.
-	
-	@param touch_pos: The touch position in screen coordinates
-	@param root: The root node to start searching from
-	@return: The best matching Control node, or null if none found
-	"""
+	## Find the best touch target at the given position.
+	## Uses expanded hit detection, prioritizes smaller targets.
 	var candidates = []
 	_find_touch_candidates(touch_pos, root, candidates)
 	
@@ -312,7 +283,7 @@ func find_touch_target(touch_pos: Vector2, root: Node) -> Control:
 	return candidates[0]
 
 func _find_touch_candidates(touch_pos: Vector2, node: Node, candidates: Array) -> void:
-	"""Recursively find all Control nodes that could be touch targets"""
+	## Recursively find all Control nodes that could be touch targets.
 	if node is Control and is_touch_in_expanded_bounds(touch_pos, node):
 		# Only consider interactive controls
 		if node is BaseButton or node.mouse_filter != Control.MOUSE_FILTER_IGNORE:
@@ -326,14 +297,8 @@ func _find_touch_candidates(touch_pos: Vector2, node: Node, candidates: Array) -
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func _is_in_edge_dead_zone(position: Vector2) -> bool:
-	"""Check if touch position is within edge dead zone
-	
-	Filters accidental touches near screen edges by ignoring touches
-	within edge_dead_zone pixels from any screen edge.
-	
-	@param position: The touch position in screen coordinates
-	@return: True if position is in dead zone (should be ignored)
-	"""
+	## Check if touch position is within edge dead zone.
+	## Filters accidental touches near screen edges.
 	if not is_mobile:
 		return false
 	

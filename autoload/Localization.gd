@@ -664,6 +664,68 @@ func _load_translations() -> void:
 		"dark_mode": {
 			"en": "Dark",
 			"tl": "Madilim"
+		},
+		
+		# Story Screen
+		"story_tap_continue": {
+			"en": "👆 Tap to continue",
+			"tl": "👆 Tap para magpatuloy"
+		},
+		"story_tap_play": {
+			"en": "👆 Tap to play!",
+			"tl": "👆 Tap para maglaro!"
+		},
+		"story_page_indicator": {
+			"en": "%d / %d",
+			"tl": "%d / %d"
+		},
+		
+		# Session / Lives
+		"lives_remaining": {
+			"en": "Lives: %d",
+			"tl": "Buhay: %d"
+		},
+		"session_complete": {
+			"en": "Session Complete!",
+			"tl": "Tapos na ang Session!"
+		},
+		"games_played": {
+			"en": "Games Played: %d",
+			"tl": "Mga Laro: %d"
+		},
+		"final_score": {
+			"en": "Final Score",
+			"tl": "Huling Puntos"
+		},
+		"play_again": {
+			"en": "🔄 PLAY AGAIN",
+			"tl": "🔄 MAGLARO MULI"
+		},
+		
+		# New Minigame Names
+		"cloud_catcher": {
+			"en": "Cloud Catcher",
+			"tl": "Saluhin ang Ulap"
+		},
+		"cloud_catcher_instructions": {
+			"en": "TAP clouds to release rain!\nWater the thirsty plants below! ☁️",
+			"tl": "TAP ang mga ulap para umulan!\nDiligan ang mga nauuhaw na halaman sa ibaba! ☁️"
+		},
+		"water_memory": {
+			"en": "Water Memory",
+			"tl": "Alaala ng Tubig"
+		},
+		"water_memory_instructions": {
+			"en": "MATCH pairs of water-saving tips!\nFind all pairs before time runs out! 🧠",
+			"tl": "IPARES ang mga tip sa pagtitipid ng tubig!\nHanapin lahat ng pares bago maubos ang oras! 🧠"
+		},
+		"droplet_dash": {
+			"en": "Droplet Dash",
+			"tl": "Takbo ni Patak"
+		},
+		"droplet_dash_instructions": {
+			"en": "SWIPE to dodge obstacles!\nGuide Droppy to the reservoir! 💧",
+			"tl": "SWIPE para umiwas sa mga hadlang!\nGabayan si Droppy papunta sa reservoir! 💧"
 		}
 	}
 
@@ -676,9 +738,12 @@ func get_text(key: String) -> String:
 	
 	if translations[key].has(lang_code):
 		return translations[key][lang_code]
-	else:
-		push_warning("Missing translation for key '%s' in language '%s'" % [key, lang_code])
-		return translations[key].get("en", key)
+
+	push_warning(
+		"Missing translation for key '%s' in language '%s'"
+		% [key, lang_code]
+	)
+	return translations[key].get("en", key)
 
 ## Alias for get_text (shorter function name) - use translate() not tr() to avoid conflict
 func translate(key: String) -> String:
