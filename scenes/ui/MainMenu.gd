@@ -200,7 +200,10 @@ func _update_loading_text() -> void:
 	loading_label.text = new_text
 
 func _on_loading_complete() -> void:
-	get_tree().change_scene_to_file("res://scenes/ui/InitialScreen.tscn")
+	if GameManager:
+		GameManager.transition_to_scene("res://scenes/ui/InitialScreen.tscn")
+	else:
+		get_tree().change_scene_to_file("res://scenes/ui/InitialScreen.tscn")
 
 func _on_quit_button_pressed() -> void:
 	_play_button_sound()

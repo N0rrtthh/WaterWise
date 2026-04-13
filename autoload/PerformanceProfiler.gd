@@ -682,3 +682,53 @@ func _update_overlay_text() -> void:
 		+ "ISO 25010: %s" % iso
 		+ stress_ln
 	)
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# DEV-MODE SESSION LOG EXPORT
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Writes timestamped JSON session logs to user://perf_logs/
+# These logs can be compared to evaluate rule-based vs DL performance.
+
+var dev_log_enabled: bool = true
+var _session_events: Array[Dictionary] = []
+
+func log_event(event_type: String, data: Dictionary = {}) -> void:
+	if not dev_log_enabled:
+		return
+	var entry := {
+		"timestamp": Time.get_unix_time_from_system(),
+		"elapsed_sec": session_elapsed_sec,
+		"event": event_type,
+		"fps": fps_current,
+		"mem_mb": memory_current_mb,
+		"cpu_temp_c": cpu_temp_c,
+		"algo_latency_ms": algo_latency_avg_ms,
+	}
+	entry.merge(data)
+	_session_events.append(entry)
+
+func export_session_log_to_file() -> String:
+	var dir_path := "user://perf_logs"
+	DirAccess.make_dir_recursive_absolute(dir_path)
+	var datetime := Time.get_datetime_string_from_system().replace(":", "-")
+	var platform := OS.get_name()
+	var filename := "%s/session_%s_%s.json" % [dir_path, datetime, platform]
+	var report := export_session_report()
+	report["events"] = _session_events
+	report["platform"] = platform
+	report["device_model"] = OS.get_model_name()
+	report["export_time"] = datetime
+	var file := FileAccess.open(filename, FileAccess.WRITE)
+	if file:
+		file.store_string(JSON.stringify(report, "\t"))
+		file.close()
+		print("📊 Session log exported: %s" % filename)
+		return filename
+
+	push_error(
+		"Failed to write session log: %s" % filename
+	)
+	return ""
+
+func clear_session_events() -> void:
+	_session_events.clear()

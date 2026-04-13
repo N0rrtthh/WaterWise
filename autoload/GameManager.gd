@@ -130,7 +130,10 @@ const ALL_SINGLEPLAYER_MINIGAMES: Array = [
 	"ScrubToSave",
 	"BucketBrigade",
 	"TimingTap",
-	"TurnOffTap"
+	"TurnOffTap",
+	"CloudCatcher",
+	"WaterMemory",
+	"DropletDash"
 ]
 var available_minigames: Array = []
 
@@ -146,12 +149,17 @@ const UNLOCK_ID_TO_MINIGAMES: Dictionary = {
 	],
 	"leak_fix": ["WringItOut", "QuickShower", "SwipeTheSoap", "WaterPlant"],
 	"water_quiz": ["ThirstyPlant", "MudPieMaker"],
-	"bucket_relay": ["BucketBrigade", "TimingTap"]
+	"bucket_relay": ["BucketBrigade", "TimingTap"],
+	"fun_games": ["CloudCatcher", "WaterMemory", "DropletDash"]
 }
 
 var session_active: bool = false
 var minigames_played_this_session: int = 0
 var local_player_num: int = 0
+
+# Story chapter thresholds (show story at these game counts)
+var _story_shown_at: Array[int] = []
+const STORY_THRESHOLDS: Array = [0, 3, 6, 9, 12, 15]
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # INITIALIZATION
@@ -160,6 +168,7 @@ var local_player_num: int = 0
 func _ready() -> void:
 	_load_saved_data()
 	_refresh_available_minigames()
+	_setup_transition_overlay()
 	
 	# Connect signals from other autoloads
 	if has_node("/root/AdaptiveDifficulty"):
@@ -168,6 +177,43 @@ func _ready() -> void:
 	print("🎮 GameManager initialized")
 	print("   G-Counter ready for multiplayer scoring")
 	print("   Rolling Window ready for difficulty adaptation")
+
+# ── Scene Transition Overlay ─────────────────────────────────────
+var _transition_layer: CanvasLayer
+var _transition_rect: ColorRect
+var _is_transitioning: bool = false
+
+func _setup_transition_overlay() -> void:
+	_transition_layer = CanvasLayer.new()
+	_transition_layer.layer = 100  # Always on top
+	add_child(_transition_layer)
+	_transition_rect = ColorRect.new()
+	_transition_rect.color = Color(0, 0, 0, 0)
+	_transition_rect.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_transition_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_transition_layer.add_child(_transition_rect)
+
+func transition_to_scene(scene_path: String, duration: float = 0.4) -> void:
+	if _is_transitioning:
+		return
+	_is_transitioning = true
+	_transition_rect.mouse_filter = Control.MOUSE_FILTER_STOP
+	# Fade to black
+	var fade_out = create_tween()
+	fade_out.tween_property(_transition_rect, "color:a", 1.0, duration)
+	await fade_out.finished
+	# Change scene
+	get_tree().change_scene_to_file(scene_path)
+	# Wait a frame for the new scene to load
+	await get_tree().process_frame
+	await get_tree().process_frame
+	# Fade from black
+	var fade_in = create_tween()
+	fade_in.tween_property(_transition_rect, "color:a", 0.0, duration)
+	await fade_in.finished
+	_transition_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_is_transitioning = false
+
 
 func _load_saved_data() -> void:
 	var config := ConfigFile.new()
@@ -298,10 +344,8 @@ func _sync_game_state(counters: Dictionary, lives: int, diff_mult: float) -> voi
 
 @rpc("any_peer", "call_local", "reliable")
 func submit_score(points: int) -> void:
-	"""
-	G-Counter increment: Each peer adds to their own counter.
-	Server calculates global sum and checks win condition.
-	"""
+	## G-Counter increment: Each peer adds to their own counter.
+	## Server calculates global sum and checks win condition.
 	var sender_id: int = multiplayer.get_remote_sender_id()
 	if sender_id == 0:
 		sender_id = multiplayer.get_unique_id()
@@ -477,10 +521,8 @@ func _announce_team_lost() -> void:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func add_round_time(round_time: float) -> void:
-	"""
-	Add a round completion time to the rolling window.
-	Window size = 5, calculates average and adjusts difficulty.
-	"""
+	## Add a round completion time to the rolling window.
+	## Window size = 5, calculates average and adjusts difficulty.
 	rolling_window.append(round_time)
 	
 	# Keep only last 5 entries
@@ -495,15 +537,13 @@ func add_round_time(round_time: float) -> void:
 	print("   Difficulty Multiplier: ", difficulty_multiplier)
 
 func _calculate_difficulty_adjustment() -> void:
-	"""
-	SUPPLEMENTARY speed scaler for spawn intervals (NOT the paper's Φ algorithm).
-	The paper's Rule-Based Rolling Window with Φ = WMA - CP lives in
-	AdaptiveDifficulty.gd, which determines Easy/Medium/Hard difficulty.
-	
-	This method only adjusts difficulty_multiplier for in-round spawn pacing:
-	  AvgTime < 15s → multiplier += 0.2 (speed up spawns)
-	  AvgTime > 30s → multiplier -= 0.1 (slow down spawns)
-	"""
+	## SUPPLEMENTARY speed scaler for spawn intervals (NOT the paper's Φ algorithm).
+	## The paper's Rule-Based Rolling Window with Φ = WMA - CP lives in
+	## AdaptiveDifficulty.gd, which determines Easy/Medium/Hard difficulty.
+	##
+	## This method only adjusts difficulty_multiplier for in-round spawn pacing:
+	##   AvgTime < 15s → multiplier += 0.2 (speed up spawns)
+	##   AvgTime > 30s → multiplier -= 0.1 (slow down spawns)
 	var sum: float = 0.0
 	for time in rolling_window:
 		sum += time
@@ -722,6 +762,7 @@ func start_new_session(mode: GameMode = GameMode.SINGLE_PLAYER) -> void:
 	session_score = 0
 	round_scores.clear()
 	pending_next_minigame_name = ""
+	_story_shown_at.clear()
 	
 	if mode == GameMode.SINGLE_PLAYER:
 		# Hard reset any multiplayer remnants so single-player never hijacks flow.
@@ -732,9 +773,15 @@ func start_new_session(mode: GameMode = GameMode.SINGLE_PLAYER) -> void:
 		_load_saved_data()
 		if has_node("/root/AdaptiveDifficulty"):
 			AdaptiveDifficulty.reset()
+		if PerformanceProfiler:
+			PerformanceProfiler.clear_session_events()
+			PerformanceProfiler.log_event("session_start", {"mode": "single_player"})
 		print("🎯 New SINGLE-PLAYER session started")
 	else:
 		reset_multiplayer_game()
+		if PerformanceProfiler:
+			PerformanceProfiler.clear_session_events()
+			PerformanceProfiler.log_event("session_start", {"mode": "multiplayer_coop"})
 		print("🎯 New MULTIPLAYER CO-OP session started")
 
 func start_next_minigame() -> void:
@@ -749,6 +796,33 @@ func start_next_minigame() -> void:
 		_show_final_score()
 		return
 
+	# Check if a story chapter should play
+	if _should_show_story():
+		_show_story_then_continue()
+		return
+
+	_launch_next_minigame_internal()
+
+func _should_show_story() -> bool:
+	for threshold in STORY_THRESHOLDS:
+		if minigames_played_this_session == threshold and threshold not in _story_shown_at:
+			return true
+	return false
+
+func _show_story_then_continue() -> void:
+	_story_shown_at.append(minigames_played_this_session)
+	var story_path := "res://scenes/ui/StoryScreen.tscn"
+	if not ResourceLoader.exists(story_path):
+		_launch_next_minigame_internal()
+		return
+	var story_scene = load(story_path).instantiate()
+	get_tree().current_scene.add_child(story_scene)
+	story_scene.story_finished.connect(func():
+		story_scene.queue_free()
+		_launch_next_minigame_internal()
+	)
+
+func _launch_next_minigame_internal() -> void:
 	if available_minigames.is_empty():
 		_refresh_available_minigames()
 		_rebuild_minigame_random_bag()
@@ -901,6 +975,20 @@ func complete_minigame(
 		"difficulty": _get_current_difficulty()
 	}
 	
+	# Log event for dev-mode performance analysis
+	if PerformanceProfiler:
+		PerformanceProfiler.log_event("minigame_complete", {
+			"game_name": game_name,
+			"accuracy": accuracy,
+			"reaction_time_ms": reaction_time,
+			"mistakes": mistakes,
+			"difficulty": _get_current_difficulty(),
+			"round_score": round_score,
+			"session_score": session_score,
+			"lives": session_lives,
+			"difficulty_multiplier": difficulty_multiplier,
+		})
+	
 	minigame_completed.emit(game_name, results)
 	change_state(GameState.MINIGAME_RESULTS)
 	current_minigame_index += 1
@@ -934,10 +1022,20 @@ func _show_final_score() -> void:
 		high_score = session_score
 	_save_data()
 	
+	# Export dev-mode performance log
+	if PerformanceProfiler:
+		PerformanceProfiler.log_event("session_end", {
+			"total_score": session_score,
+			"high_score": high_score,
+			"games_played": minigames_played_this_session,
+			"lives_remaining": session_lives,
+		})
+		PerformanceProfiler.export_session_log_to_file()
+	
 	if ResourceLoader.exists("res://scenes/ui/FinalScore.tscn"):
-		get_tree().change_scene_to_file("res://scenes/ui/FinalScore.tscn")
+		transition_to_scene("res://scenes/ui/FinalScore.tscn")
 	else:
-		get_tree().change_scene_to_file("res://scenes/ui/InitialScreen.tscn")
+		transition_to_scene("res://scenes/ui/InitialScreen.tscn")
 
 func pause_game() -> void:
 	get_tree().paused = true

@@ -147,7 +147,7 @@ func _rebuild_animation() -> void:
 	anim.track_insert_key(flash_track, in_t * 1.2, 0.0)
 
 	var panel_track := anim.add_track(Animation.TYPE_VALUE)
-	anim.track_set_path(panel_track, NodePath("Panel:position:y"))
+	anim.track_set_path(panel_track, NodePath("Panel:offset_top"))
 	anim.track_insert_key(panel_track, 0.0, enter_from_y)
 	anim.track_insert_key(panel_track, in_t, enter_to_y)
 	anim.track_insert_key(panel_track, hold_t, enter_to_y)
@@ -1324,12 +1324,14 @@ func _spawn_outcome_particles(count: int = 12) -> void:
 func _run_outro_character_vfx() -> void:
 	var speed = max(0.4, float(anim_options.get("speed", 1.0)))
 	var length = 5.0 / speed
+	var vp = get_viewport_rect().size
 
 	if _water_droplet:
 		var target_pos = _water_droplet.position
 		if _is_success:
 			# ══ SUCCESS: Triumphant jump-in from below ══
-			_water_droplet.position.y = get_viewport_rect().size.y + 80
+			_water_droplet.position.y = vp.y + 80
+			_water_droplet.scale = Vector2(0.7, 1.4)
 			_water_droplet.modulate.a = 1.0
 
 			# Rocket upward
@@ -1493,7 +1495,7 @@ func _run_outro_character_vfx() -> void:
 		pf.tween_interval(delay + 1.5)
 		pf.tween_property(p, "modulate:a", 0.0, 0.8)
 
-func _animate_outcome_props(length: float) -> void:
+func _animate_outcome_props(_length: float) -> void:
 	if not _water_droplet:
 		return
 	# Animate sparkles pulsing

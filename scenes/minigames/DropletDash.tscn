@@ -1,0 +1,9 @@
+[gd_scene load_steps=2 format=3 uid="uid://cdroplet_dash_scene"]
+
+[ext_resource type="Script" path="res://scenes/minigames/DropletDash.gd" id="1"]
+
+[node name="DropletDash" type="Node2D"]
+script = ExtResource("1")
+game_name = "Droplet Dash"
+game_duration = 20.0
+game_mode = "survival"
