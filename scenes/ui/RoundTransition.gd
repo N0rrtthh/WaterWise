@@ -28,6 +28,8 @@ func _ready() -> void:
 func show_results(p1_score: int, p2_score: int, team_total: int, lives: int, rounds: int, next_roles: Dictionary) -> void:
 	"""Display round results and countdown to next round"""
 	visible = true
+	if AudioManager:
+		AudioManager.play_fanfare()
 	
 	# Update labels
 	title_label.text = "ROUND %d COMPLETE!" % rounds

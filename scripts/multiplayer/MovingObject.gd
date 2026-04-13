@@ -149,6 +149,7 @@ func _on_area_entered(other: Area2D) -> void:
 func _play_catch_effect() -> void:
 	"""Visual feedback when caught"""
 	var tween: Tween = create_tween()
+	tween.set_loops(1)
 	tween.tween_property(self, "scale", Vector2(1.5, 1.5), 0.1)
 	tween.tween_property(self, "modulate:a", 0.0, 0.2)
 	tween.tween_callback(queue_free)
@@ -172,6 +173,7 @@ func _play_destroy_effect() -> void:
 	"""Visual feedback when destroyed by click"""
 	# Burst effect
 	var tween: Tween = create_tween()
+	tween.set_loops(1)
 	tween.set_parallel(true)
 	tween.tween_property(self, "scale", Vector2(1.8, 1.8), 0.15)
 	tween.tween_property(self, "rotation", rotation + PI, 0.15)
@@ -264,6 +266,7 @@ func _process_swipe(end_pos: Vector2) -> void:
 	
 	# Remove trail after animation
 	var trail_tween = create_tween()
+	trail_tween.set_loops(1)
 	trail_tween.tween_property(line, "modulate:a", 0.0, 0.3)
 	trail_tween.tween_callback(line.queue_free)
 	
@@ -357,5 +360,6 @@ func flash(color: Color = Color.WHITE, duration: float = 0.1) -> void:
 	"""Flash the object with a color"""
 	var original_modulate: Color = modulate
 	var tween: Tween = create_tween()
+	tween.set_loops(1)
 	tween.tween_property(self, "modulate", color, duration / 2)
 	tween.tween_property(self, "modulate", original_modulate, duration / 2)

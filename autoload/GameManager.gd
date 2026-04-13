@@ -64,17 +64,18 @@ var g_counter: Dictionary = {}  # { peer_id: int_score }
 var current_minigame_quota: int = 20  # Points needed to win current minigame (set by each game)
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# RULE-BASED ROLLING WINDOW (Adaptive Difficulty - UNCAPPED)
+# SUPPLEMENTARY SPAWN-SPEED SCALER (NOT the paper's Φ algorithm)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# Formula: AvgTime = Σ(RoundTime_k) / 3 for k = 1 to 3
+# The paper's Rule-Based Rolling Window (Φ = WMA - CP) lives in
+# AdaptiveDifficulty.gd. This section is a SUPPLEMENTARY in-round
+# spawn-pacing scaler only:
 # If AvgTime < 15s → difficulty_multiplier += 0.2 (NO CEILING!)
 # If AvgTime > 30s → difficulty_multiplier -= 0.1 (min: 0.5)
 # Timer.wait_time = base_time / difficulty_multiplier
-# Game speed increases infinitely as player improves!
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-var rolling_window: Array[float] = []  # Last 3 round times
-const ROLLING_WINDOW_SIZE: int = 3
+var rolling_window: Array[float] = []  # Last 5 round times
+const ROLLING_WINDOW_SIZE: int = 5  # Matches AdaptiveDifficulty and CoopAdaptation window size
 var difficulty_multiplier: float = 1.0
 const MIN_DIFFICULTY: float = 0.5
 # NO MAX_DIFFICULTY - Game gets faster infinitely!
@@ -105,7 +106,10 @@ var mp_game_name: String = ""
 # Player progress tracking
 var completed_minigames: Array = []
 var current_minigame_index: int = 0
-var available_minigames: Array = [
+var minigame_random_bag: Array[String] = []
+var pending_next_minigame_name: String = ""
+var force_full_singleplayer_pool: bool = true
+const ALL_SINGLEPLAYER_MINIGAMES: Array = [
 	"RiceWashRescue",
 	"VegetableBath",
 	"GreywaterSorter",
@@ -115,7 +119,8 @@ var available_minigames: Array = [
 	"CatchTheRain",
 	"CoverTheDrum",
 	"SpotTheSpeck",
-	# NEW Mini-Games (10 additional)
+	"FixLeak",
+	"WaterPlant",
 	"PlugTheLeak",
 	"SwipeTheSoap",
 	"QuickShower",
@@ -127,6 +132,22 @@ var available_minigames: Array = [
 	"TimingTap",
 	"TurnOffTap"
 ]
+var available_minigames: Array = []
+
+const UNLOCK_ID_TO_MINIGAMES: Dictionary = {
+	"catch_rain": ["CatchTheRain", "CoverTheDrum", "RiceWashRescue"],
+	"pipe_puzzle": ["TracePipePath", "PlugTheLeak", "FixLeak", "ToiletTankFix", "TurnOffTap"],
+	"water_sorting": [
+		"GreywaterSorter",
+		"VegetableBath",
+		"ScrubToSave",
+		"FilterBuilder",
+		"SpotTheSpeck"
+	],
+	"leak_fix": ["WringItOut", "QuickShower", "SwipeTheSoap", "WaterPlant"],
+	"water_quiz": ["ThirstyPlant", "MudPieMaker"],
+	"bucket_relay": ["BucketBrigade", "TimingTap"]
+}
 
 var session_active: bool = false
 var minigames_played_this_session: int = 0
@@ -138,10 +159,10 @@ var local_player_num: int = 0
 
 func _ready() -> void:
 	_load_saved_data()
+	_refresh_available_minigames()
 	
 	# Connect signals from other autoloads
 	if has_node("/root/AdaptiveDifficulty"):
-		AdaptiveDifficulty.posttest_unlocked.connect(_on_posttest_unlocked)
 		AdaptiveDifficulty.difficulty_changed.connect(_on_difficulty_changed)
 	
 	print("🎮 GameManager initialized")
@@ -173,7 +194,7 @@ func _save_data() -> void:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func host_game(port: int = DEFAULT_PORT) -> bool:
-	"""Host a LAN multiplayer game"""
+	# Host a LAN multiplayer game
 	peer = ENetMultiplayerPeer.new()
 	var error: int = peer.create_server(port, MAX_PLAYERS - 1)
 	
@@ -198,7 +219,7 @@ func host_game(port: int = DEFAULT_PORT) -> bool:
 	return true
 
 func join_game(ip: String, port: int = DEFAULT_PORT) -> bool:
-	"""Join a LAN multiplayer game"""
+	# Join a LAN multiplayer game
 	peer = ENetMultiplayerPeer.new()
 	var error: int = peer.create_client(ip, port)
 	
@@ -219,7 +240,7 @@ func join_game(ip: String, port: int = DEFAULT_PORT) -> bool:
 	return true
 
 func disconnect_multiplayer() -> void:
-	"""Disconnect from multiplayer session"""
+	# Disconnect from multiplayer session
 	if multiplayer.multiplayer_peer:
 		multiplayer.multiplayer_peer = null
 	peer = null
@@ -256,11 +277,20 @@ func _on_server_disconnected() -> void:
 
 @rpc("authority", "reliable", "call_local")
 func _sync_game_state(counters: Dictionary, lives: int, diff_mult: float) -> void:
-	"""Sync game state from host to clients"""
-	g_counter = counters
+	# Sync game state using G-Counter CRDT merge: element-wise max (Paper §4)
+	# G-Counter merge rule: for each peer, keep the MAXIMUM count
+	for pid in counters:
+		if g_counter.has(pid):
+			g_counter[pid] = max(g_counter[pid], counters[pid])
+		else:
+			g_counter[pid] = counters[pid]
+	# Also merge into the dedicated GCounter singleton if present
+	var gc = get_node_or_null("/root/GCounter")
+	if gc:
+		gc.merge(counters)
 	team_lives = lives
 	difficulty_multiplier = diff_mult
-	print("📡 Game state synced from host")
+	print("📡 Game state merged (G-Counter element-wise max)")
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # G-COUNTER: SCORE SUBMISSION
@@ -281,46 +311,74 @@ func submit_score(points: int) -> void:
 		g_counter[sender_id] = 0
 	g_counter[sender_id] += points
 	
-	print("💧 Player ", sender_id, " scored ", points, " points")
+	# Also update the dedicated GCounter singleton for CRDT compliance
+	var gc = get_node_or_null("/root/GCounter")
+	if gc:
+		gc.increment(sender_id, points)
+	
+	var global_score = get_global_score()
+	print("💧 P%d scored %d | Global: %d / %d" % [
+		sender_id, points,
+		global_score, current_minigame_quota])
 	print("   G-Counter state: ", g_counter)
 	
 	# Only host checks win condition
-	if is_host:
+	if is_host and current_minigame_quota > 0:
 		_check_win_condition()
 
 func get_global_score() -> int:
-	"""Calculate GlobalScore = Σ(PlayerInput_i)"""
+	# Calculate GlobalScore = Σ(PlayerInput_i)
 	var total: int = 0
 	for peer_id in g_counter:
 		total += g_counter[peer_id]
 	return total
 
 func _check_win_condition() -> void:
-	"""Check if team has reached the current minigame quota"""
+	# Check if team has reached the current minigame quota
 	var global_score: int = get_global_score()
-	print("🎯 Global Score: ", global_score, " / ", current_minigame_quota)
+	print("🎯 Win Condition: %d / %d"
+		% [global_score, current_minigame_quota])
+	
+	if current_minigame_quota <= 0:
+		print("⚠️ Warning: Quota is %d (should be > 0)" % current_minigame_quota)
+		return
 	
 	if global_score >= current_minigame_quota:
-		print("🎉 TEAM WINS!")
+		print("🎉 TEAM WINS! (%d >= %d)" % [global_score, current_minigame_quota])
 		rpc("_announce_team_won")
+	else:
+		print("   Still need %d more points" % (current_minigame_quota - global_score))
 
 @rpc("authority", "call_local", "reliable")
 func _announce_team_won() -> void:
-	"""Broadcast team victory to all players"""
+	# Broadcast team victory to all players
 	team_won.emit()
 	print("🏆 Victory! Team reached quota!")
 
+@rpc("any_peer", "call_local", "reliable")
 func set_minigame_quota(quota: int) -> void:
-	"""Set the quota for the current minigame"""
+	# Set the quota for current minigame (synced to clients)
 	current_minigame_quota = quota
 	print("🎯 Minigame quota set to: ", quota)
+	
+	# If we're the caller, broadcast to all clients
+	var sender_id = multiplayer.get_remote_sender_id()
+	if sender_id == 0:  # Local call
+		# Broadcast to all clients
+		if is_host:
+			for peer_id in g_counter.keys():
+				if peer_id != multiplayer.get_unique_id():
+					rpc_id(peer_id, "set_minigame_quota", quota)
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # MULTIPLAYER PERFORMANCE TRACKING (For CoopAdaptation)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-func _store_multiplayer_performance(game_name: String, accuracy: float, reaction_time: int, mistakes: int) -> void:
-	"""Store local player's performance and check if both players have reported"""
+func _store_multiplayer_performance(
+	game_name: String, accuracy: float,
+	reaction_time: int, mistakes: int
+) -> void:
+	# Store local player's performance and check if both reported
 	var my_id = multiplayer.get_unique_id()
 	mp_game_name = game_name
 	
@@ -330,7 +388,10 @@ func _store_multiplayer_performance(game_name: String, accuracy: float, reaction
 		"errors": mistakes
 	}
 	
-	print("📊 [MP] Player %d performance stored: acc=%.2f, time=%.1fs, errors=%d" % [my_id, accuracy, reaction_time/1000.0, mistakes])
+	print("📊 [MP] P%d stored: acc=%.2f, "
+		% [my_id, accuracy]
+		+ "time=%.1fs, errors=%d"
+		% [reaction_time / 1000.0, mistakes])
 	
 	# Notify host about this player's performance
 	if not is_host:
@@ -340,7 +401,7 @@ func _store_multiplayer_performance(game_name: String, accuracy: float, reaction
 
 @rpc("any_peer", "reliable")
 func _receive_client_performance(accuracy: float, reaction_time: int, mistakes: int) -> void:
-	"""Host receives performance from client"""
+	# Host receives performance from client
 	var sender_id = multiplayer.get_remote_sender_id()
 	
 	pending_mp_performance[sender_id] = {
@@ -353,7 +414,7 @@ func _receive_client_performance(accuracy: float, reaction_time: int, mistakes: 
 	_check_both_players_done()
 
 func _check_both_players_done() -> void:
-	"""Check if both players have submitted performance, then apply CoopAdaptation"""
+	# Check if both players submitted, then apply CoopAdaptation
 	if pending_mp_performance.size() < 2:
 		return
 	
@@ -385,7 +446,7 @@ func _check_both_players_done() -> void:
 
 @rpc("any_peer", "call_local", "reliable")
 func report_damage() -> void:
-	"""Called when a player misses a Drop/Leaf"""
+	# Called when a player misses a Drop/Leaf
 	if not is_host:
 		return  # Only host manages lives
 	
@@ -401,13 +462,13 @@ func report_damage() -> void:
 
 @rpc("authority", "call_local", "reliable")
 func _sync_team_lives(lives: int) -> void:
-	"""Sync team lives from host to all clients"""
+	# Sync team lives from host to all clients
 	team_lives = lives
 	team_life_lost.emit(team_lives)
 
 @rpc("authority", "call_local", "reliable")
 func _announce_team_lost() -> void:
-	"""Broadcast team defeat to all players"""
+	# Broadcast team defeat to all players
 	team_lost.emit()
 	print("☠️ Game Over! Team ran out of lives!")
 
@@ -418,11 +479,11 @@ func _announce_team_lost() -> void:
 func add_round_time(round_time: float) -> void:
 	"""
 	Add a round completion time to the rolling window.
-	Window size = 3, calculates average and adjusts difficulty.
+	Window size = 5, calculates average and adjusts difficulty.
 	"""
 	rolling_window.append(round_time)
 	
-	# Keep only last 3 entries
+	# Keep only last 5 entries
 	while rolling_window.size() > ROLLING_WINDOW_SIZE:
 		rolling_window.pop_front()
 	
@@ -435,10 +496,13 @@ func add_round_time(round_time: float) -> void:
 
 func _calculate_difficulty_adjustment() -> void:
 	"""
-	Rule-Based Rolling Window Algorithm:
-	AvgTime = Σ(RoundTime_k) / 3
-	If AvgTime < 15s → difficulty_multiplier += 0.2
-	If AvgTime > 30s → difficulty_multiplier -= 0.1
+	SUPPLEMENTARY speed scaler for spawn intervals (NOT the paper's Φ algorithm).
+	The paper's Rule-Based Rolling Window with Φ = WMA - CP lives in
+	AdaptiveDifficulty.gd, which determines Easy/Medium/Hard difficulty.
+	
+	This method only adjusts difficulty_multiplier for in-round spawn pacing:
+	  AvgTime < 15s → multiplier += 0.2 (speed up spawns)
+	  AvgTime > 30s → multiplier -= 0.1 (slow down spawns)
 	"""
 	var sum: float = 0.0
 	for time in rolling_window:
@@ -465,16 +529,16 @@ func _calculate_difficulty_adjustment() -> void:
 
 @rpc("authority", "call_local", "reliable")
 func _sync_difficulty(new_multiplier: float) -> void:
-	"""Sync difficulty multiplier from host to clients"""
+	# Sync difficulty multiplier from host to clients
 	difficulty_multiplier = new_multiplier
 	print("📡 Difficulty synced: ", difficulty_multiplier)
 
 func get_spawn_interval(base_interval: float) -> float:
-	"""Get adjusted spawn interval: base_time / difficulty_multiplier"""
+	# Get adjusted spawn interval: base_time / difficulty_multiplier
 	return base_interval / difficulty_multiplier
 
 func reset_multiplayer_game() -> void:
-	"""Reset state for a new multiplayer round"""
+	# Reset state for a new multiplayer round
 	g_counter.clear()
 	g_counter[multiplayer.get_unique_id()] = 0
 	team_lives = MAX_TEAM_LIVES
@@ -494,7 +558,7 @@ func reset_multiplayer_game() -> void:
 var multiplayer_minigames: Array[String] = [
 	"MiniGame_WaterHarvest",
 	"MiniGame_GreywaterSort",
-	"MiniGame_PipeRepair"
+	"MiniGame_LeafSort"
 ]
 
 var multiplayer_game_order: Array[String] = []
@@ -504,7 +568,7 @@ var multiplayer_game_index: int = 0
 var player_modes: Dictionary = {}  # {peer_id: int (1 or 2)}
 
 func assign_random_modes() -> void:
-	"""Randomly assign Mode 1 or Mode 2 to each player"""
+	# Randomly assign Mode 1 or Mode 2 to each player
 	player_modes.clear()
 	
 	# Get peer IDs and convert to regular Array for shuffling
@@ -523,13 +587,13 @@ func assign_random_modes() -> void:
 	print("🎲 Mode assignments: ", player_modes)
 
 func get_my_player_mode() -> int:
-	"""Get my assigned mode (1 or 2)"""
+	# Get my assigned mode (1 or 2)
 	var my_id = multiplayer.get_unique_id()
 	return player_modes.get(my_id, 1)  # Default to mode 1
 
 @rpc("authority", "call_local", "reliable")
 func _load_next_multiplayer_minigame() -> void:
-	"""Load the next random multiplayer minigame (continuous loop until lives depleted)"""
+	# Load next random multiplayer minigame (loop until lives depleted)
 	print("🎮 [Multiplayer] Loading next minigame...")
 	
 	# Reset G-Counter for next round (but keep lives and difficulty)
@@ -537,6 +601,9 @@ func _load_next_multiplayer_minigame() -> void:
 	for peer_id in multiplayer.get_peers():
 		g_counter[peer_id] = 0
 	g_counter[multiplayer.get_unique_id()] = 0
+	
+	# Reset quota to 0 so new game can set it
+	current_minigame_quota = 0
 	
 	# Randomly assign modes for the next game
 	assign_random_modes()
@@ -565,7 +632,7 @@ func _load_next_multiplayer_minigame() -> void:
 
 @rpc("authority", "call_local", "reliable")
 func _show_multiplayer_final_results() -> void:
-	"""Show final game over screen for multiplayer session"""
+	# Show final game over screen for multiplayer session
 	print("🏁 Multiplayer session ended!")
 	print("   Games Played: ", minigames_played_this_session)
 	print("   Final Difficulty: %.2f" % difficulty_multiplier)
@@ -654,9 +721,14 @@ func start_new_session(mode: GameMode = GameMode.SINGLE_PLAYER) -> void:
 	session_lives = 3
 	session_score = 0
 	round_scores.clear()
+	pending_next_minigame_name = ""
 	
 	if mode == GameMode.SINGLE_PLAYER:
-		available_minigames.shuffle()
+		# Hard reset any multiplayer remnants so single-player never hijacks flow.
+		if is_multiplayer_connected or multiplayer.multiplayer_peer:
+			disconnect_multiplayer()
+		_refresh_available_minigames()
+		_rebuild_minigame_random_bag()
 		_load_saved_data()
 		if has_node("/root/AdaptiveDifficulty"):
 			AdaptiveDifficulty.reset()
@@ -666,26 +738,110 @@ func start_new_session(mode: GameMode = GameMode.SINGLE_PLAYER) -> void:
 		print("🎯 New MULTIPLAYER CO-OP session started")
 
 func start_next_minigame() -> void:
+	if current_game_mode != GameMode.SINGLE_PLAYER:
+		push_warning(
+			"start_next_minigame called outside single-player mode; forcing single-player."
+		)
+		current_game_mode = GameMode.SINGLE_PLAYER
+
 	if session_lives <= 0:
 		all_minigames_completed.emit()
 		_show_final_score()
 		return
-	
-	if current_minigame_index >= available_minigames.size():
-		current_minigame_index = 0
-		available_minigames.shuffle()
-	
-	var game_name: String = available_minigames[current_minigame_index]
+
+	if available_minigames.is_empty():
+		_refresh_available_minigames()
+		_rebuild_minigame_random_bag()
+		if available_minigames.is_empty():
+			push_warning("No minigames available. Returning to main menu.")
+			return_to_main_menu()
+			return
+
+	if minigame_random_bag.is_empty():
+		_rebuild_minigame_random_bag()
+
+	if minigame_random_bag.is_empty():
+		push_warning("Random bag is empty. Returning to main menu.")
+		return_to_main_menu()
+		return
+
+	var pick_index = randi() % minigame_random_bag.size()
+	var game_name: String = minigame_random_bag[pick_index]
+	minigame_random_bag.remove_at(pick_index)
+
 	change_state(GameState.PLAYING_MINIGAME)
 	minigame_started.emit(game_name)
-	
+	_start_intro_cutscene_for_game(game_name)
+
+func _start_intro_cutscene_for_game(game_name: String) -> void:
+	pending_next_minigame_name = game_name
+	var bridge_path := "res://scenes/ui/cutscenes/MiniGameIntroBridge.tscn"
+	if ResourceLoader.exists(bridge_path):
+		get_tree().change_scene_to_file(bridge_path)
+		return
+
+	# Fallback for safety: if bridge scene is missing, go straight to minigame.
+	launch_pending_minigame()
+
+func launch_pending_minigame() -> void:
+	if pending_next_minigame_name.is_empty():
+		push_warning("No pending minigame set. Selecting next minigame.")
+		start_next_minigame()
+		return
+
+	var game_name := pending_next_minigame_name
+	pending_next_minigame_name = ""
 	var game_path: String = "res://scenes/minigames/%s.tscn" % game_name
 	if ResourceLoader.exists(game_path):
 		get_tree().change_scene_to_file(game_path)
 	else:
 		push_warning("Mini-game not found: ", game_path)
+		# Try the next one immediately if one entry is stale.
+		start_next_minigame()
 
-func complete_minigame(game_name: String, accuracy: float, reaction_time: int, mistakes: int) -> void:
+func _refresh_available_minigames() -> void:
+	# Build single-player pool from SaveManager unlock bundles.
+	var save_mgr = get_node_or_null("/root/SaveManager")
+	var unlocked_ids: Array = []
+	var filtered: Array = []
+
+	if save_mgr and save_mgr.unlocked_content is Dictionary:
+		unlocked_ids = save_mgr.unlocked_content.get("minigames", [])
+
+	if force_full_singleplayer_pool:
+		filtered = ALL_SINGLEPLAYER_MINIGAMES.duplicate()
+	elif unlocked_ids.is_empty():
+		filtered = ALL_SINGLEPLAYER_MINIGAMES.duplicate()
+	else:
+		for unlock_id in unlocked_ids:
+			if UNLOCK_ID_TO_MINIGAMES.has(unlock_id):
+				for game_name in UNLOCK_ID_TO_MINIGAMES[unlock_id]:
+					if game_name not in filtered:
+						filtered.append(game_name)
+
+	# Keep only scenes that exist to prevent runtime scene load errors.
+	available_minigames.clear()
+	for game_name in filtered:
+		if ResourceLoader.exists("res://scenes/minigames/%s.tscn" % game_name):
+			available_minigames.append(game_name)
+
+	if available_minigames.is_empty():
+		available_minigames = ["CatchTheRain"]
+
+func _rebuild_minigame_random_bag() -> void:
+	minigame_random_bag.clear()
+	for game_name in available_minigames:
+		minigame_random_bag.append(game_name)
+
+func refresh_available_minigames() -> void:
+	_refresh_available_minigames()
+
+func complete_minigame(
+	game_name: String, accuracy: float,
+	reaction_time: int, mistakes: int,
+	round_score_override: int = -1,
+	best_combo: int = 0
+) -> void:
 	if not game_name in completed_minigames:
 		completed_minigames.append(game_name)
 	
@@ -693,16 +849,40 @@ func complete_minigame(game_name: String, accuracy: float, reaction_time: int, m
 	
 	var round_score: int = int(accuracy * 100.0) - (mistakes * 10)
 	round_score = max(0, round_score)
+	if round_score_override >= 0:
+		round_score = round_score_override
 	session_score += round_score
-	round_scores.append({"game": game_name, "score": round_score})
+	round_scores.append({
+		"game": game_name,
+		"score": round_score,
+		"combo": best_combo,
+		"accuracy": accuracy,
+		"mistakes": mistakes
+	})
 	
 	# Add to rolling window for difficulty adjustment
 	var round_time_seconds: float = float(reaction_time) / 1000.0
 	add_round_time(round_time_seconds)
 	
+	# ═══════════════════════════════════════════════════════════════════════
 	# Apply adaptive difficulty algorithms based on game mode
+	# ═══════════════════════════════════════════════════════════════════════
+	# ELI5: This is the CONNECTION POINT between minigames and the algorithm!
+	#
+	# When a single-player minigame ends, it calls GameManager.complete_minigame()
+	# with the player's accuracy, reaction_time, and mistakes.
+	#
+	# GameManager then forwards this data to AdaptiveDifficulty.add_performance()
+	# which:
+	#   1) Adds it to the Rolling Window (last 5 games)
+	#   2) Every 2 games, calculates Φ (Proficiency Index)
+	#   3) Uses the decision tree to adjust difficulty (Easy/Medium/Hard)
+	#
+	# The NEW difficulty then applies to the NEXT minigame the player starts!
+	# ═══════════════════════════════════════════════════════════════════════
 	if current_game_mode == GameMode.SINGLE_PLAYER:
 		# Single-player uses AdaptiveDifficulty (Φ = WMA - CP algorithm)
+		# This is the RULE-BASED ROLLING WINDOW ALGORITHM in action!
 		if AdaptiveDifficulty:
 			AdaptiveDifficulty.add_performance(accuracy, reaction_time, mistakes, game_name)
 	else:
@@ -729,12 +909,11 @@ func _get_current_difficulty() -> String:
 	# Dynamic difficulty classification that works with uncapped values
 	if difficulty_multiplier >= 2.0:
 		return "Extreme"  # New tier for very high speeds
-	elif difficulty_multiplier >= 1.5:
+	if difficulty_multiplier >= 1.5:
 		return "Hard"
-	elif difficulty_multiplier >= 1.0:
+	if difficulty_multiplier >= 1.0:
 		return "Medium"
-	else:
-		return "Easy"
+	return "Easy"
 
 func return_to_main_menu() -> void:
 	change_state(GameState.MAIN_MENU)
@@ -749,6 +928,12 @@ func return_to_main_menu() -> void:
 func _show_final_score() -> void:
 	print("🎉 Session complete! Showing final score...")
 	change_state(GameState.FINAL_RESULTS)
+	
+	# Update high score before showing FinalScore so the screen can compare
+	if session_score > high_score:
+		high_score = session_score
+	_save_data()
+	
 	if ResourceLoader.exists("res://scenes/ui/FinalScore.tscn"):
 		get_tree().change_scene_to_file("res://scenes/ui/FinalScore.tscn")
 	else:
@@ -762,9 +947,6 @@ func resume_game() -> void:
 	get_tree().paused = false
 	change_state(GameState.PLAYING_MINIGAME)
 
-func _on_posttest_unlocked() -> void:
-	print("🎓 POST-TEST UNLOCKED!")
-
 func _on_difficulty_changed(old_level: String, new_level: String, reason: String) -> void:
 	print("⚡ Difficulty changed: ", old_level, " → ", new_level, " (", reason, ")")
 
@@ -773,21 +955,21 @@ func _on_difficulty_changed(old_level: String, new_level: String, reason: String
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func should_show_welcome_popup() -> bool:
-	"""Returns true only on the FIRST EVER game launch"""
+	# Returns true only on the FIRST EVER game launch
 	return first_launch
 
 func mark_welcome_shown() -> void:
-	"""Mark that welcome popup has been shown - never show again"""
+	# Mark that welcome popup has been shown - never show again
 	first_launch = false
 	_save_data()
 
 func reset_welcome_popup() -> void:
-	"""Reset to show welcome popup again (for testing)"""
+	# Reset to show welcome popup again (for testing)
 	first_launch = true
 	_save_data()
 
 func reset_all_data() -> void:
-	"""Reset all saved data to defaults (fresh start)"""
+	# Reset all saved data to defaults (fresh start)
 	high_score = 0
 	water_droplets = 0
 	first_launch = true

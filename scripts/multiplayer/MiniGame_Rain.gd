@@ -1,16 +1,16 @@
 class_name MiniGameRain
 extends Node2D
 
-## ═══════════════════════════════════════════════════════════════════
+## 
 ## MINIGAME_RAIN.GD - Dual-Mode Water Reuse Game
-## ═══════════════════════════════════════════════════════════════════
-## Theme: "Rainwater Harvesting & Filtration" 🌧️💧
+## 
+## Theme: "Rainwater Harvesting & Filtration" 
 ## 
 ## DUAL-MODE GAMEPLAY (Random Assignment Each Game):
 ## - MODE 1 (Collector): Catch falling CLEAN water drops with bucket
-##   → Adds to shared water tank
+##    Adds to shared water tank
 ## - MODE 2 (Filter): Remove DIRTY particles from collected water by tapping
-##   → Cleans the water tank for points
+##    Cleans the water tank for points
 ##
 ## Each player gets a RANDOM mode at the start of each game!
 ##
@@ -19,51 +19,54 @@ extends Node2D
 ## 2. Rolling Window: Adaptive difficulty based on team performance
 ##
 ## SHARED GOAL: Collect & filter enough clean water to reach quota
-## FAIL STATE: Miss items → Lose team life
-## ═══════════════════════════════════════════════════════════════════
+## FAIL STATE: Miss items  Lose team life
+## 
 
 signal game_won()
 signal game_lost()
 signal score_updated(new_score: int)
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 
 # DIFFICULTY PARAMETERS (Controlled by Rolling Window)
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 
 
 const DIFFICULTY_SETTINGS: Dictionary = {
 	"Easy": {
-		"quota": 15,
-		"mode1_spawn_rate": 2.0,      # Collector: Seconds between water drops
-		"mode1_drop_speed": 200.0,    # Drop falling speed
-		"mode2_spawn_rate": 2.5,      # Filter: Seconds between dirt particles
-		"mode2_dirt_speed": 150.0,    # Dirt floating speed
+		"quota": 20,
+		"mode1_spawn_rate": 2.5,      # Collector: Seconds between water drops (slower = easier)
+		"mode1_drop_speed": 180.0,    # Drop falling speed (slower = easier)
+		"mode2_spawn_rate": 3.0,      # Filter: Seconds between dirt particles (slower = easier)
+		"mode2_dirt_speed": 120.0,    # Dirt floating speed (slower = easier)
 		"mode2_dirt_count": 1         # Number of dirt particles at once
 	},
 	"Medium": {
-		"quota": 25,
-		"mode1_spawn_rate": 1.5,
-		"mode1_drop_speed": 300.0,
-		"mode2_spawn_rate": 2.0,
-		"mode2_dirt_speed": 200.0,
+		"quota": 30,
+		"mode1_spawn_rate": 1.8,
+		"mode1_drop_speed": 250.0,
+		"mode2_spawn_rate": 2.2,
+		"mode2_dirt_speed": 180.0,
 		"mode2_dirt_count": 2
 	},
 	"Hard": {
-		"quota": 40,
-		"mode1_spawn_rate": 0.8,
-		"mode1_drop_speed": 400.0,
-		"mode2_spawn_rate": 1.2,
-		"mode2_dirt_speed": 280.0,
+		"quota": 45,
+		"mode1_spawn_rate": 1.2,
+		"mode1_drop_speed": 350.0,
+		"mode2_spawn_rate": 1.5,
+		"mode2_dirt_speed": 250.0,
 		"mode2_dirt_count": 3
 	}
 }
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+const MOVING_OBJECT_SCRIPT: GDScript = preload("res://scripts/multiplayer/MovingObject.gd")
+
+# 
 # NODE REFERENCES
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 
 
 @onready var spawn_timer: Timer = $SpawnTimer
 @onready var bucket: Area2D = $GameLayer/Bucket  # P1's catch area (nested under GameLayer)
-@onready var objects_container: Node2D = $GameLayer/ObjectsContainer  # Container for spawned objects
+# Container for spawned objects.
+@onready var objects_container: Node2D = $GameLayer/ObjectsContainer
 @onready var hud: CanvasLayer = $UI  # UI CanvasLayer
 @onready var score_label: Label = $UI/TopBar/ScoreLabel
 @onready var lives_label: Label = $UI/TopBar/LivesLabel
@@ -76,9 +79,9 @@ const DIFFICULTY_SETTINGS: Dictionary = {
 var pause_menu: Control = null
 var pause_button: Button = null
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 
 # GAME STATE
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 
 
 # Player mode assignment (randomly assigned each game)
 enum PlayerMode {
@@ -103,25 +106,38 @@ var timer_sync_timer: Timer = null
 var drop_scene: PackedScene = null
 var dirt_scene: PackedScene = null
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 
 # INITIALIZATION
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 
 
 func _ready() -> void:
 	screen_size = get_viewport_rect().size
+	
+	# Verify multiplayer is active
+	if not multiplayer or not multiplayer.has_multiplayer_peer():
+		push_error(" Multiplayer not active! Returning to lobby...")
+		get_tree().change_scene_to_file("res://scenes/ui/MultiplayerLobby.tscn")
+		return
 	
 	# Get random mode assignment from GameManager
 	if GameManager and GameManager.has_method("get_my_player_mode"):
 		var mode_num = GameManager.get_my_player_mode()
 		my_mode = PlayerMode.MODE_1_COLLECTOR if mode_num == 1 else PlayerMode.MODE_2_FILTER
-		partner_mode = PlayerMode.MODE_2_FILTER if my_mode == PlayerMode.MODE_1_COLLECTOR else PlayerMode.MODE_1_COLLECTOR
+		partner_mode = (
+			PlayerMode.MODE_2_FILTER
+			if my_mode == PlayerMode.MODE_1_COLLECTOR
+			else PlayerMode.MODE_1_COLLECTOR
+		)
 	else:
 		# Fallback: host gets mode 1, client gets mode 2
 		var is_host = (multiplayer.get_unique_id() == 1)
 		my_mode = PlayerMode.MODE_1_COLLECTOR if is_host else PlayerMode.MODE_2_FILTER
 		partner_mode = PlayerMode.MODE_2_FILTER if is_host else PlayerMode.MODE_1_COLLECTOR
 	
-	print("🎮 My Mode: ", "MODE 1 (Collector)" if my_mode == PlayerMode.MODE_1_COLLECTOR else "MODE 2 (Filter)")
+	print(
+		" My Mode: ",
+		"MODE 1 (Collector)" if my_mode == PlayerMode.MODE_1_COLLECTOR else "MODE 2 (Filter)"
+	)
 	
 	# Load difficulty from GameManager's Rolling Window
 	_load_difficulty()
@@ -159,7 +175,7 @@ func _ready() -> void:
 	_start_game()
 
 func _preload_scenes() -> void:
-	"""Preload the spawnable object scenes"""
+	# Preload the spawnable object scenes.
 	# Use the generic MovingObject scene for all spawnable items
 	var moving_obj_path := "res://scripts/multiplayer/MovingObject.tscn"
 	
@@ -168,24 +184,22 @@ func _preload_scenes() -> void:
 		dirt_scene = load(moving_obj_path)
 	else:
 		# Scenes not found - will create dynamically
-		print("⚠️ MovingObject.tscn not found - will create objects dynamically")
+		print(" MovingObject.tscn not found - will create objects dynamically")
 		drop_scene = null
 		dirt_scene = null
 
 func _is_mode_1() -> bool:
-	"""Helper: Check if I'm Mode 1 (Collector)"""
+	# Helper: check if this player is Mode 1 (Collector).
 	return my_mode == PlayerMode.MODE_1_COLLECTOR
 
 func _is_host() -> bool:
-	"""Helper: Check if I'm the host"""
+	# Helper: check if this player is the host.
 	return multiplayer.get_unique_id() == 1
 
 func _load_difficulty() -> void:
-	"""
-	Load difficulty based on GameManager's difficulty_multiplier.
-	Formula: spawn_rate = base_rate / difficulty_multiplier
-	Supports uncapped difficulty scaling!
-	"""
+	# Load difficulty based on GameManager's difficulty_multiplier.
+	# Formula: spawn_rate = base_rate / difficulty_multiplier.
+	# Supports uncapped difficulty scaling.
 	if GameManager:
 		var mult: float = GameManager.difficulty_multiplier
 		
@@ -211,12 +225,16 @@ func _load_difficulty() -> void:
 		current_settings["mode1_spawn_rate"] /= mult
 		current_settings["mode2_spawn_rate"] /= mult
 
-	print("🎮 [MiniGame_Rain] Difficulty: ", current_difficulty, " (multiplier: %.2f" % GameManager.difficulty_multiplier)
+	print(
+		" [MiniGame_Rain] Difficulty: ",
+		current_difficulty,
+		" (multiplier: %.2f" % GameManager.difficulty_multiplier
+	)
 	print("   Mode 1 Spawn Rate: %.3fs" % current_settings["mode1_spawn_rate"])
 	print("   Mode 2 Spawn Rate: %.3fs" % current_settings["mode2_spawn_rate"])
 
 func _setup_role_ui() -> void:
-	"""Setup UI elements based on player role"""
+	# Setup UI elements based on player role.
 	# Create instruction panel
 	var instruction_panel = PanelContainer.new()
 	instruction_panel.set_anchors_preset(Control.PRESET_TOP_WIDE)
@@ -246,15 +264,15 @@ func _setup_role_ui() -> void:
 	controls_label.add_theme_font_size_override("font_size", 20)
 	
 	if _is_mode_1():
-		role_label.text = "💧 MODE 1: COLLECTOR"
+		role_label.text = " MODE 1: COLLECTOR"
 		title_label.text = "YOUR ROLE: Catch Clean Water Drops!"
-		controls_label.text = "🕹️ CONTROLS: Move mouse to move bucket"
+		controls_label.text = " CONTROLS: Move mouse to move bucket"
 		bucket.visible = true
 		bucket.position = Vector2(screen_size.x / 2, screen_size.y - 100)
 	else:
-		role_label.text = "🍃 MODE 2: FILTER"
+		role_label.text = " MODE 2: FILTER"
 		title_label.text = "YOUR ROLE: Remove Dirt Particles!"
-		controls_label.text = "🕹️ CONTROLS: Click on dirt particles"
+		controls_label.text = " CONTROLS: Click on dirt particles"
 		bucket.visible = false
 	
 	instruction_vbox.add_child(title_label)
@@ -265,6 +283,7 @@ func _setup_role_ui() -> void:
 	await get_tree().create_timer(5.0).timeout
 	if instruction_panel:
 		var fade_tween = create_tween()
+		fade_tween.set_loops(1)
 		fade_tween.tween_property(instruction_panel, "modulate:a", 0.0, 1.0)
 		fade_tween.tween_callback(instruction_panel.queue_free)
 	
@@ -276,25 +295,25 @@ func _setup_role_ui() -> void:
 	_update_lives_display()
 
 func _update_lives_display() -> void:
-	"""Update the lives display from GameManager"""
+	# Update the lives display from GameManager.
 	if GameManager:
-		lives_label.text = "❤️".repeat(GameManager.team_lives)
+		lives_label.text = "".repeat(GameManager.team_lives)
 	else:
-		lives_label.text = "❤️❤️❤️"
+		lives_label.text = ""
 
 func _update_quota_bar() -> void:
-	"""Update the quota progress bar"""
+	# Update the quota progress bar.
 	if quota_bar and GameManager:
 		var global_score: int = GameManager.get_global_score()
 		quota_bar.max_value = current_settings["quota"]
 		quota_bar.value = global_score
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 
 # GAME FLOW
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 
 
 func _start_game() -> void:
-	"""Start the mini-game"""
+	# Start the mini-game.
 	game_active = true
 	local_score = 0
 	round_start_time = Time.get_ticks_msec()  # Record start time for rolling window
@@ -327,44 +346,62 @@ func _start_game() -> void:
 		spawn_timer.wait_time = current_settings["mode2_spawn_rate"]
 	
 	spawn_timer.start()
-	print("🎮 Game started! Mode: ", "Mode 1 (Collector)" if _is_mode_1() else "Mode 2 (Filter)")
-	print("❤️ Team Lives: ", GameManager.team_lives if GameManager else 3)
-	print("🎯 Quota: ", current_settings["quota"])
+	print(" Game started! Mode: ", "Mode 1 (Collector)" if _is_mode_1() else "Mode 2 (Filter)")
+	print(" Team Lives: ", GameManager.team_lives if GameManager else 3)
+	print(" Quota: ", current_settings["quota"])
 
 func _on_spawn_timer_timeout() -> void:
-	"""Spawn objects based on player mode"""
+	# Spawn objects based on player mode. Host only spawns and syncs.
 	if not game_active:
 		return
 	
-	if _is_mode_1():
-		_spawn_drop()
-	else:
-		_spawn_dirt()
+	# Only host spawns objects to ensure synchronization
+	if not _is_host():
+		return
+	
+	# Spawn for both modes and sync to clients
+	_spawn_drop_synced()
+	_spawn_dirt_synced()
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# PLAYER 1: DROP SPAWNING & CATCHING
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+func _spawn_drop_synced() -> void:
+	# HOST: spawn a water drop and sync to all clients.
+	if not _is_host():
+		return
+	
+	# Generate spawn parameters
+	var spawn_x: float = randf_range(50, screen_size.x - 50)
+	var spawn_id: int = Time.get_ticks_msec()  # Unique ID for this drop
+	var is_acid: bool = randf() < 0.15  # 15% chance of acid drop
+	
+	# Spawn locally
+	_create_drop_at(spawn_x, spawn_id, is_acid)
+	
+	# Sync to all clients
+	rpc("_create_drop_at", spawn_x, spawn_id, is_acid)
 
-func _spawn_drop() -> void:
-	"""Spawn a water drop for Mode 1 to catch"""
+@rpc("authority", "call_local", "reliable")
+func _create_drop_at(spawn_x: float, spawn_id: int, is_acid: bool) -> void:
+	# Create a drop at a specified position (called on all clients).
+	# Only Mode 1 players see and interact with drops
+	if not _is_mode_1():
+		return
+	
 	var drop: Area2D
 	
 	if drop_scene:
 		drop = drop_scene.instantiate()
 	else:
-		# Create dynamic drop if scene not found
-		drop = _create_dynamic_drop(false)
+		drop = _create_dynamic_drop(is_acid)
 	
-	# Random X position
-	var spawn_x: float = randf_range(50, screen_size.x - 50)
 	drop.position = Vector2(spawn_x, -50)
+	drop.name = "Drop_" + str(spawn_id)
 	
 	# Set movement properties
 	if drop.has_method("setup"):
 		drop.setup(
 			Vector2.DOWN,
 			current_settings["mode1_drop_speed"],
-			false
+			is_acid
 		)
 	
 	# Connect signals
@@ -377,8 +414,60 @@ func _spawn_drop() -> void:
 	else:
 		add_child(drop)
 
+func _spawn_dirt_synced() -> void:
+	# HOST: spawn dirt particles and sync to all clients.
+	if not _is_host():
+		return
+	
+	# Generate spawn parameters
+	var spawn_y: float = randf_range(100, screen_size.y - 200)
+	var spawn_id: int = Time.get_ticks_msec() + 1000  # Offset to avoid collision with drops
+	
+	# Spawn locally
+	_create_dirt_at(spawn_y, spawn_id)
+	
+	# Sync to all clients
+	rpc("_create_dirt_at", spawn_y, spawn_id)
+
+@rpc("authority", "call_local", "reliable")
+func _create_dirt_at(spawn_y: float, spawn_id: int) -> void:
+	# Create a dirt particle at a specified position (called on all clients).
+	# Only Mode 2 players see and interact with dirt
+	if _is_mode_1():
+		return
+	
+	var leaf: Area2D
+	
+	if dirt_scene:
+		leaf = dirt_scene.instantiate()
+	else:
+		leaf = _create_dynamic_leaf()
+	
+	leaf.position = Vector2(-50, spawn_y)
+	leaf.name = "Dirt_" + str(spawn_id)
+	
+	# Set movement properties
+	if leaf.has_method("setup"):
+		leaf.setup(
+			Vector2.RIGHT,
+			current_settings["mode2_dirt_speed"],
+			true  # Enable spin
+		)
+	
+	# Connect signals
+	if leaf.has_signal("destroyed"):
+		leaf.destroyed.connect(_on_leaf_destroyed)
+	if leaf.has_signal("missed"):
+		leaf.missed.connect(_on_leaf_missed)
+	
+	# Add to container
+	if objects_container:
+		objects_container.add_child(leaf)
+	else:
+		add_child(leaf)
+
 func _create_dynamic_drop(is_acid: bool) -> Area2D:
-	"""Create a drop dynamically if scene not found"""
+	# Create a drop dynamically if scene not found.
 	var drop: Area2D = Area2D.new()
 	drop.name = "AcidDrop" if is_acid else "WaterDrop"
 	
@@ -400,9 +489,8 @@ func _create_dynamic_drop(is_acid: bool) -> Area2D:
 	drop.add_child(visual)
 	
 	# Add the MovingObject script
-	var script: GDScript = load("res://scripts/multiplayer/MovingObject.gd")
-	if script:
-		drop.set_script(script)
+	if MOVING_OBJECT_SCRIPT:
+		drop.set_script(MOVING_OBJECT_SCRIPT)
 		# Set object type
 		if is_acid:
 			drop.object_type = 1  # ACID_DROP
@@ -414,102 +502,45 @@ func _create_dynamic_drop(is_acid: bool) -> Area2D:
 	return drop
 
 func _on_drop_caught(drop: Area2D, is_acid: bool) -> void:
-	"""Called when P1 catches a drop"""
+	# Called when P1 catches a drop.
 	if is_acid:
 		# Caught acid - that's bad!
-		print("☠️ Caught acid drop!")
+		print(" Caught acid drop!")
 		if GameManager:
 			GameManager.rpc("report_damage")
 	else:
 		# Caught water - score!
 		local_score += 1
-		print("💧 Caught water drop! Score: ", local_score)
+		print(" Caught water drop! Score: ", local_score)
 		
-		# G-Counter: Submit score to server
+		# G-Counter: Submit score to server (this syncs automatically)
 		if GameManager:
 			GameManager.rpc("submit_score", 1)
-		# Also update display immediately
-		_update_score_display()
-	
-	# Sync to other players
-	if _is_mode_1():
+		
+		# Update displays on all clients
 		rpc("_sync_score_update")
 	
 	drop.queue_free()
 
 func _on_drop_missed(drop: Area2D, is_special: bool) -> void:
-	"""Called when P1 misses a drop"""
+	# Called when P1 misses a drop.
 	if is_special:
 		# Missed acid - that's good!
-		print("✅ Avoided acid drop!")
+		print(" Avoided acid drop!")
 	else:
 		# Missed water - damage!
-		print("💔 Missed water drop!")
+		print(" Missed water drop!")
 		if GameManager:
 			GameManager.rpc("report_damage")
 	
 	drop.queue_free()
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# PLAYER 2: LEAF SPAWNING & DESTROYING
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-func _spawn_dirt() -> void:
-	"""Spawn a dirt particle for Mode 2 to destroy"""
-	var leaf: Area2D
-	
-	if dirt_scene:
-		leaf = dirt_scene.instantiate()
-	else:
-		# Create dynamic leaf if scene not found
-		leaf = _create_dynamic_leaf()
-	
-	# Random Y position (spawns from left side)
-	var spawn_y: float = randf_range(100, screen_size.y - 200)
-	leaf.position = Vector2(-50, spawn_y)
-	
-	# Set movement properties
-	if leaf.has_method("setup"):
-		leaf.setup(
-			Vector2.RIGHT,
-			current_settings["p2_leaf_speed"],
-			current_settings["p2_leaf_spin"]
-		)
-	
-	# Connect signals
-	if leaf.has_signal("destroyed"):
-		leaf.destroyed.connect(_on_leaf_destroyed)
-	if leaf.has_signal("missed"):
-		leaf.missed.connect(_on_leaf_missed)
-	
-	# Ensure object type is set to LEAF for P2 click detection
-	if "object_type" in leaf:
-		leaf.object_type = 2  # LEAF
-	
-	# Add visual hint for Mode 2
-	if not _is_mode_1():
-		var hint_label = Label.new()
-		hint_label.text = "👆"
-		hint_label.add_theme_font_size_override("font_size", 24)
-		hint_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		hint_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		hint_label.position = Vector2(-15, -40)
-		leaf.add_child(hint_label)
-		
-		# Pulse animation - use finite loops to avoid infinite loop error
-		var pulse_tween = create_tween()
-		pulse_tween.set_loops(10)  # Limited to 10 loops instead of infinite
-		pulse_tween.tween_property(hint_label, "scale", Vector2(1.3, 1.3), 0.5)
-		pulse_tween.tween_property(hint_label, "scale", Vector2(1.0, 1.0), 0.5)
-	
-	# Add to container
-	if objects_container:
-		objects_container.add_child(leaf)
-	else:
-		add_child(leaf)
+# 
+# PLAYER 2: DIRT PARTICLE INTERACTION
+# 
 
 func _create_dynamic_leaf() -> Area2D:
-	"""Create a leaf dynamically if scene not found"""
+	# Create a leaf dynamically if scene not found.
 	var leaf: Area2D = Area2D.new()
 	leaf.name = "Leaf"
 	leaf.input_pickable = true  # Enable click detection
@@ -549,42 +580,38 @@ func _create_dynamic_leaf() -> Area2D:
 	leaf.add_child(spot1)
 	
 	# Add the MovingObject script
-	var script: GDScript = load("res://scripts/multiplayer/MovingObject.gd")
-	if script:
-		leaf.set_script(script)
+	if MOVING_OBJECT_SCRIPT:
+		leaf.set_script(MOVING_OBJECT_SCRIPT)
 		# Set object type
 		leaf.object_type = 2  # LEAF
 	
 	return leaf
 
 func _on_leaf_destroyed(leaf: Area2D) -> void:
-	"""Called when P2 destroys a leaf by clicking"""
+	# Called when P2 destroys a leaf by clicking.
 	local_score += 1
-	print("🍃 Destroyed leaf! Score: ", local_score)
+	print(" Destroyed leaf! Score: ", local_score)
 	
-	# G-Counter: Submit score to server
+	# G-Counter: Submit score to server (this syncs automatically)
 	if GameManager:
 		GameManager.rpc("submit_score", 1)
-		# Also update display immediately
-		_update_score_display()
 	
-	# Sync to other players
-	if not _is_mode_1():
-		rpc("_sync_score_update")
+	# Update displays on all clients
+	rpc("_sync_score_update")
 	
 	leaf.queue_free()
 
 func _on_leaf_missed(leaf: Area2D, _is_special: bool) -> void:
-	"""Called when P2 misses a leaf (exits screen)"""
-	print("💔 Missed leaf!")
+	# Called when P2 misses a leaf (exits screen).
+	print(" Missed leaf!")
 	if GameManager:
 		GameManager.rpc("report_damage")
 	
 	leaf.queue_free()
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 
 # INPUT HANDLING
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 
 
 func _process(delta: float) -> void:
 	if not game_active:
@@ -595,8 +622,10 @@ func _process(delta: float) -> void:
 	# Update game timer (host authoritative)
 	if _is_host():
 		game_timer = max(game_timer - delta, 0.0)
+	
+	# Update timer display for all players
 	if timer_label:
-		timer_label.text = "⏱️ " + str(int(max(0, game_timer)))
+		timer_label.text = " " + str(int(max(0, game_timer)))
 	
 	# Check if time ran out (host drives win/lose)
 	if _is_host() and game_timer <= 0 and game_active:
@@ -604,7 +633,8 @@ func _process(delta: float) -> void:
 		spawn_timer.stop()
 		if timer_sync_timer:
 			timer_sync_timer.stop()
-		print("⏰ Time's up!")
+		print(" Time's up!")
+		
 		# Check if quota was met
 		var global_score: int = GameManager.get_global_score() if GameManager else local_score
 		if global_score >= current_settings["quota"]:
@@ -617,14 +647,18 @@ func _process(delta: float) -> void:
 				GameManager.rpc("_announce_team_lost")
 		return
 	
-	# Mode 1: Move bucket with mouse X position
+	# Mode 1: Move bucket with mouse X position (smooth interpolation)
 	if _is_mode_1() and bucket:
 		var mouse_x: float = get_viewport().get_mouse_position().x
-		bucket.position.x = clampf(mouse_x, 50, screen_size.x - 50)
+		var target_x: float = clampf(mouse_x, 50, screen_size.x - 50)
+		# Smooth movement instead of instant snap
+		bucket.position.x = lerp(bucket.position.x, target_x, delta * 15.0)
 
 func _on_timer_sync_timeout() -> void:
 	if not _is_host() or not game_active:
 		return
+	
+	# Sync timer to all clients every 0.25 seconds
 	# Broadcast remaining time so clients stay aligned
 	rpc("_sync_timer", game_timer)
 
@@ -637,33 +671,44 @@ func _sync_timer(remaining_time: float) -> void:
 # Note: Input handling is done by MovingObject script's _on_input_event
 # P2 clicks are automatically detected when clicking on leaf Area2D nodes
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 
 # UI UPDATES
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 
 
 func _update_score_display() -> void:
-	"""Update the score and quota bar"""
+	# Update the score and quota bar.
 	var global_score: int = GameManager.get_global_score() if GameManager else local_score
 	score_label.text = "Score: %d / %d" % [global_score, current_settings["quota"]]
 	quota_bar.value = global_score
 	score_updated.emit(global_score)
+	
+	# Check if quota reached (host only, prevents duplicate checks)
+	if _is_host() and game_active and global_score >= current_settings["quota"]:
+		print(" Quota reached! Score: %d >= %d" % [global_score, current_settings["quota"]])
+		game_active = false
+		spawn_timer.stop()
+		if timer_sync_timer:
+			timer_sync_timer.stop()
+		# Trigger win through GameManager
+		if GameManager:
+			GameManager.rpc("_announce_team_won")
 
 @rpc("any_peer", "call_local", "reliable")
 func _sync_score_update() -> void:
 	_update_score_display()
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 
 # GAME END CONDITIONS
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 
 
 func _on_team_won() -> void:
-	"""Called when team reaches the quota"""
+	# Called when team reaches the quota.
 	game_active = false
 	spawn_timer.stop()
 	if timer_sync_timer:
 		timer_sync_timer.stop()
 	game_won.emit()
-	print("🏆 VICTORY! Team reached the quota!")
+	print(" VICTORY! Team reached the quota!")
 	
 	# Calculate round time and update rolling window for adaptive difficulty
 	# Only host updates the rolling window to avoid duplicate entries
@@ -672,7 +717,7 @@ func _on_team_won() -> void:
 		var round_time_sec: float = float(round_time_ms) / 1000.0
 		GameManager.add_round_time(round_time_sec)
 		GameManager.minigames_played_this_session += 1
-		print("📊 [Rolling Window] Round completed in %.2fs" % round_time_sec)
+		print(" [Rolling Window] Round completed in %.2fs" % round_time_sec)
 	
 	# Show victory screen
 	_show_result_screen(true)
@@ -683,13 +728,13 @@ func _on_team_won() -> void:
 		GameManager.rpc("_load_next_multiplayer_minigame")
 
 func _on_team_lost() -> void:
-	"""Called when team runs out of lives"""
+	# Called when team runs out of lives.
 	game_active = false
 	spawn_timer.stop()
 	if timer_sync_timer:
 		timer_sync_timer.stop()
 	game_lost.emit()
-	print("💀 DEFEAT! Team ran out of lives!")
+	print(" DEFEAT! Team ran out of lives!")
 	
 	# Show defeat screen
 	_show_result_screen(false)
@@ -705,17 +750,18 @@ func _on_team_lost() -> void:
 			GameManager.rpc("_show_multiplayer_final_results")
 
 func _on_life_lost(_remaining: int) -> void:
-	"""Called when team loses a life"""
+	# Called when team loses a life.
 	_update_lives_display()
 	
 	# Screen shake effect
 	var tween: Tween = create_tween()
+	tween.set_loops(1)
 	tween.tween_property(self, "position", Vector2(10, 0), 0.05)
 	tween.tween_property(self, "position", Vector2(-10, 0), 0.05)
 	tween.tween_property(self, "position", Vector2.ZERO, 0.05)
 
 func _show_result_screen(victory: bool) -> void:
-	"""Show the result overlay"""
+	# Show the result overlay
 	var result: Control = Control.new()
 	result.set_anchors_preset(Control.PRESET_FULL_RECT)
 	
@@ -725,7 +771,7 @@ func _show_result_screen(victory: bool) -> void:
 	result.add_child(bg)
 	
 	var label: Label = Label.new()
-	label.text = "🏆 TEAM WINS!" if victory else "💀 GAME OVER"
+	label.text = " TEAM WINS!" if victory else " GAME OVER"
 	label.add_theme_font_size_override("font_size", 72)
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -736,14 +782,12 @@ func _show_result_screen(victory: bool) -> void:
 	
 	# Don't auto-return - let GameManager handle next minigame or final results
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # PAUSE SYSTEM (SYNCHRONIZED FOR MULTIPLAYER)
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func _create_pause_ui() -> void:
-	"""Create pause button and pause menu"""
+	# Create pause button and pause menu
 	pause_button = Button.new()
-	pause_button.text = "⏸"
+	pause_button.text = ""
 	pause_button.custom_minimum_size = Vector2(50, 50)
 	pause_button.add_theme_font_size_override("font_size", 32)
 	
@@ -816,11 +860,11 @@ func _on_pause_button_pressed() -> void:
 	is_paused = true
 	get_tree().paused = true
 	pause_menu.visible = true
-	pause_button.text = "▶"
+	pause_button.text = ""
 	# Sync pause to all players
 	if NetworkManager:
 		NetworkManager.rpc("sync_pause_state", true)
-	print("⏸ Game paused by local player")
+	print(" Game paused by local player")
 
 func _on_resume_pressed() -> void:
 	if not is_paused:
@@ -828,11 +872,11 @@ func _on_resume_pressed() -> void:
 	is_paused = false
 	get_tree().paused = false
 	pause_menu.visible = false
-	pause_button.text = "⏸"
+	pause_button.text = ""
 	# Sync resume to all players
 	if NetworkManager:
 		NetworkManager.rpc("sync_pause_state", false)
-	print("▶ Game resumed by local player")
+	print(" Game resumed by local player")
 
 func _on_exit_pressed() -> void:
 	get_tree().paused = false
@@ -851,8 +895,8 @@ func _on_remote_pause() -> void:
 	if pause_menu:
 		pause_menu.visible = true
 	if pause_button:
-		pause_button.text = "▶"
-	print("⏸ Game paused by remote player")
+		pause_button.text = ""
+	print(" Game paused by remote player")
 
 func _on_remote_resume() -> void:
 	is_paused = false
@@ -860,5 +904,5 @@ func _on_remote_resume() -> void:
 	if pause_menu:
 		pause_menu.visible = false
 	if pause_button:
-		pause_button.text = "⏸"
-	print("▶ Game resumed by remote player")
+		pause_button.text = ""
+	print(" Game resumed by remote player")

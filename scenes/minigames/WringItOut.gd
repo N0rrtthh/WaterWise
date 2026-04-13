@@ -12,17 +12,17 @@ var last_tap_time: float = 0.0
 func _apply_difficulty_settings() -> void:
 	match current_difficulty:
 		"Easy":
-			decay_rate = 0.1
-			tap_gain = 12.0
-			game_duration = 15.0
-		"Medium":
-			decay_rate = 0.2
-			tap_gain = 8.0
+			decay_rate = 0.3
+			tap_gain = 10.0
 			game_duration = 12.0
-		"Hard":
-			decay_rate = 0.35
-			tap_gain = 6.0
+		"Medium":
+			decay_rate = 0.5
+			tap_gain = 8.0
 			game_duration = 10.0
+		"Hard":
+			decay_rate = 0.8
+			tap_gain = 6.0
+			game_duration = 8.0
 
 func _ready():
 	game_name = "Wring It Out"

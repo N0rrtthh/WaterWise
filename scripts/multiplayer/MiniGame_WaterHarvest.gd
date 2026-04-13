@@ -28,25 +28,25 @@ enum PlayerMode {
 # Difficulty settings
 const DIFFICULTY_SETTINGS: Dictionary = {
 	"Easy": {
-		"quota": 15,
-		"mode1_spawn_rate": 2.0,
-		"mode1_drop_speed": 200.0,
-		"mode2_spawn_rate": 2.5,
-		"mode2_dirt_speed": 150.0
+		"quota": 20,
+		"mode1_spawn_rate": 2.5,
+		"mode1_drop_speed": 180.0,
+		"mode2_spawn_rate": 2.8,
+		"mode2_dirt_speed": 130.0
 	},
 	"Medium": {
-		"quota": 25,
-		"mode1_spawn_rate": 1.5,
-		"mode1_drop_speed": 300.0,
+		"quota": 30,
+		"mode1_spawn_rate": 1.8,
+		"mode1_drop_speed": 250.0,
 		"mode2_spawn_rate": 2.0,
-		"mode2_dirt_speed": 200.0
+		"mode2_dirt_speed": 180.0
 	},
 	"Hard": {
-		"quota": 40,
-		"mode1_spawn_rate": 0.8,
-		"mode1_drop_speed": 400.0,
-		"mode2_spawn_rate": 1.2,
-		"mode2_dirt_speed": 280.0
+		"quota": 45,
+		"mode1_spawn_rate": 1.2,
+		"mode1_drop_speed": 350.0,
+		"mode2_spawn_rate": 1.4,
+		"mode2_dirt_speed": 250.0
 	}
 }
 
@@ -78,6 +78,12 @@ var moving_object_scene: PackedScene
 func _ready() -> void:
 	screen_size = get_viewport_rect().size
 	
+	# Verify multiplayer is active
+	if not multiplayer or not multiplayer.has_multiplayer_peer():
+		push_error("❌ Multiplayer not active! Returning to lobby...")
+		get_tree().change_scene_to_file("res://scenes/ui/MultiplayerLobby.tscn")
+		return
+	
 	# Get random mode assignment from GameManager
 	my_mode = _get_assigned_mode()
 	print("🎮 Assigned Mode: ", "MODE 1 (Collector)" if my_mode == PlayerMode.MODE_1_COLLECTOR else "MODE 2 (Filter)")
@@ -101,6 +107,10 @@ func _ready() -> void:
 		GameManager.team_won.connect(_on_team_won)
 		GameManager.team_lost.connect(_on_team_lost)
 		GameManager.team_life_lost.connect(_on_life_lost)
+	
+	# Connect NetworkManager resource transfer signal for interconnected gameplay
+	if NetworkManager and NetworkManager.has_signal("resource_sent"):
+		NetworkManager.resource_sent.connect(_on_resource_received)
 	
 	# Timer sync keeps countdown aligned across peers
 	timer_sync_timer = Timer.new()
@@ -197,6 +207,7 @@ func _setup_ui() -> void:
 	await get_tree().create_timer(5.0).timeout
 	if instruction_panel and is_instance_valid(instruction_panel):
 		var tween = create_tween()
+		tween.set_loops(1)
 		tween.tween_property(instruction_panel, "modulate:a", 0.0, 1.0)
 		tween.tween_callback(instruction_panel.queue_free)
 	
@@ -280,27 +291,42 @@ func _on_spawn_timer_timeout() -> void:
 	if not game_active:
 		return
 	
-	if my_mode == PlayerMode.MODE_1_COLLECTOR:
-		_spawn_water_drop()
-	else:
-		_spawn_dirt_particle()
+	# Only host spawns to ensure synchronization
+	if not _is_host():
+		return
+	
+	# Spawn for both modes
+	_spawn_water_drop_synced()
+	_spawn_dirt_particle_synced()
 
-func _spawn_water_drop() -> void:
+func _spawn_water_drop_synced() -> void:
+	"""HOST: Spawn water drop and sync"""
+	if not _is_host():
+		return
+	
+	var spawn_x: float = randf_range(50, screen_size.x - 50)
+	var spawn_id: int = Time.get_ticks_msec()
+	
+	rpc("_create_water_drop_at", spawn_x, spawn_id)
+
+@rpc("authority", "call_local", "reliable")
+func _create_water_drop_at(spawn_x: float, spawn_id: int) -> void:
+	"""Create water drop (Mode 1 only)"""
+	if my_mode != PlayerMode.MODE_1_COLLECTOR:
+		return
+	
 	var drop: Area2D
 	
 	if moving_object_scene:
 		drop = moving_object_scene.instantiate()
-		drop.object_type = 0  # WATER_DROP
+		drop.object_type = 0
 	else:
 		drop = _create_dynamic_drop()
 	
-	# Random X position
-	drop.position = Vector2(randf_range(50, screen_size.x - 50), -50)
-	
-	# Set speed
+	drop.position = Vector2(spawn_x, -50)
+	drop.name = "WaterDrop_" + str(spawn_id)
 	drop.fall_speed = current_settings["mode1_drop_speed"]
 	
-	# Connect signals
 	if drop.has_signal("caught"):
 		drop.caught.connect(_on_water_caught.bind(drop))
 	if drop.has_signal("missed"):
@@ -311,24 +337,35 @@ func _spawn_water_drop() -> void:
 	else:
 		add_child(drop)
 
-func _spawn_dirt_particle() -> void:
+func _spawn_dirt_particle_synced() -> void:
+	"""HOST: Spawn dirt particle and sync"""
+	if not _is_host():
+		return
+	
+	var spawn_y: float = randf_range(100, screen_size.y - 200)
+	var spawn_id: int = Time.get_ticks_msec() + 1000
+	
+	rpc("_create_dirt_particle_at", spawn_y, spawn_id)
+
+@rpc("authority", "call_local", "reliable")
+func _create_dirt_particle_at(spawn_y: float, spawn_id: int) -> void:
+	"""Create dirt particle (Mode 2 only)"""
+	if my_mode != PlayerMode.MODE_2_FILTER:
+		return
+	
 	var dirt: Area2D
 	
 	if moving_object_scene:
 		dirt = moving_object_scene.instantiate()
-		dirt.object_type = 1  # DIRT
+		dirt.object_type = 1
 	else:
 		dirt = _create_dynamic_dirt()
 	
-	# Random position (floating from left to right)
-	var start_y = randf_range(100, screen_size.y - 200)
-	dirt.position = Vector2(-50, start_y)
-	
-	# Set horizontal movement speed
+	dirt.position = Vector2(-50, spawn_y)
+	dirt.name = "Dirt_" + str(spawn_id)
 	dirt.horizontal_speed = current_settings["mode2_dirt_speed"]
-	dirt.fall_speed = 0.0  # No falling, just horizontal
+	dirt.fall_speed = 0.0
 	
-	# Connect signals
 	if dirt.has_signal("destroyed"):
 		dirt.destroyed.connect(_on_dirt_removed.bind(dirt))
 	if dirt.has_signal("missed"):
@@ -402,6 +439,12 @@ func _on_water_caught(drop: Area2D) -> void:
 	if GameManager:
 		GameManager.rpc("submit_score", 1)
 		_update_score_display()
+	
+	# RESOURCE TRANSFER: Send harvested water to partner
+	if NetworkManager and NetworkManager.has_method("send_resource"):
+		NetworkManager.send_resource("harvested_water", 1, 1.0)
+		print("📤 Sent harvested water to partner")
+	
 	drop.queue_free()
 
 func _on_water_missed(drop: Area2D) -> void:
@@ -423,10 +466,24 @@ func _on_dirt_missed(dirt: Area2D) -> void:
 		GameManager.rpc("report_damage")
 	dirt.queue_free()
 
+func _on_resource_received(from_player: int, resource_type: String, amount: int, _quality: float) -> void:
+	"""Receive resources from partner - creates interconnected gameplay"""
+	if resource_type == "harvested_water":
+		print("📥 Received %d harvested water from P%d" % [amount, from_player])
+		# Partner's harvested water could trigger special effects or bonuses
+
 func _update_score_display() -> void:
 	var global_score = GameManager.get_global_score() if GameManager else 0
 	score_label.text = "💧 Water: %d / %d" % [global_score, current_settings["quota"]]
 	quota_bar.value = global_score
+	
+	# Check if quota reached (host only)
+	if _is_host() and game_active and global_score >= current_settings["quota"]:
+		print("🎯 Quota reached! Score: %d >= %d" % [global_score, current_settings["quota"]])
+		game_active = false
+		spawn_timer.stop()
+		if GameManager:
+			GameManager.rpc("_announce_team_won")
 
 func _update_lives_display() -> void:
 	if GameManager:

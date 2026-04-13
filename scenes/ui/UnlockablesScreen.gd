@@ -2,13 +2,22 @@ extends Control
 
 # Unlockable characters data
 var characters_data = [
-	{"id": "droppy_blue", "name": "Droppy", "cost": 0, "unlocked": true, "color": Color(0.3, 0.6, 1.0)},
+	{
+		"id": "droppy_blue", "name": "Droppy", "cost": 0,
+		"unlocked": true, "color": Color(0.3, 0.6, 1.0)
+	},
 	{"id": "pinky", "name": "Pinky", "cost": 50, "unlocked": false, "color": Color(1.0, 0.6, 0.8)},
 	{"id": "minty", "name": "Minty", "cost": 100, "unlocked": false, "color": Color(0.6, 1.0, 0.8)},
 	{"id": "sunny", "name": "Sunny", "cost": 150, "unlocked": false, "color": Color(1.0, 0.9, 0.4)},
 	{"id": "lavvy", "name": "Lavvy", "cost": 200, "unlocked": false, "color": Color(0.8, 0.6, 1.0)},
-	{"id": "peachy", "name": "Peachy", "cost": 300, "unlocked": false, "color": Color(1.0, 0.8, 0.7)},
-	{"id": "cyanny", "name": "Cyanny", "cost": 400, "unlocked": false, "color": Color(0.4, 1.0, 1.0)},
+	{
+		"id": "peachy", "name": "Peachy", "cost": 300,
+		"unlocked": false, "color": Color(1.0, 0.8, 0.7)
+	},
+	{
+		"id": "cyanny", "name": "Cyanny", "cost": 400,
+		"unlocked": false, "color": Color(0.4, 1.0, 1.0)
+	},
 	{"id": "coral", "name": "Coral", "cost": 500, "unlocked": false, "color": Color(1.0, 0.5, 0.5)},
 ]
 
@@ -30,12 +39,33 @@ var tab_minigames: Button
 var currency_label: Label
 
 func _ready() -> void:
+	_sync_from_save_manager()
 	_setup_waterpark_background()
 	_setup_ui()
 	_update_display()
 	
 	if Localization:
 		Localization.language_changed.connect(_on_language_changed)
+
+func _sync_from_save_manager() -> void:
+	var save_mgr = get_node_or_null("/root/SaveManager")
+	if not save_mgr:
+		return
+
+	for i in range(characters_data.size()):
+		if characters_data[i].cost == 0:
+			characters_data[i].unlocked = true
+		else:
+			characters_data[i].unlocked = save_mgr.is_character_unlocked(characters_data[i].id)
+
+	for i in range(minigames_data.size()):
+		if minigames_data[i].cost == 0:
+			minigames_data[i].unlocked = true
+		else:
+			minigames_data[i].unlocked = save_mgr.is_minigame_unlocked(minigames_data[i].id)
+
+	if GameManager:
+		GameManager.water_droplets = save_mgr.get_droplets()
 
 func _setup_waterpark_background() -> void:
 	# Sky gradient
@@ -538,47 +568,83 @@ func _create_minigame_card(data: Dictionary) -> PanelContainer:
 	return card
 
 func _on_characters_tab() -> void:
+	if AudioManager:
+		AudioManager.play_click()
 	current_tab = "characters"
 	_update_tab_styles()
 	_update_display()
 
 func _on_minigames_tab() -> void:
+	if AudioManager:
+		AudioManager.play_click()
 	current_tab = "minigames"
 	_update_tab_styles()
 	_update_display()
 
 func _on_buy_character(char_id: String) -> void:
+	if AudioManager:
+		AudioManager.play_click()
+	var save_mgr = get_node_or_null("/root/SaveManager")
 	for i in range(characters_data.size()):
 		if characters_data[i].id == char_id:
 			var cost = characters_data[i].cost
-			var current_currency = GameManager.water_droplets if GameManager else 500
-			if current_currency >= cost:
-				if GameManager:
-					GameManager.water_droplets -= cost
-				characters_data[i].unlocked = true
-				_update_currency_display()
-				_update_display()
+			if save_mgr:
+				if save_mgr.spend_droplets(cost):
+					save_mgr.unlock_character(char_id)
+					characters_data[i].unlocked = true
+					if GameManager:
+						GameManager.water_droplets = save_mgr.get_droplets()
+				else:
+					_show_insufficient_funds()
 			else:
-				_show_insufficient_funds()
+				var current_currency = GameManager.water_droplets if GameManager else 0
+				if current_currency >= cost:
+					if GameManager:
+						GameManager.water_droplets -= cost
+					characters_data[i].unlocked = true
+				else:
+					_show_insufficient_funds()
+			_update_currency_display()
+			_update_display()
 			break
 
 func _on_buy_minigame(game_id: String) -> void:
+	if AudioManager:
+		AudioManager.play_click()
+	var save_mgr = get_node_or_null("/root/SaveManager")
 	for i in range(minigames_data.size()):
 		if minigames_data[i].id == game_id:
 			var cost = minigames_data[i].cost
-			var current_currency = GameManager.water_droplets if GameManager else 500
-			if current_currency >= cost:
-				if GameManager:
-					GameManager.water_droplets -= cost
-				minigames_data[i].unlocked = true
-				_update_currency_display()
-				_update_display()
+			if save_mgr:
+				if save_mgr.spend_droplets(cost):
+					save_mgr.unlock_minigame(game_id)
+					minigames_data[i].unlocked = true
+					if GameManager:
+						GameManager.water_droplets = save_mgr.get_droplets()
+					# Refresh available rotation immediately after unlock.
+					if GameManager and GameManager.has_method("refresh_available_minigames"):
+						GameManager.refresh_available_minigames()
+				else:
+					_show_insufficient_funds()
 			else:
-				_show_insufficient_funds()
+				var current_currency = GameManager.water_droplets if GameManager else 0
+				if current_currency >= cost:
+					if GameManager:
+						GameManager.water_droplets -= cost
+					minigames_data[i].unlocked = true
+				else:
+					_show_insufficient_funds()
+			_update_currency_display()
+			_update_display()
 			break
 
 func _update_currency_display() -> void:
-	var current = GameManager.water_droplets if GameManager else 500
+	var save_mgr = get_node_or_null("/root/SaveManager")
+	var current = 0
+	if save_mgr:
+		current = save_mgr.get_droplets()
+	elif GameManager:
+		current = GameManager.water_droplets
 	currency_label.text = "💧 " + str(current)
 
 func _show_insufficient_funds() -> void:
@@ -597,6 +663,8 @@ func _show_insufficient_funds() -> void:
 	tween.tween_callback(popup.queue_free)
 
 func _on_back_pressed() -> void:
+	if AudioManager:
+		AudioManager.play_click()
 	get_tree().change_scene_to_file("res://scenes/ui/InitialScreen.tscn")
 
 func _on_language_changed(_new_lang: String) -> void:

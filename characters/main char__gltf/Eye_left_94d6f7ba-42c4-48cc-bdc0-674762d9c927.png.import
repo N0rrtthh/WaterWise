@@ -4,15 +4,16 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://cfle31urou3px"
 path.s3tc="res://.godot/imported/Eye_left_94d6f7ba-42c4-48cc-bdc0-674762d9c927.png-efdaade584cc90bee6bd6dfd6fec90d1.s3tc.ctex"
+path.etc2="res://.godot/imported/Eye_left_94d6f7ba-42c4-48cc-bdc0-674762d9c927.png-efdaade584cc90bee6bd6dfd6fec90d1.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 
 [deps]
 
 source_file="res://characters/main char__gltf/Eye_left_94d6f7ba-42c4-48cc-bdc0-674762d9c927.png"
-dest_files=["res://.godot/imported/Eye_left_94d6f7ba-42c4-48cc-bdc0-674762d9c927.png-efdaade584cc90bee6bd6dfd6fec90d1.s3tc.ctex"]
+dest_files=["res://.godot/imported/Eye_left_94d6f7ba-42c4-48cc-bdc0-674762d9c927.png-efdaade584cc90bee6bd6dfd6fec90d1.s3tc.ctex", "res://.godot/imported/Eye_left_94d6f7ba-42c4-48cc-bdc0-674762d9c927.png-efdaade584cc90bee6bd6dfd6fec90d1.etc2.ctex"]
 
 [params]
 

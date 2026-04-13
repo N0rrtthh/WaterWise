@@ -399,7 +399,13 @@ func _create_bush_cluster(parent: Node2D, pos: Vector2, scale_factor: float):
 	
 	# Multiple overlapping circles for bush shape
 	var bush_colors = [Color(0.25, 0.55, 0.3), Color(0.3, 0.6, 0.35), Color(0.2, 0.5, 0.25)]
-	var offsets = [Vector2(0, 0), Vector2(-20, 10), Vector2(25, 5), Vector2(-10, -15), Vector2(15, -10)]
+	var offsets = [
+		Vector2(0, 0),
+		Vector2(-20, 10),
+		Vector2(25, 5),
+		Vector2(-10, -15),
+		Vector2(15, -10)
+	]
 	
 	for i in range(offsets.size()):
 		var circle = Polygon2D.new()
@@ -722,6 +728,10 @@ func _ready() -> void:
 	_update_translations()
 	_update_next_unlock()
 	_apply_theme()
+
+	# Start menu background music
+	if AudioManager:
+		AudioManager.play_music("menu")
 	
 	# Connect to language changes
 	if Localization:
@@ -798,15 +808,24 @@ func _show_welcome_popup() -> void:
 	welcome_panel.scale = Vector2.ZERO
 	
 	var tween = create_tween()
-	tween.tween_property(welcome_panel, "scale", Vector2(1.1, 1.1), 0.3).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	tween.tween_property(welcome_panel, "scale", Vector2(1.1, 1.1), 0.3) \
+		.set_trans(Tween.TRANS_BACK) \
+		.set_ease(Tween.EASE_OUT)
 	tween.tween_property(welcome_panel, "scale", Vector2(1.0, 1.0), 0.1)
 
 func _on_close_popup_pressed() -> void:
+	if AudioManager:
+		AudioManager.play_click()
 	var tween = create_tween()
-	tween.tween_property(welcome_panel, "scale", Vector2(0.0, 0.0), 0.2).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_IN)
+	tween.tween_property(welcome_panel, "scale", Vector2(0.0, 0.0), 0.2) \
+		.set_trans(Tween.TRANS_BACK) \
+		.set_ease(Tween.EASE_IN)
 	tween.tween_callback(func(): welcome_popup.visible = false)
 
 func _on_play_button_pressed() -> void:
+	if AudioManager:
+		AudioManager.play_click()
+		AudioManager.stop_music(0.3)
 	# Start new session (this shuffles games and resets state)
 	if GameManager:
 		GameManager.start_new_session()
@@ -816,15 +835,23 @@ func _on_play_button_pressed() -> void:
 		pass
 
 func _on_settings_button_pressed() -> void:
+	if AudioManager:
+		AudioManager.play_click()
 	get_tree().change_scene_to_file("res://scenes/ui/Settings.tscn")
 
 func _on_multiplayer_button_pressed() -> void:
+	if AudioManager:
+		AudioManager.play_click()
 	get_tree().change_scene_to_file("res://scenes/ui/MultiplayerLobby.tscn")
 
 func _on_customize_button_pressed() -> void:
+	if AudioManager:
+		AudioManager.play_click()
 	# Navigate to unlockables screen (character customization)
 	get_tree().change_scene_to_file("res://scenes/ui/UnlockablesScreen.tscn")
 
 func _on_store_button_pressed() -> void:
+	if AudioManager:
+		AudioManager.play_click()
 	# Navigate to roadmap/journey screen
 	get_tree().change_scene_to_file("res://scenes/ui/RoadmapScreen.tscn")

@@ -177,6 +177,7 @@ func _on_area_entered(other: Area2D) -> void:
 func _flash_green() -> void:
 	"""Flash green for successful catch"""
 	var tween: Tween = create_tween()
+	tween.set_loops(1)
 	var original: Color = modulate
 	tween.tween_property(self, "modulate", Color.GREEN, 0.05)
 	tween.tween_property(self, "modulate", original, 0.1)
@@ -184,6 +185,7 @@ func _flash_green() -> void:
 func _flash_red() -> void:
 	"""Flash red for bad catch"""
 	var tween: Tween = create_tween()
+	tween.set_loops(1)
 	var original: Color = modulate
 	tween.tween_property(self, "modulate", Color.RED, 0.05)
 	tween.tween_property(self, "modulate", original, 0.1)

@@ -105,9 +105,9 @@ func _update_timer() -> void:
 	timer_label.text = "⏱️ Time: %d:%02d" % [minutes, seconds]
 
 func _play_correct_sound() -> void:
-	# Placeholder - add actual sound
-	pass
+	if AudioManager:
+		AudioManager.play_success()
 
 func _play_wrong_sound() -> void:
-	# Placeholder - add actual sound
-	pass
+	if AudioManager:
+		AudioManager.play_damage()

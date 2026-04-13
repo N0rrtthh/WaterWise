@@ -1,0 +1,67 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scenes/ui/cutscenes/CharacterOutcomeNarrative.gd" id="1_script"]
+
+[node name="CharacterOutcomeNarrative" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_script")
+visible = true
+
+[node name="BackgroundColor" type="ColorRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.05, 0.15, 0.08, 0.75)
+modulate = Color(1, 1, 1, 0.0)
+visible = true
+
+[node name="CharacterDisplay" type="Label" parent="."]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -100.0
+offset_top = -150.0
+offset_right = 100.0
+offset_bottom = -20.0
+grow_horizontal = 2
+grow_vertical = 2
+pivot_offset = Vector2(100, 65)
+text = "😎"
+horizontal_alignment = 1
+vertical_alignment = 1
+scale = Vector2(0.3, 0.3)
+visible = true
+
+[node name="ContextDisplay" type="Label" parent="."]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -280.0
+offset_top = 60.0
+offset_right = 280.0
+offset_bottom = 180.0
+grow_horizontal = 2
+grow_vertical = 2
+pivot_offset = Vector2(280, 60)
+text = "Mission complete!"
+horizontal_alignment = 1
+vertical_alignment = 1
+autowrap_mode = 2
+modulate = Color(1, 1, 1, 0.0)
+visible = true
+
+[node name="AnimationPlayer" type="AnimationPlayer" parent="."]

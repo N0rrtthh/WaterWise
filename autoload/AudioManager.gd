@@ -45,7 +45,16 @@ enum SFXType {
 	GAME_START,
 	GAME_END,
 	COLLECT,
-	DAMAGE
+	DAMAGE,
+	TIMER_TICK,
+	LIFE_LOST,
+	COMBO,
+	PAUSE,
+	RESUME,
+	WHOOSH,
+	FANFARE,
+	UI_HOVER,
+	SCORE_TICK
 }
 
 # Frequency definitions for procedural audio
@@ -61,7 +70,16 @@ var sfx_definitions: Dictionary = {
 	SFXType.GAME_START: { "freq": 440, "duration": 0.5, "wave": "arpeggio" },
 	SFXType.GAME_END: { "freq": 330, "duration": 0.8, "wave": "arpeggio" },
 	SFXType.COLLECT: { "freq": 1000, "duration": 0.08, "wave": "sine" },
-	SFXType.DAMAGE: { "freq": 150, "duration": 0.2, "wave": "square" }
+	SFXType.DAMAGE: { "freq": 150, "duration": 0.2, "wave": "square" },
+	SFXType.TIMER_TICK: { "freq": 900, "duration": 0.03, "wave": "sine" },
+	SFXType.LIFE_LOST: { "freq": 180, "duration": 0.45, "wave": "arpeggio_down" },
+	SFXType.COMBO: { "freq": 1100, "duration": 0.12, "wave": "arpeggio_up" },
+	SFXType.PAUSE: { "freq": 350, "duration": 0.15, "wave": "sine" },
+	SFXType.RESUME: { "freq": 500, "duration": 0.15, "wave": "sine" },
+	SFXType.WHOOSH: { "freq": 300, "duration": 0.25, "wave": "whoosh" },
+	SFXType.FANFARE: { "freq": 523, "duration": 1.0, "wave": "fanfare" },
+	SFXType.UI_HOVER: { "freq": 1200, "duration": 0.025, "wave": "sine" },
+	SFXType.SCORE_TICK: { "freq": 1400, "duration": 0.04, "wave": "sine" }
 }
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -135,8 +153,8 @@ func stop_music(fade_duration: float = 1.0) -> void:
 	tween.tween_callback(music_player.stop)
 	current_music = ""
 
-func _generate_ambient_music(_music_id: String) -> AudioStreamWAV:
-	"""Generate simple procedural ambient music"""
+func _generate_ambient_music(music_id: String) -> AudioStreamWAV:
+	"""Generate procedural music that varies by scene type"""
 	var sample_rate := 44100.0
 	var duration := 10.0  # 10 second loop
 	var num_samples := int(sample_rate * duration)
@@ -151,25 +169,139 @@ func _generate_ambient_music(_music_id: String) -> AudioStreamWAV:
 	var data := PackedByteArray()
 	data.resize(num_samples * 2)
 	
-	# Simple ambient waves (water-like)
+	match music_id:
+		"gameplay":
+			_fill_gameplay_music(data, num_samples, sample_rate)
+		"results":
+			_fill_results_music(data, num_samples, sample_rate)
+		"cutscene":
+			_fill_cutscene_music(data, num_samples, sample_rate)
+		_:
+			_fill_menu_music(data, num_samples, sample_rate)
+	
+	audio.data = data
+	return audio
+
+func _fill_menu_music(data: PackedByteArray, num_samples: int, sample_rate: float) -> void:
+	"""Happy, bouncy, uplifting — DWTD-style cheerful main menu vibe"""
+	# C major pentatonic in upper octave — bright and joyful
+	var melody = [523.3, 587.3, 659.3, 784.0, 880.0, 784.0, 659.3, 784.0,
+		880.0, 1047.0, 880.0, 784.0, 659.3, 587.3, 523.3, 659.3]
+	var bass_notes = [130.8, 164.8, 174.6, 130.8]
+	var beat_dur = sample_rate * 0.25  # Fast tempo (~240 BPM feel)
+	var bass_dur = sample_rate * 1.0
 	for i in range(num_samples):
 		var t := float(i) / sample_rate
-		
-		# Multiple layered sine waves for water ambience
+		var mel_idx := int(float(i) / beat_dur) % melody.size()
+		var bass_idx := int(float(i) / bass_dur) % bass_notes.size()
+		var freq = melody[mel_idx]
+		var bass_freq = bass_notes[bass_idx]
+		var note_t = fmod(float(i), beat_dur) / beat_dur
+		# Bouncy staccato envelope — short bright notes
+		var envelope = maxf(0.0, 1.0 - note_t * 3.5) * 0.7
+		# Sub-beat bounce accent
+		var bounce_accent = 1.0 + 0.3 * maxf(0.0, 1.0 - note_t * 8.0)
+
 		var sample := 0.0
-		sample += sin(2.0 * PI * 100 * t) * 0.1  # Deep bass
-		sample += sin(2.0 * PI * 150 * t + sin(t * 0.5)) * 0.08  # Modulated low
-		sample += sin(2.0 * PI * 200 * t + sin(t * 2)) * 0.05  # Mid frequency ripple
+		# Bright melody (sine + slight square character)
+		sample += sin(2.0 * PI * freq * t) * 0.11 * envelope * bounce_accent
+		sample += sin(2.0 * PI * freq * 2.0 * t) * 0.04 * envelope  # Octave shimmer
+		sample += sin(2.0 * PI * freq * 3.0 * t) * 0.015 * envelope  # Harmonics sparkle
+		# Bouncy bass — short punchy
+		var bass_t = fmod(float(i), bass_dur) / bass_dur
+		var bass_env = maxf(0.0, 1.0 - bass_t * 4.0) * 0.8
+		sample += sin(2.0 * PI * bass_freq * t) * 0.10 * bass_env
+		# Upbeat rhythm clap/snap — every half beat
+		var half_t = fmod(float(i), beat_dur * 0.5) / (beat_dur * 0.5)
+		var clap_env = maxf(0.0, 1.0 - half_t * 15.0) * 0.4
+		sample += (randf() - 0.5) * 0.04 * clap_env
+		# Cheerful chord pad (major triad, soft sustain)
+		var pad_env = 0.35 + 0.15 * sin(t * 1.2)
+		sample += sin(2.0 * PI * 261.6 * t) * 0.025 * pad_env
+		sample += sin(2.0 * PI * 329.6 * t) * 0.02 * pad_env
+		sample += sin(2.0 * PI * 392.0 * t) * 0.02 * pad_env
+
+		var sample_int := int(clampf(sample, -1.0, 1.0) * 32767)
+		data[i * 2] = sample_int & 0xFF
+		data[i * 2 + 1] = (sample_int >> 8) & 0xFF
+
+func _fill_gameplay_music(data: PackedByteArray, num_samples: int, sample_rate: float) -> void:
+	"""Upbeat, driving rhythm — energetic like DWTD gameplay"""
+	var bass_line = [130.8, 130.8, 164.8, 146.8, 130.8, 174.6, 164.8, 146.8]
+	var beat_samples = int(sample_rate * 0.3125)
+	for i in range(num_samples):
+		var t := float(i) / sample_rate
+		var beat_idx: int = (i / beat_samples) % bass_line.size()
+		var bass_freq: float = bass_line[beat_idx]
+		var beat_phase = fmod(float(i), float(beat_samples)) / float(beat_samples)
 		
-		# Add gentle noise for water texture
-		sample += (randf() - 0.5) * 0.02
+		var sample := 0.0
+		var bass_env = maxf(0, 1.0 - beat_phase * 3.0)
+		sample += sin(2.0 * PI * bass_freq * t) * 0.15 * bass_env
+		var kick_env = maxf(0, 1.0 - beat_phase * 8.0)
+		sample += sin(2.0 * PI * (60.0 - beat_phase * 40.0) * t) * 0.12 * kick_env
+		var half_beat = fmod(float(i), float(beat_samples / 2)) / float(beat_samples / 2)
+		var hat_env = maxf(0, 1.0 - half_beat * 12.0)
+		sample += (randf() - 0.5) * 0.06 * hat_env
+		var arp_notes = [523.3, 659.3, 784.0, 659.3]
+		var arp_idx: int = (i / (beat_samples / 2)) % arp_notes.size()
+		var arp_freq: float = arp_notes[arp_idx]
+		var arp_env = maxf(0, 1.0 - half_beat * 2.5) * 0.5
+		sample += sin(2.0 * PI * arp_freq * t) * 0.06 * arp_env
 		
 		var sample_int := int(clampf(sample, -1.0, 1.0) * 32767)
 		data[i * 2] = sample_int & 0xFF
 		data[i * 2 + 1] = (sample_int >> 8) & 0xFF
-	
-	audio.data = data
-	return audio
+
+func _fill_results_music(data: PackedByteArray, num_samples: int, sample_rate: float) -> void:
+	"""Triumphant, warm — score reveal feel"""
+	var chord_notes = [
+		[261.6, 329.6, 392.0],
+		[293.7, 370.0, 440.0],
+		[329.6, 415.3, 493.9],
+		[349.2, 440.0, 523.3],
+	]
+	var chord_dur = sample_rate * 2.5
+	for i in range(num_samples):
+		var t := float(i) / sample_rate
+		var chord_idx := int(float(i) / chord_dur) % chord_notes.size()
+		var chord = chord_notes[chord_idx]
+		var chord_t = fmod(float(i), chord_dur) / chord_dur
+		var envelope = sin(chord_t * PI) * 0.5
+		
+		var sample := 0.0
+		for note in chord:
+			sample += sin(2.0 * PI * note * t) * 0.07 * envelope
+			sample += sin(2.0 * PI * note * 0.5 * t) * 0.04 * envelope
+		if fmod(t, 0.625) < 0.05:
+			sample += sin(2.0 * PI * 1318.5 * t) * 0.03
+		sample += sin(2.0 * PI * 130.8 * t) * 0.06 * (0.6 + 0.4 * sin(t * 0.5))
+		
+		var sample_int := int(clampf(sample, -1.0, 1.0) * 32767)
+		data[i * 2] = sample_int & 0xFF
+		data[i * 2 + 1] = (sample_int >> 8) & 0xFF
+
+func _fill_cutscene_music(data: PackedByteArray, num_samples: int, sample_rate: float) -> void:
+	"""Dramatic, cinematic — tension/reveal for cutscene moments"""
+	var tension_notes = [130.8, 155.6, 164.8, 196.0, 164.8, 155.6, 146.8, 130.8]
+	var note_dur = sample_rate * 1.25
+	for i in range(num_samples):
+		var t := float(i) / sample_rate
+		var note_idx := int(float(i) / note_dur) % tension_notes.size()
+		var freq = tension_notes[note_idx]
+		var note_phase = fmod(float(i), note_dur) / note_dur
+		var envelope = sin(note_phase * PI)
+		
+		var sample := 0.0
+		sample += sin(2.0 * PI * freq * t) * 0.10 * envelope
+		sample += sin(2.0 * PI * freq * 1.5 * t) * 0.04 * envelope
+		sample += sin(2.0 * PI * 65.4 * t) * 0.08 * (0.5 + 0.5 * sin(t * 0.3))
+		sample += sin(2.0 * PI * freq * 4.0 * t) * 0.015 * envelope * sin(t * 2.0)
+		sample += (randf() - 0.5) * 0.018 * (0.4 + 0.6 * sin(t * 0.7))
+		
+		var sample_int := int(clampf(sample, -1.0, 1.0) * 32767)
+		data[i * 2] = sample_int & 0xFF
+		data[i * 2 + 1] = (sample_int >> 8) & 0xFF
 
 func set_music_volume(volume: float) -> void:
 	music_volume = clampf(volume, 0.0, 1.0)
@@ -242,6 +374,27 @@ func _generate_sfx(frequency: float, duration: float, wave_type: String) -> Audi
 				var freqs := [frequency, frequency * 1.25, frequency * 1.5, frequency * 2.0]
 				if note_index < freqs.size():
 					sample = sin(2.0 * PI * freqs[note_index] * t)
+			"arpeggio_down":
+				var nd := duration / 3
+				var ni := int(t / nd)
+				var df := [frequency, frequency * 0.75, frequency * 0.5]
+				if ni < df.size():
+					sample = sin(2.0 * PI * df[ni] * t)
+			"arpeggio_up":
+				var nd2 := duration / 3
+				var ni2 := int(t / nd2)
+				var uf := [frequency, frequency * 1.33, frequency * 1.67]
+				if ni2 < uf.size():
+					sample = sin(2.0 * PI * uf[ni2] * t)
+			"whoosh":
+				var sweep_freq := lerpf(frequency * 2.0, frequency * 0.3, float(i) / float(num_samples))
+				sample = (randf() - 0.5) * 0.6 + sin(2.0 * PI * sweep_freq * t) * 0.4
+			"fanfare":
+				var fn_dur := duration / 6
+				var fn_idx := int(t / fn_dur)
+				var fn_notes := [frequency, frequency, frequency * 1.25, frequency * 1.5, frequency * 1.5, frequency * 2.0]
+				if fn_idx < fn_notes.size():
+					sample = sin(2.0 * PI * fn_notes[fn_idx] * t) * 0.8 + sin(2.0 * PI * fn_notes[fn_idx] * 2.0 * t) * 0.2
 		
 		sample *= envelope * 0.5
 		var sample_int := int(clampf(sample, -1.0, 1.0) * 32767)
@@ -292,3 +445,33 @@ func play_collect() -> void:
 
 func play_damage() -> void:
 	play_sfx(SFXType.DAMAGE)
+
+func play_warning() -> void:
+	play_sfx(SFXType.WARNING)
+
+func play_timer_tick() -> void:
+	play_sfx(SFXType.TIMER_TICK)
+
+func play_life_lost() -> void:
+	play_sfx(SFXType.LIFE_LOST)
+
+func play_combo() -> void:
+	play_sfx(SFXType.COMBO)
+
+func play_pause() -> void:
+	play_sfx(SFXType.PAUSE)
+
+func play_resume() -> void:
+	play_sfx(SFXType.RESUME)
+
+func play_whoosh() -> void:
+	play_sfx(SFXType.WHOOSH)
+
+func play_fanfare() -> void:
+	play_sfx(SFXType.FANFARE)
+
+func play_ui_hover() -> void:
+	play_sfx(SFXType.UI_HOVER)
+
+func play_score_tick() -> void:
+	play_sfx(SFXType.SCORE_TICK)

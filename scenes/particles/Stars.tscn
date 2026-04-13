@@ -1,0 +1,29 @@
+[gd_scene load_steps=2 format=3 uid="uid://stars001"]
+
+[sub_resource type="ParticleProcessMaterial" id="ParticleProcessMaterial_stars"]
+emission_shape = 1
+emission_sphere_radius = 60.0
+particle_flag_disable_z = true
+direction = Vector3(0, -1, 0)
+spread = 80.0
+gravity = Vector3(0, -20, 0)
+initial_velocity_min = 50.0
+initial_velocity_max = 100.0
+angular_velocity_min = -540.0
+angular_velocity_max = 540.0
+orbit_velocity_min = 0.0
+orbit_velocity_max = 0.0
+scale_min = 1.0
+scale_max = 2.2
+color = Color(1, 0.95, 0.6, 1)
+hue_variation_min = -0.05
+hue_variation_max = 0.15
+
+[node name="Stars" type="GPUParticles2D"]
+amount = 30
+process_material = SubResource("ParticleProcessMaterial_stars")
+lifetime = 2.2
+one_shot = false
+explosiveness = 0.4
+randomness = 0.7
+fixed_fps = 60

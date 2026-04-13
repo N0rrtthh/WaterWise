@@ -9,24 +9,29 @@ var pot_node: Node2D
 var basin_node: Node2D
 var pot_direction: int = 1
 var pot_speed: float = 150.0
+var drops_missed: int = 0
+var max_misses: int = 5
 
 func _apply_difficulty_settings() -> void:
 	match current_difficulty:
 		"Easy":
-			pot_speed = 100.0
-			drop_spawn_interval = 0.5
+			pot_speed = 120.0
+			drop_spawn_interval = 0.45
 			drop_fall_speed = 350.0
-			game_duration = 15.0
+			max_misses = 8
+			game_duration = 10.0
 		"Medium":
-			pot_speed = 150.0
-			drop_spawn_interval = 0.35
-			drop_fall_speed = 450.0
-			game_duration = 18.0
+			pot_speed = 180.0
+			drop_spawn_interval = 0.3
+			drop_fall_speed = 480.0
+			max_misses = 5
+			game_duration = 12.0
 		"Hard":
-			pot_speed = 220.0
+			pot_speed = 260.0
 			drop_spawn_interval = 0.2
-			drop_fall_speed = 550.0
-			game_duration = 22.0
+			drop_fall_speed = 600.0
+			max_misses = 3
+			game_duration = 15.0
 
 func _ready():
 	game_name = "Rice Wash Rescue"
@@ -175,8 +180,11 @@ func _process(delta):
 				record_action(true)
 				_show_catch(drop.position)
 			else:
-				# Survival mode: missed drops are OK, just show visual feedback
+				record_action(false)
+				drops_missed += 1
 				_show_miss(drop.position)
+				if drops_missed >= max_misses:
+					end_game(false)
 			
 			to_remove.append(drop)
 			drop.queue_free()
