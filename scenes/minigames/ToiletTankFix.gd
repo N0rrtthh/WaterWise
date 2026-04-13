@@ -13,22 +13,36 @@ var tanks_fixed: int = 0
 var target_tanks: int = 4
 
 func _apply_difficulty_settings() -> void:
+	# Get progressive difficulty settings
+	var settings = AdaptiveDifficulty.get_difficulty_settings() if AdaptiveDifficulty else {}
+	var progressive_level = settings.get("progressive_level", 0)
+	
 	match current_difficulty:
 		"Easy":
-			target_tanks = 3
+			target_tanks = 2  # Achievable in 18s
 			tolerance = 15.0
 			fill_rate = 20.0
-			game_duration = 30.0
+			game_duration = 18.0
 		"Medium":
-			target_tanks = 4
+			target_tanks = 3  # Achievable in 12s
 			tolerance = 10.0
 			fill_rate = 30.0
-			game_duration = 25.0
+			game_duration = 12.0
 		"Hard":
-			target_tanks = 5
+			target_tanks = 4  # Achievable in 8s
 			tolerance = 5.0
 			fill_rate = 45.0
-			game_duration = 20.0
+			game_duration = 8.0
+	
+	# Apply PROGRESSIVE DIFFICULTY (NO CEILING!)
+	if progressive_level > 0:
+		target_tanks += mini(progressive_level, 2)  # +1 tank per level, max +2
+		fill_rate += progressive_level * 5.0  # Slightly faster filling
+		tolerance = max(4.0, tolerance - progressive_level * 0.5)  # Tighter target, floor at 4%
+		game_duration += progressive_level * 2.0  # Give more time for extra tanks
+		if settings.has("time_limit"):
+			game_duration = max(game_duration, settings.get("time_limit", game_duration))
+		print("🔥 Progressive Lvl %d: %d tanks, %.1f fill rate" % [progressive_level, target_tanks, fill_rate])
 
 func _ready():
 	game_name = "Toilet Tank Fix"

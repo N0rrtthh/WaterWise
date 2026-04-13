@@ -78,6 +78,12 @@ var moving_object_scene: PackedScene
 func _ready() -> void:
 	screen_size = get_viewport_rect().size
 	
+	# Verify multiplayer is active
+	if not multiplayer or not multiplayer.has_multiplayer_peer():
+		push_error("❌ Multiplayer not active! Returning to lobby...")
+		get_tree().change_scene_to_file("res://scenes/ui/MultiplayerLobby.tscn")
+		return
+	
 	# Get random mode assignment from GameManager
 	my_mode = _get_assigned_mode()
 	print("🎮 Assigned Mode: ", "MODE 1 (Collector)" if my_mode == PlayerMode.MODE_1_COLLECTOR else "MODE 2 (Filter)")
@@ -101,6 +107,10 @@ func _ready() -> void:
 		GameManager.team_won.connect(_on_team_won)
 		GameManager.team_lost.connect(_on_team_lost)
 		GameManager.team_life_lost.connect(_on_life_lost)
+	
+	# Connect NetworkManager resource transfer signal for interconnected gameplay
+	if NetworkManager and NetworkManager.has_signal("resource_sent"):
+		NetworkManager.resource_sent.connect(_on_resource_received)
 	
 	# Timer sync keeps countdown aligned across peers
 	timer_sync_timer = Timer.new()
@@ -197,6 +207,7 @@ func _setup_ui() -> void:
 	await get_tree().create_timer(5.0).timeout
 	if instruction_panel and is_instance_valid(instruction_panel):
 		var tween = create_tween()
+		tween.set_loops(1)
 		tween.tween_property(instruction_panel, "modulate:a", 0.0, 1.0)
 		tween.tween_callback(instruction_panel.queue_free)
 	
@@ -402,6 +413,12 @@ func _on_water_caught(drop: Area2D) -> void:
 	if GameManager:
 		GameManager.rpc("submit_score", 1)
 		_update_score_display()
+	
+	# RESOURCE TRANSFER: Send harvested water to partner
+	if NetworkManager and NetworkManager.has_method("send_resource"):
+		NetworkManager.send_resource("harvested_water", 1, 1.0)
+		print("📤 Sent harvested water to partner")
+	
 	drop.queue_free()
 
 func _on_water_missed(drop: Area2D) -> void:
@@ -423,10 +440,24 @@ func _on_dirt_missed(dirt: Area2D) -> void:
 		GameManager.rpc("report_damage")
 	dirt.queue_free()
 
+func _on_resource_received(from_player: int, resource_type: String, amount: int, _quality: float) -> void:
+	"""Receive resources from partner - creates interconnected gameplay"""
+	if resource_type == "harvested_water":
+		print("📥 Received %d harvested water from P%d" % [amount, from_player])
+		# Partner's harvested water could trigger special effects or bonuses
+
 func _update_score_display() -> void:
 	var global_score = GameManager.get_global_score() if GameManager else 0
 	score_label.text = "💧 Water: %d / %d" % [global_score, current_settings["quota"]]
 	quota_bar.value = global_score
+	
+	# Check if quota reached (host only)
+	if _is_host() and game_active and global_score >= current_settings["quota"]:
+		print("🎯 Quota reached! Score: %d >= %d" % [global_score, current_settings["quota"]])
+		game_active = false
+		spawn_timer.stop()
+		if GameManager:
+			GameManager.rpc("_announce_team_won")
 
 func _update_lives_display() -> void:
 	if GameManager:

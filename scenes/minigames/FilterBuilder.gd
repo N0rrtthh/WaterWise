@@ -15,14 +15,14 @@ var target_filters: int = 3
 func _apply_difficulty_settings() -> void:
 	match current_difficulty:
 		"Easy":
-			target_filters = 2
-			game_duration = 35.0
+			target_filters = 1
+			game_duration = 20.0
 		"Medium":
-			target_filters = 3
-			game_duration = 30.0
-		"Hard":
-			target_filters = 4
+			target_filters = 2
 			game_duration = 25.0
+		"Hard":
+			target_filters = 2
+			game_duration = 15.0
 
 func _ready():
 	game_name = "Filter Builder"

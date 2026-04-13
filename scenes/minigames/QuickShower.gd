@@ -19,16 +19,16 @@ func _apply_difficulty_settings() -> void:
 	match current_difficulty:
 		"Easy":
 			target_showers = 3
-			gauge_speed = 50.0
-			game_duration = 25.0
+			gauge_speed = 60.0
+			game_duration = 15.0
 		"Medium":
-			target_showers = 5
-			gauge_speed = 80.0
-			game_duration = 20.0
+			target_showers = 4
+			gauge_speed = 100.0
+			game_duration = 10.0
 		"Hard":
-			target_showers = 7
-			gauge_speed = 120.0
-			game_duration = 18.0
+			target_showers = 5
+			gauge_speed = 150.0
+			game_duration = 8.0
 
 func _ready():
 	game_name = "Quick Shower"
@@ -164,9 +164,16 @@ func _process(delta):
 				drop.position.y = 0
 				drop.position.x = randf_range(-50, 50)
 		
-		# Check for tap
-		if Input.is_action_just_pressed("ui_accept") or Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
-			_check_timing()
+	# Tap detection moved to _input() for proper single-press handling
+
+func _input(event):
+	if not game_active or not shower_running: return
+	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+		_check_timing()
+	elif event is InputEventScreenTouch and event.pressed:
+		_check_timing()
+	elif event is InputEventKey and event.pressed and event.keycode == KEY_ENTER:
+		_check_timing()
 
 func _check_timing():
 	shower_running = false

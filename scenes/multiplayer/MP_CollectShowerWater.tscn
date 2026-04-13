@@ -1,0 +1,9 @@
+[gd_scene load_steps=2 format=3 uid="uid://dx4n7lavw5mpq"]
+
+[ext_resource type="Script" path="res://scripts/multiplayer/MP_CollectShowerWater.gd" id="1_shower"]
+
+[node name="MP_CollectShowerWater" type="Node2D"]
+script = ExtResource("1_shower")
+
+[node name="Camera2D" type="Camera2D" parent="."]
+position = Vector2(576, 324)

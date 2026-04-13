@@ -1,0 +1,9 @@
+[gd_scene load_steps=2 format=3 uid="uid://dq3n7k8vw4pxr"]
+
+[ext_resource type="Script" path="res://scripts/multiplayer/MP_CollectLaundryWater.gd" id="1_laundry"]
+
+[node name="MP_CollectLaundryWater" type="Node2D"]
+script = ExtResource("1_laundry")
+
+[node name="Camera2D" type="Camera2D" parent="."]
+position = Vector2(576, 324)

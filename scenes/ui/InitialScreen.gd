@@ -4,6 +4,7 @@ extends Control
 @onready var droplet_icon = $UI/TopLeft/CoinBG/HBox/DropletIcon
 @onready var play_button = $UI/ButtonContainer/PlayButton
 @onready var multiplayer_button = $UI/ButtonContainer/MultiplayerButton
+@onready var demo_button = $UI/ButtonContainer/DemoButton
 @onready var welcome_popup = $WelcomePopup
 @onready var welcome_panel = $WelcomePopup/Panel
 @onready var highscore_label = $UI/HighscorePanel/HighscoreLabel
@@ -828,3 +829,7 @@ func _on_customize_button_pressed() -> void:
 func _on_store_button_pressed() -> void:
 	# Navigate to roadmap/journey screen
 	get_tree().change_scene_to_file("res://scenes/ui/RoadmapScreen.tscn")
+
+func _on_demo_button_pressed() -> void:
+	# Navigate to demo/test launcher for panelist demonstration
+	get_tree().change_scene_to_file("res://test/DemoLauncher.tscn")
