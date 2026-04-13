@@ -15,25 +15,37 @@ var target_taps: int = 15
 var water_waste_rate: float = 15.0
 
 func _apply_difficulty_settings() -> void:
+	# Get progressive difficulty settings
+	var settings = AdaptiveDifficulty.get_difficulty_settings() if AdaptiveDifficulty else {}
+	var progressive_level = settings.get("progressive_level", 0)
+	
 	match current_difficulty:
 		"Easy":
 			tap_spawn_interval = 1.8
 			water_waste_rate = 10.0
 			max_water_waste = 150.0
-			target_taps = 10
-			game_duration = 30.0
+			target_taps = 6  # Achievable in 18s
+			game_duration = 18.0
 		"Medium":
 			tap_spawn_interval = 1.2
 			water_waste_rate = 15.0
 			max_water_waste = 100.0
-			target_taps = 15
-			game_duration = 25.0
+			target_taps = 8  # Achievable in 12s
+			game_duration = 12.0
 		"Hard":
 			tap_spawn_interval = 0.8
 			water_waste_rate = 25.0
 			max_water_waste = 60.0
-			target_taps = 20
-			game_duration = 20.0
+			target_taps = 7  # Achievable in 8s with ~1.1s per tap
+			game_duration = 8.0
+	
+	# Apply PROGRESSIVE DIFFICULTY (NO CEILING!)
+	if progressive_level > 0:
+		target_taps += progressive_level * 2  # +2 taps per level
+		tap_spawn_interval = max(0.3, tap_spawn_interval * (1.0 - progressive_level * 0.08))  # Faster spawning
+		water_waste_rate += progressive_level * 5.0  # More waste pressure
+		game_duration = settings.get("time_limit", game_duration)
+		print("🔥 Progressive Lvl %d: %d taps, %.2fs interval" % [progressive_level, target_taps, tap_spawn_interval])
 
 func _ready():
 	game_name = "Turn Off Tap"
@@ -235,8 +247,8 @@ func _spawn_running_tap():
 	alert.position = Vector2(25, -50)
 	tap.add_child(alert)
 	
-	# Pulse animation
-	var tw = create_tween().set_loops()
+	# Pulse animation - loops indefinitely while tap is active
+	var tw = create_tween().set_loops(0)  # 0 = infinite loop (will stop when tap is removed)
 	tw.tween_property(alert, "scale", Vector2(1.3, 1.3), 0.3)
 	tw.tween_property(alert, "scale", Vector2(1.0, 1.0), 0.3)
 	

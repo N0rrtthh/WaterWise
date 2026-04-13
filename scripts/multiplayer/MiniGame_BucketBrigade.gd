@@ -19,21 +19,21 @@ signal score_updated(new_score: int)
 
 const DIFFICULTY_SETTINGS: Dictionary = {
 	"Easy": {
-		"quota": 12,
-		"fill_time": 3.0,
-		"empty_time": 2.0,
+		"quota": 15,
+		"fill_time": 3.5,
+		"empty_time": 2.5,
 		"bucket_count": 3
 	},
 	"Medium": {
-		"quota": 20,
-		"fill_time": 2.0,
-		"empty_time": 1.5,
+		"quota": 22,
+		"fill_time": 2.5,
+		"empty_time": 1.8,
 		"bucket_count": 4
 	},
 	"Hard": {
-		"quota": 30,
-		"fill_time": 1.5,
-		"empty_time": 1.0,
+		"quota": 32,
+		"fill_time": 1.8,
+		"empty_time": 1.2,
 		"bucket_count": 5
 	}
 }
@@ -64,6 +64,13 @@ var buckets: Array[Dictionary] = []  # {node: Control, fill_level: float, status
 
 func _ready() -> void:
 	screen_size = get_viewport_rect().size
+	
+	# Verify multiplayer is active
+	if not multiplayer or not multiplayer.has_multiplayer_peer():
+		push_error("❌ Multiplayer not active! Returning to lobby...")
+		get_tree().change_scene_to_file("res://scenes/ui/MultiplayerLobby.tscn")
+		return
+	
 	is_player_one = (multiplayer.get_unique_id() == 1)
 	
 	_load_difficulty()
@@ -74,6 +81,10 @@ func _ready() -> void:
 		GameManager.team_won.connect(_on_team_won)
 		GameManager.team_lost.connect(_on_team_lost)
 		GameManager.team_life_lost.connect(_on_life_lost)
+	
+	# Connect NetworkManager resource transfer signal for interconnected gameplay
+	if NetworkManager and NetworkManager.has_signal("resource_sent"):
+		NetworkManager.resource_sent.connect(_on_resource_received)
 	
 	_create_pause_ui()
 	_start_game()
@@ -213,6 +224,10 @@ func _start_fill_bucket(index: int) -> void:
 	if index >= buckets.size():
 		return
 	buckets[index]["status"] = "filling"
+	# RESOURCE TRANSFER: P1 starts filling, notify P2
+	if is_player_one and NetworkManager and NetworkManager.has_method("send_resource"):
+		NetworkManager.send_resource("filled_bucket", 1, 1.0)
+		print("📤 Notified partner of bucket filling")
 	_fill_bucket_over_time(index)
 
 func _fill_bucket_over_time(index: int) -> void:
@@ -255,6 +270,15 @@ func _sync_bucket_state(index: int, status: String, fill_level: float) -> void:
 	if index < buckets.size():
 		buckets[index]["status"] = status
 		buckets[index]["fill_level"] = fill_level
+
+func _on_resource_received(
+	from_player: int, resource_type: String, _amount: int, _quality: float
+) -> void:
+	# Receive resources from partner to support interconnected gameplay.
+	if resource_type == "filled_bucket" and not is_player_one:
+		# P2 receives notification when P1 fills buckets
+		print("📥 Received filled bucket notification from P%d" % from_player)
+		# Visual feedback could be added here
 
 @rpc("any_peer", "call_local", "reliable")
 func _sync_score_update() -> void:
@@ -320,6 +344,13 @@ func _update_score_display() -> void:
 	score_label.text = "🪣 Score: %d / %d" % [global_score, current_settings["quota"]]
 	quota_bar.value = global_score
 	score_updated.emit(global_score)
+	
+	# Check if quota reached (host only)
+	if is_player_one and game_active and global_score >= current_settings["quota"]:
+		print("🎯 Quota reached! Score: %d >= %d" % [global_score, current_settings["quota"]])
+		game_active = false
+		if GameManager:
+			GameManager.rpc("_announce_team_won")
 
 func _on_team_won() -> void:
 	game_active = false

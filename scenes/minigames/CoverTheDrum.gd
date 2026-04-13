@@ -13,23 +13,23 @@ func _apply_difficulty_settings() -> void:
 	# Apply difficulty-based scaling
 	match current_difficulty:
 		"Easy":
-			mosquito_speed = 80.0
-			max_allowed_in = 7
-			spawn_interval_min = 1.2
-			spawn_interval_max = 2.0
-			game_duration = 20.0
-		"Medium":
-			mosquito_speed = 120.0
+			mosquito_speed = 90.0
 			max_allowed_in = 5
-			spawn_interval_min = 0.8
-			spawn_interval_max = 1.5
-			game_duration = 25.0
-		"Hard":
-			mosquito_speed = 180.0
+			spawn_interval_min = 1.0
+			spawn_interval_max = 1.8
+			game_duration = 10.0
+		"Medium":
+			mosquito_speed = 150.0
 			max_allowed_in = 3
-			spawn_interval_min = 0.4
-			spawn_interval_max = 0.8
-			game_duration = 30.0
+			spawn_interval_min = 0.5
+			spawn_interval_max = 1.0
+			game_duration = 12.0
+		"Hard":
+			mosquito_speed = 220.0
+			max_allowed_in = 2
+			spawn_interval_min = 0.3
+			spawn_interval_max = 0.6
+			game_duration = 15.0
 
 func _ready():
 	game_name = "Cover The Drum"

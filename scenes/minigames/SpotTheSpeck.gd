@@ -19,19 +19,19 @@ func _apply_difficulty_settings() -> void:
 			dirty_chance = 0.6  # More dirty = easier to spot
 			num_specks_min = 8
 			num_specks_max = 15  # Very visible specks
-			game_duration = 25.0
+			game_duration = 18.0
 		"Medium":
-			target_correct = 6
+			target_correct = 5
 			dirty_chance = 0.5
 			num_specks_min = 5
 			num_specks_max = 12
-			game_duration = 20.0
+			game_duration = 15.0
 		"Hard":
-			target_correct = 8
+			target_correct = 6
 			dirty_chance = 0.4  # Less dirty = harder to spot
 			num_specks_min = 2
 			num_specks_max = 6  # Subtle specks
-			game_duration = 15.0
+			game_duration = 12.0
 
 func _ready():
 	game_name = "Spot The Speck"

@@ -4,15 +4,16 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://cuj07i86l7c1c"
 path.s3tc="res://.godot/imported/Left_Leg_252e88ff-782e-4c4e-9590-3baff38dabd4.png-e9de3765e4aa6ff64848733dd9d6ce2f.s3tc.ctex"
+path.etc2="res://.godot/imported/Left_Leg_252e88ff-782e-4c4e-9590-3baff38dabd4.png-e9de3765e4aa6ff64848733dd9d6ce2f.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 
 [deps]
 
 source_file="res://characters/main char__gltf/Left_Leg_252e88ff-782e-4c4e-9590-3baff38dabd4.png"
-dest_files=["res://.godot/imported/Left_Leg_252e88ff-782e-4c4e-9590-3baff38dabd4.png-e9de3765e4aa6ff64848733dd9d6ce2f.s3tc.ctex"]
+dest_files=["res://.godot/imported/Left_Leg_252e88ff-782e-4c4e-9590-3baff38dabd4.png-e9de3765e4aa6ff64848733dd9d6ce2f.s3tc.ctex", "res://.godot/imported/Left_Leg_252e88ff-782e-4c4e-9590-3baff38dabd4.png-e9de3765e4aa6ff64848733dd9d6ce2f.etc2.ctex"]
 
 [params]
 

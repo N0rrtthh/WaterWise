@@ -1,11 +1,11 @@
 extends Node
 
 ## ═══════════════════════════════════════════════════════════════════
-## ADAPTIVE DIFFICULTY SYSTEM - DUAL ASSESSMENT MODE
+## ADAPTIVE DIFFICULTY SYSTEM - ROLLING WINDOW ALGORITHM
 ## ═══════════════════════════════════════════════════════════════════
 ## Research-Validated Educational Game System
-## Combines Formative (Gameplay) + Summative (Post-Test) Assessment
 ## Algorithm: Rule-Based Decision Tree with Rolling Window
+## Proficiency Index (Φ) = Weighted Moving Average - Consistency Penalty
 ## ═══════════════════════════════════════════════════════════════════
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -18,12 +18,6 @@ signal performance_added(accuracy: float, time: int, mistakes: int)
 signal behavioral_milestone(milestone: String, data: Dictionary)
 signal algorithm_update(metrics: Dictionary)
 
-## Summative Assessment Signals
-signal posttest_unlocked()
-signal posttest_question_answered(question_id: int, correct: bool, time_taken: float)
-signal posttest_completed(score: int, total: int, percentage: float)
-signal correlation_calculated(gameplay_perf: float, test_score: float, correlation: float)
-
 ## Research Data Signals
 signal session_data_ready(data: Dictionary)
 signal case_study_exported(file_path: String)
@@ -34,16 +28,10 @@ signal case_study_exported(file_path: String)
 
 ## Rolling Window Configuration
 @export_category("Algorithm Settings")
-@export var window_size: int = 3  # Changed from 5 to 3 for faster adaptation
-@export var adaptation_frequency: int = 2  # Every N games (adjusted for smaller window)
-@export var min_games_before_adaptation: int = 2  # Adjusted for smaller window
+@export var window_size: int = 5  # Rolling window keeps last 5 games (as per outline)
+@export var adaptation_frequency: int = 1  # Every N games (Paper: evaluate each new game)
+@export var min_games_before_adaptation: int = 5  # Need full window before adapting (Paper: window_size = 5)
 @export var target_latency_ms: float = 100.0
-
-## Post-Test Unlock Conditions
-@export_category("Post-Test Settings")
-@export var posttest_min_score: int = 1000
-@export var posttest_min_games: int = 15
-@export var total_posttest_questions: int = 15
 
 ## Behavioral Thresholds
 @export_category("Rule-Based Thresholds")
@@ -67,7 +55,7 @@ var session_start_time: int = 0
 var total_score: int = 0
 
 ## Current Difficulty State
-var current_difficulty: String = "Easy"  # Easy, Medium, Hard
+var current_difficulty: String = "Easy"  # Paper: initial difficulty = Easy
 
 ## Performance Tracking (Formative Assessment)
 var performance_window: Array[Dictionary] = []  # Last 5 games (FIFO)
@@ -75,53 +63,53 @@ var performance_history: Array[Dictionary] = []  # All games
 var difficulty_changes: Array[Dictionary] = []  # Timeline of changes
 var games_since_adaptation: int = 0
 
-## Post-Test Tracking (Summative Assessment)
-var posttest_unlocked_flag: bool = false
-var posttest_started: bool = false
-var posttest_completed_flag: bool = false
-var posttest_answers: Array[Dictionary] = []
-var posttest_start_time: int = 0
-var current_question_start_time: int = 0
+## Progressive Difficulty (No Ceiling)
+var progressive_level: int = 0  # 0 = base difficulty, increases infinitely
+var consecutive_successes: int = 0  # Track success streak for progression
 
-## Correlation Data
-var gameplay_performance_score: float = 0.0
-var posttest_knowledge_score: float = 0.0
-var correlation_coefficient: float = 0.0
+## Raw Game Score Weights (Paper: Mathematical Formulation)
+## S = w_a·A + w_s·(1 - T_r/T_max) - w_e·E
+## Where: A = accuracy (0-1), T_r = reaction time, T_max = max time, E = errors (0-1)
+const SCORE_WEIGHT_ACCURACY: float = 0.6   # w_a: Accuracy weight (dominant factor)
+const SCORE_WEIGHT_SPEED: float = 0.3      # w_s: Speed weight (secondary factor)
+const SCORE_WEIGHT_ERRORS: float = 0.1     # w_e: Error penalty weight (minor factor)
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # DIFFICULTY SETTINGS (CHAOS SYSTEM)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+# Difficulty settings now use shorter timers to make the game more challenging
+# The difference between Easy and Hard is VERY noticeable for demonstration
 const DIFFICULTY_SETTINGS = {
-	"Easy": {
-		"speed_multiplier": 0.7,
-		"time_limit": 20,
-		"task_complexity": 1,
-		"hints": 3,
-		"visual_guidance": true,
-		"distractors": 1,
-		"item_count": 3,
-		"chaos_effects": []
+	"Easy": {  # Beginner level - Comfortable pace
+		"speed_multiplier": 0.7,  # 30% slower than normal (Paper: 0.7)
+		"time_limit": 20,  # Generous time (Paper: 20s)
+		"task_complexity": 1,  # Simple tasks
+		"hints": 3,  # Full hints
+		"visual_guidance": true,  # Visual help enabled (Paper: TRUE)
+		"distractors": 1,  # Minimal distractions
+		"item_count": 3,  # Few items to manage
+		"chaos_effects": []  # No chaos effects (Paper: NONE)
 	},
-	"Medium": {
-		"speed_multiplier": 1.0,
-		"time_limit": 15,
-		"task_complexity": 2,
-		"hints": 2,
-		"visual_guidance": false,
-		"distractors": 2,
-		"item_count": 5,
-		"chaos_effects": ["screen_shake_mild"]
+	"Medium": {  # Standard level - Flow State
+		"speed_multiplier": 1.0,  # Normal speed (Paper: 1.0)
+		"time_limit": 15,  # Standard time (Paper: 15s)
+		"task_complexity": 2,  # Moderate complexity
+		"hints": 2,  # Limited hints
+		"visual_guidance": false,  # No visual help (Paper: FALSE)
+		"distractors": 2,  # Some distractions
+		"item_count": 5,  # Moderate items (Paper: 5)
+		"chaos_effects": ["screen_shake_mild"]  # Mild chaos (Paper: MILD)
 	},
-	"Hard": {
-		"speed_multiplier": 1.5,
-		"time_limit": 10,
-		"task_complexity": 3,
-		"hints": 1,
-		"visual_guidance": false,
-		"distractors": 3,
-		"item_count": 8,
-		"chaos_effects": [
+	"Hard": {  # Expert level - Mastery challenge
+		"speed_multiplier": 1.5,  # 50% faster (Paper: 1.5)
+		"time_limit": 10,  # Tight time (Paper: 10s)
+		"task_complexity": 3,  # Complex tasks
+		"hints": 0,  # No hints
+		"visual_guidance": false,  # No help (Paper: FALSE)
+		"distractors": 3,  # Many distractions
+		"item_count": 8,  # Many items
+		"chaos_effects": [  # ALL chaos effects!
 			"screen_shake_heavy",
 			"mud_splatters",
 			"buzzing_fly",
@@ -131,222 +119,81 @@ const DIFFICULTY_SETTINGS = {
 	}
 }
 
+
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# POST-TEST QUESTION BANK
+# RAW GAME SCORE (Paper: Mathematical Formulation)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-var posttest_questions = [
-	{
-		"id": 1,
-		"category": "conceptual",
-		"question": "Bakit importante ang pag-save ng tubig sa bahay?",
-		"options": [
-			"Para mabawasan lang ang water bill",
-			"Para may tubig pa sa future generations",
-			"Para hindi maubos ang tubig sa reservoir",
-			"Lahat ng nabanggit"
-		],
-		"correct_answer": 3,
-		"related_minigame": "WaterPlant",
-		"difficulty": "easy"
-	},
-	{
-		"id": 2,
-		"category": "application",
-		"question": "Ano ang TAMANG paraan ng pag-dilig ng halaman?",
-		"options": [
-			"Gumamit ng hose at bukas nang matagal",
-			"Gumamit ng timba o watering can",
-			"Hayaan lang ang ulan",
-			"Diretso sa ugat gamit ang gripo"
-		],
-		"correct_answer": 1,
-		"related_minigame": "WaterPlant",
-		"difficulty": "easy"
-	},
-	{
-		"id": 3,
-		"category": "retention",
-		"question": "Ilang balde ang DAPAT gamitin para makatipid ng tubig sa paglilinis?",
-		"options": [
-			"1 balde lang",
-			"2-3 balde",
-			"5 balde o higit pa",
-			"Walang limitasyon"
-		],
-		"correct_answer": 1,
-		"related_minigame": "BucketChallenge",
-		"difficulty": "medium"
-	},
-	{
-		"id": 4,
-		"category": "conceptual",
-		"question": "Ano ang epekto ng sobrang paggamit ng tubig sa kapaligiran?",
-		"options": [
-			"Walang epekto",
-			"Nakakatulong sa ekonomiya",
-			"Nauubos ang natural water sources",
-			"Mas maraming ulan"
-		],
-		"correct_answer": 2,
-		"related_minigame": "General",
-		"difficulty": "medium"
-	},
-	{
-		"id": 5,
-		"category": "application",
-		"question": "Nakakita ka ng tumutulo na gripo. Ano ang DAPAT mong gawin?",
-		"options": [
-			"Hayaan lang kasi konti lang naman",
-			"Sabihin sa magulang/landlord agad",
-			"Lagyan ng tali",
-			"Wala akong pakialam"
-		],
-		"correct_answer": 1,
-		"related_minigame": "FixLeak",
-		"difficulty": "easy"
-	},
-	{
-		"id": 6,
-		"category": "retention",
-		"question": "Sa laro, ano ang nangyari kapag masyadong maraming tubig ang ginamit?",
-		"options": [
-			"Nanalo ka",
-			"Nabawasan ang score",
-			"Walang nangyari",
-			"Nag-level up"
-		],
-		"correct_answer": 1,
-		"related_minigame": "General",
-		"difficulty": "easy"
-	},
-	{
-		"id": 7,
-		"category": "application",
-		"question": "Anong oras ang PINAKAMAINAM para magdilig ng halaman?",
-		"options": [
-			"Tanghali (12nn)",
-			"Hapon (3pm)",
-			"Umaga (6-8am) o gabi (6-8pm)",
-			"Anumang oras"
-		],
-		"correct_answer": 2,
-		"related_minigame": "WaterPlant",
-		"difficulty": "hard"
-	},
-	{
-		"id": 8,
-		"category": "conceptual",
-		"question": "Magkano ang average na nawawalang tubig sa isang tumutulo na gripo per day?",
-		"options": [
-			"1 litro",
-			"5 litro",
-			"20-30 litro",
-			"100 litro"
-		],
-		"correct_answer": 2,
-		"related_minigame": "FixLeak",
-		"difficulty": "hard"
-	},
-	{
-		"id": 9,
-		"category": "behavioral",
-		"question": "After ng laro, ano ang plano mong gawin sa bahay?",
-		"options": [
-			"Wala, laro lang ito",
-			"Magtitipid ng tubig sa pagliligo",
-			"Turuan ang pamilya tungkol sa water conservation",
-			"Pareho ng B at C"
-		],
-		"correct_answer": 3,
-		"related_minigame": "General",
-		"difficulty": "medium"
-	},
-	{
-		"id": 10,
-		"category": "application",
-		"question": "May nakita kang bukas na gripo na walang gumagamit. Ano ang gagawin mo?",
-		"options": [
-			"Pabayaan kasi hindi ko naman gripo",
-			"Isara agad",
-			"Maglaro sa tubig",
-			"Kumuha ng picture"
-		],
-		"correct_answer": 1,
-		"related_minigame": "FixLeak",
-		"difficulty": "easy"
-	},
-	{
-		"id": 11,
-		"category": "retention",
-		"question": "Sa mini-game, ano ang natutunan mo tungkol sa paggamit ng timba?",
-		"options": [
-			"Mas mahal ang timba kaysa hose",
-			"Mas nakakatipid ng tubig ang timba",
-			"Pareho lang",
-			"Mas mabilis ang hose"
-		],
-		"correct_answer": 1,
-		"related_minigame": "BucketChallenge",
-		"difficulty": "medium"
-	},
-	{
-		"id": 12,
-		"category": "conceptual",
-		"question": "Ano ang ibig sabihin ng 'sustainable water use'?",
-		"options": [
-			"Gumamit ng maraming tubig",
-			"Gumamit ng sapat lang para sa pangangailangan",
-			"Hindi gumamit ng tubig",
-			"Gumamit ng tubig para sa negosyo"
-		],
-		"correct_answer": 1,
-		"related_minigame": "General",
-		"difficulty": "hard"
-	},
-	{
-		"id": 13,
-		"category": "application",
-		"question": "Paano makakatipid ng tubig sa paglilinis ng bahay?",
-		"options": [
-			"Gumamit ng hose buong araw",
-			"Gumamit ng basang basahan at timba",
-			"Hindi na maglinis",
-			"Gumamit ng maraming sabon"
-		],
-		"correct_answer": 1,
-		"related_minigame": "BucketChallenge",
-		"difficulty": "medium"
-	},
-	{
-		"id": 14,
-		"category": "behavioral",
-		"question": "Ikaw ba ay magtutuloy sa pagtitipid ng tubig pagkatapos ng laro?",
-		"options": [
-			"Hindi, nakalimutan ko na",
-			"Siguro, kapag may time",
-			"Oo, simula ngayon",
-			"Hindi ko alam"
-		],
-		"correct_answer": 2,
-		"related_minigame": "General",
-		"difficulty": "easy"
-	},
-	{
-		"id": 15,
-		"category": "conceptual",
-		"question": "Ano ang PANGUNAHING mensahe ng laro?",
-		"options": [
-			"Maglaro nang mabilis",
-			"Kumita ng mataas na score",
-			"Magtipid ng tubig para sa kinabukasan",
-			"Makakuha ng achievements"
-		],
-		"correct_answer": 2,
-		"related_minigame": "General",
-		"difficulty": "easy"
-	}
-]
+## ═══════════════════════════════════════════════════════════════════════════
+## RAW GAME SCORE FORMULA
+## ═══════════════════════════════════════════════════════════════════════════
+## S = w_a · A + w_s · (1 - T_r / T_max) - w_e · E
+##
+## Where:
+##   S     = Raw Game Score (0.0 to 1.0, clamped)
+##   A     = Accuracy ratio (correct / total, 0.0 to 1.0)
+##   T_r   = Reaction time (ms) — how long the player took
+##   T_max = Maximum allowed time (ms) — from difficulty time_limit
+##   E     = Error ratio (mistakes / total_actions, 0.0 to 1.0)
+##   w_a   = 0.6 (Accuracy weight — dominant factor)
+##   w_s   = 0.3 (Speed weight — rewards finishing quickly)
+##   w_e   = 0.1 (Error penalty — minor deduction for mistakes)
+##
+## Rationale (from paper):
+##   Accuracy is weighted highest because the game's goal is educational.
+##   Speed is rewarded to encourage flow state, but not so much that
+##   players rush and sacrifice learning.
+##   Errors are penalized lightly to encourage careful play without
+##   making the scoring feel punitive.
+## ═══════════════════════════════════════════════════════════════════════════
+func calculate_raw_game_score(
+	accuracy: float, reaction_time_ms: int, mistakes: int
+) -> float:
+	# Get T_max from current difficulty settings (seconds → ms)
+	var settings = DIFFICULTY_SETTINGS.get(
+		current_difficulty, DIFFICULTY_SETTINGS["Easy"]
+	)
+	var t_max_ms: float = settings["time_limit"] * 1000.0
+	
+	# acc = Accuracy (already 0.0 to 1.0)
+	var acc: float = clamp(accuracy, 0.0, 1.0)
+	
+	# speed = 1 - T_r / T_max (faster = higher score)
+	var speed: float = clamp(
+		1.0 - (float(reaction_time_ms) / t_max_ms), 0.0, 1.0
+	)
+	
+	# err = Error ratio
+	var err: float
+	if mistakes <= 0:
+		err = clamp(1.0 - accuracy, 0.0, 1.0)
+	else:
+		err = clamp(
+			float(mistakes) / max(float(mistakes) + 5.0, 1.0),
+			0.0, 1.0
+		)
+	
+	# S = w_a · A + w_s · (1 - T_r/T_max) - w_e · E
+	var score: float = (
+		SCORE_WEIGHT_ACCURACY * acc +
+		SCORE_WEIGHT_SPEED * speed -
+		SCORE_WEIGHT_ERRORS * err
+	)
+	
+	score = clamp(score, 0.0, 1.0)
+	
+	if enable_verbose_logging:
+		print("📊 Raw Score: S=%.3f (A=%.2f, Spd=%.2f, E=%.2f)" % [
+			score, acc, speed, err
+		])
+		print("   %.1f×%.2f + %.1f×%.2f - %.1f×%.2f = %.3f" % [
+			SCORE_WEIGHT_ACCURACY, acc,
+			SCORE_WEIGHT_SPEED, speed,
+			SCORE_WEIGHT_ERRORS, err, score
+		])
+	
+	return score
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # INITIALIZATION
@@ -365,17 +212,10 @@ func _initialize_session() -> void:
 	performance_window.clear()
 	performance_history.clear()
 	difficulty_changes.clear()
-	posttest_answers.clear()
 	
 	# Reset flags
-	posttest_unlocked_flag = false
-	posttest_started = false
-	posttest_completed_flag = false
 	games_since_adaptation = 0
 	total_score = 0
-	
-	# Shuffle questions for variety
-	posttest_questions.shuffle()
 
 func _generate_session_id() -> String:
 	var timestamp = Time.get_unix_time_from_system()
@@ -386,34 +226,68 @@ func _generate_session_id() -> String:
 # FORMATIVE ASSESSMENT - PERFORMANCE TRACKING
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-## Add performance data from a completed mini-game
-func add_performance(accuracy: float, reaction_time: int, mistakes: int, game_name: String = "") -> void:
+## ═══════════════════════════════════════════════════════════════════════════
+## ADD PERFORMANCE - Record player's game results into the Rolling Window
+## ═══════════════════════════════════════════════════════════════════════════
+## ELI5: Think of the Rolling Window like a notebook that only keeps the last
+##      5 pages. When you write a 6th page, the oldest page gets removed.
+##      This way, we always focus on RECENT performance, not old games from
+##      hours ago. Recent games tell us more about the player's CURRENT skill.
+## ═══════════════════════════════════════════════════════════════════════════
+func add_performance(
+	accuracy: float, reaction_time: int,
+	mistakes: int, game_name: String = ""
+) -> void:
 	var start_time = Time.get_ticks_msec()
+
+	# Instrument for ISO 25010 latency measurement
+	var _lat_start = 0
+	if PerformanceProfiler:
+		_lat_start = PerformanceProfiler.begin_latency_measurement()
 	
+	# ────────────────────────────────────────────────────────────────────────
+	# STEP 1: Package the performance data from this game
+	# ────────────────────────────────────────────────────────────────────────
+	# ELI5: Create a "report card" for this game with the score, time, and mistakes
 	var performance_data = {
-		"accuracy": clamp(accuracy, 0.0, 1.0),
-		"reaction_time": reaction_time,
-		"mistakes": mistakes,
-		"timestamp": Time.get_unix_time_from_system(),
-		"difficulty": current_difficulty,
-		"game_name": game_name
+		"accuracy": clamp(accuracy, 0.0, 1.0),       # How well they did (0% to 100%)
+		"reaction_time": reaction_time,              # How long it took (in milliseconds)
+		"mistakes": mistakes,                        # How many errors they made
+		"timestamp": Time.get_unix_time_from_system(), # When this game happened
+		"difficulty": current_difficulty,            # What difficulty level it was
+		"game_name": game_name                       # Which game they played
 	}
 	
-	# Add to history (complete record)
+	# ────────────────────────────────────────────────────────────────────────
+	# STEP 2: Save to complete history (for research data)
+	# ────────────────────────────────────────────────────────────────────────
+	# ELI5: Like keeping ALL your report cards in a big folder forever
 	performance_history.append(performance_data)
 	
-	# Add to rolling window (FIFO - max 5)
+	# ────────────────────────────────────────────────────────────────────────
+	# STEP 3: Add to ROLLING WINDOW (FIFO = First In, First Out)
+	# ────────────────────────────────────────────────────────────────────────
+	# ELI5: This is the MAGIC PART! The Rolling Window only remembers the last
+	#       5 games (window_size = 5). When we add a 6th game, the OLDEST game
+	#       automatically gets removed. It's like a sliding window that moves
+	#       forward through time, always showing the 5 most recent games.
+	#
+	# WHY? Because if a player struggled 10 games ago but is doing great now,
+	#      we want the difficulty to match their CURRENT skill, not their old skill!
 	performance_window.append(performance_data)
 	if performance_window.size() > window_size:
-		performance_window.pop_front()
+		performance_window.pop_front()  # Remove the oldest game from the window
 	
-	# Update total score
+	# ────────────────────────────────────────────────────────────────────────
+	# STEP 4: Calculate Raw Game Score (Paper: S = w_a·A + w_s·(1 - T_r/T_max) - w_e·E)
+	# ────────────────────────────────────────────────────────────────────────
+	var raw_score = calculate_raw_game_score(accuracy, reaction_time, mistakes)
 	var difficulty_multiplier = 1.0
 	if current_difficulty == "Medium":
 		difficulty_multiplier = 1.5
 	elif current_difficulty == "Hard":
 		difficulty_multiplier = 2.0
-	var points = int(accuracy * 100 * difficulty_multiplier)
+	var points = int(raw_score * 100 * difficulty_multiplier)
 	total_score += points
 	
 	# Emit signal
@@ -422,14 +296,50 @@ func add_performance(accuracy: float, reaction_time: int, mistakes: int, game_na
 	# Check for behavioral milestones
 	_check_behavioral_milestones()
 	
-	# Adapt difficulty if needed
+	# ────────────────────────────────────────────────────────────────────────
+	# STEP 5: Check if we should ADAPT THE DIFFICULTY
+	# ────────────────────────────────────────────────────────────────────────
+	# ELI5: We wait for the FULL Rolling Window (5 games) before adapting.
+	#       This is because the paper defines window_size = 5 as the
+	#       empirically-validated balance (Lin et al., 2025).
+	#       Once we have 5 games, we evaluate EVERY game from that point on,
+	#       since the FIFO window naturally slides, always reflecting the
+	#       5 most recent games.
+	#
+	# Example: Games 1-4: collecting data, no adaptation yet.
+	#          Game 5: FIRST adaptation! Full window available.
+	#          Games 6, 7, 8...: re-evaluate each game (window slides).
 	games_since_adaptation += 1
-	if games_since_adaptation >= adaptation_frequency and performance_window.size() >= min_games_before_adaptation:
-		_adapt_difficulty()
+	var ready_to_adapt = (
+		games_since_adaptation >= adaptation_frequency
+		and performance_window.size() >= min_games_before_adaptation)
+	if ready_to_adapt:
+		print("\n🔬 ALGORITHM TRIGGERED: Window full (%d/%d games). Evaluating Φ..." % [
+			performance_window.size(), window_size])
+		_adapt_difficulty()  # 🎯 THIS IS WHERE THE ALGORITHM RUNS!
 		games_since_adaptation = 0
+	else:
+		if performance_window.size() < min_games_before_adaptation:
+			print("⏳ Rolling Window: %d/%d games. Need %d more before algorithm activates." % [
+				performance_window.size(), window_size,
+				min_games_before_adaptation - performance_window.size()])
 	
-	# Check if post-test should be unlocked
-	_check_posttest_unlock()
+	# ────────────────────────────────────────────────────────────────────────
+	# STEP 6: Track consecutive successes for PROGRESSIVE DIFFICULTY
+	# ────────────────────────────────────────────────────────────────────────
+	# ELI5: If the player keeps succeeding at Hard difficulty, we increase
+	#       the progressive level, making the game progressively harder with
+	#       NO CEILING! The game can become infinitely difficult.
+	if accuracy >= 0.8:  # 80%+ accuracy = success
+		consecutive_successes += 1
+		# Every 3 consecutive successes at Hard difficulty increases progressive level
+		if current_difficulty == "Hard" and consecutive_successes >= 3:
+			progressive_level += 1
+			consecutive_successes = 0  # Reset counter
+			print("🔥 PROGRESSIVE LEVEL UP! Now at level %d - Game gets HARDER!" % progressive_level)
+	else:
+		# Failure resets the streak but doesn't decrease progressive level
+		consecutive_successes = 0
 	
 	# Performance logging
 	var elapsed = Time.get_ticks_msec() - start_time
@@ -439,118 +349,124 @@ func add_performance(accuracy: float, reaction_time: int, mistakes: int, game_na
 	# Emit algorithm metrics
 	algorithm_update.emit(_get_window_metrics())
 
+	# Record latency for ISO 25010 compliance
+	if PerformanceProfiler and _lat_start > 0:
+		PerformanceProfiler.end_latency_measurement(_lat_start, "AdaptiveDifficulty.add_performance")
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # RULE-BASED ALGORITHM - ROLLING WINDOW DECISION TREE
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+## ═══════════════════════════════════════════════════════════════════════════
+## ADAPT DIFFICULTY - The main algorithm runner
+## ═══════════════════════════════════════════════════════════════════════════
+## ELI5: This is where the magic happens! After collecting performance data,
+##      this function runs the 3-step algorithm:
+##      1. Calculate metrics (WMA, CP, Φ)
+##      2. Evaluate decision tree (Φ < 0.5? 0.5-0.85? > 0.85?)
+##      3. Apply new difficulty and notify the game
+## ═══════════════════════════════════════════════════════════════════════════
 func _adapt_difficulty() -> void:
+	# ────────────────────────────────────────────────────────────────────────
+	# SAFETY CHECK: Do we have enough data to make a decision?
+	# ────────────────────────────────────────────────────────────────────────
+	# ELI5: We need a full rolling window (5 games) before we can adapt
+	#       (min_games_before_adaptation = 5 = window_size, per paper).
+	#       This gives us enough data to calculate reliable trends!
 	if performance_window.size() < min_games_before_adaptation:
-		return
+		return  # Not enough data yet, wait for more games
 	
-	var old_difficulty = current_difficulty
+	# ────────────────────────────────────────────────────────────────────────
+	# STEP 1: Save current difficulty (to compare if it changes)
+	# ────────────────────────────────────────────────────────────────────────
+	var old_difficulty = current_difficulty  # Remember what difficulty we're at now
+	
+	# ────────────────────────────────────────────────────────────────────────
+	# STEP 2: Calculate window metrics (WMA, CP, Φ)
+	# ────────────────────────────────────────────────────────────────────────
+	# ELI5: Run the math on the rolling window to get the Proficiency Index (Φ)
+	#       This function returns: Φ, WMA, Penalty, σ, and other metrics
 	var metrics = _calculate_window_metrics()
+	
+	# ────────────────────────────────────────────────────────────────────────
+	# STEP 3: Evaluate decision tree (apply the 3 rules)
+	# ────────────────────────────────────────────────────────────────────────
+	# ELI5: Feed Φ into the decision tree:
+	#       - If Φ < 0.5 → Easy
+	#       - If Φ > 0.85 → Hard
+	#       - Otherwise → Medium
 	var decision_tree = _evaluate_decision_tree(metrics)
 	
-	# Apply decision
+	# ────────────────────────────────────────────────────────────────────────
+	# STEP 4: Apply the new difficulty
+	# ────────────────────────────────────────────────────────────────────────
+	# ELI5: Actually change the difficulty level that the game will use next
 	current_difficulty = decision_tree["new_difficulty"]
 	
-	# Log the change
+	# ────────────────────────────────────────────────────────────────────────
+	# STEP 5: Log this adaptation event (for research/analysis)
+	# ────────────────────────────────────────────────────────────────────────
+	# ELI5: Create a "change report" with timestamp, old/new difficulty, and reason
 	var change_data = {
-		"timestamp": Time.get_unix_time_from_system(),
-		"old_difficulty": old_difficulty,
-		"new_difficulty": current_difficulty,
-		"reason": decision_tree["reason"],
-		"metrics": metrics,
-		"decision_path": decision_tree["path"]
+		"timestamp": Time.get_unix_time_from_system(),  # When did this happen?
+		"old_difficulty": old_difficulty,               # What was it before?
+		"new_difficulty": current_difficulty,           # What is it now?
+		"reason": decision_tree["reason"],              # Why did we change it?
+		"metrics": metrics,                             # All the math (Φ, WMA, CP, σ)
+		"decision_path": decision_tree["path"]          # Which rule was triggered?
 	}
-	difficulty_changes.append(change_data)
+	difficulty_changes.append(change_data)  # Save to history for later analysis
 	
-	# Emit signal if changed
+	# ────────────────────────────────────────────────────────────────────────
+	# STEP 6: Emit signal if difficulty changed
+	# ────────────────────────────────────────────────────────────────────────
+	# ELI5: Tell other parts of the game "Hey! Difficulty changed from Easy to Medium!"
+	#       This lets the game update UI, sound effects, visual feedback, etc.
 	if old_difficulty != current_difficulty:
+		# Only emit if it actually changed (not Medium → Medium)
 		difficulty_changed.emit(old_difficulty, current_difficulty, decision_tree["reason"])
 		
+		# If research logging is enabled, save detailed CSV data
 		if enable_research_logging:
 			_log_difficulty_change(change_data)
 	
 	# ═══════════════════════════════════════════════════════════════════════
 	# VISUAL ALGORITHM DEBUGGING (Always print, for research visibility)
 	# ═══════════════════════════════════════════════════════════════════════
+	# ELI5: Show a clean, easy-to-read output in the console proving the algorithm works
 	_print_algorithm_debug(metrics, decision_tree, old_difficulty)
 
-func _print_algorithm_debug(metrics: Dictionary, decision: Dictionary, old_difficulty: String) -> void:
+func _print_algorithm_debug(
+	metrics: Dictionary, decision: Dictionary,
+	old_difficulty: String
+) -> void:
 	"""
-	Prints a visual debug box showing the algorithm state after each adaptation.
-	This helps researchers verify the algorithm is working correctly.
+	SIMPLIFIED OUTPUT for panelist demonstration
+	Shows key algorithm metrics in an easy-to-read format
 	"""
-	var phi = metrics.get("proficiency_index", 0.0)
-	var wma = metrics.get("weighted_accuracy", 0.0)
-	var penalty = metrics.get("consistency_penalty", 0.0)
-	var sigma = metrics.get("std_deviation", 0.0)
-	var new_diff = decision.get("new_difficulty", "Medium")
-	var reason = decision.get("reason", "")
+	# Get the key values from the algorithm calculation
+	var phi = metrics.get("proficiency_index", 0.0)  # Main metric: Proficiency Index
+	var new_diff = decision.get("new_difficulty", "Medium")  # Result: New difficulty
 	
-	# Build window accuracy string
-	var window_acc_str = ""
-	for i in range(performance_window.size()):
-		var acc = performance_window[i]["accuracy"]
-		var weight = i + 1
-		if i > 0:
-			window_acc_str += ", "
-		window_acc_str += "%.0f%% (w=%d)" % [acc * 100, weight]
-	
-	# Difficulty indicator
-	var difficulty_arrow = ""
+	# Determine what happened with difficulty
+	var change_icon = "➡️"  # Default: no change
 	if old_difficulty != new_diff:
-		if (old_difficulty == "Easy" and new_diff == "Medium") or (old_difficulty == "Medium" and new_diff == "Hard"):
-			difficulty_arrow = "  ⬆️ HARDER"
-		elif (old_difficulty == "Hard" and new_diff == "Medium") or (old_difficulty == "Medium" and new_diff == "Easy"):
-			difficulty_arrow = "  ⬇️ EASIER"
+		var went_up = (
+			(old_difficulty == "Easy" and new_diff == "Medium")
+			or (old_difficulty == "Medium" and new_diff == "Hard"))
+		if went_up:
+			change_icon = "⬆️"  # Difficulty increased
 		else:
-			difficulty_arrow = "  🔄 CHANGE"
-	else:
-		difficulty_arrow = "  ➡️ MAINTAIN"
+			change_icon = "⬇️"  # Difficulty decreased
 	
-	# Print the debug box
-	print("")
-	print("╔══════════════════════════════════════════════════════════════════════════╗")
-	print("║        🎮 ADAPTIVE DIFFICULTY ALGORITHM - VISUAL DEBUG                  ║")
-	print("╠══════════════════════════════════════════════════════════════════════════╣")
-	print("║  Game Count: %d games in window (of %d max)                              ║" % [performance_window.size(), self.window_size])
-	print("╠──────────────────────────────────────────────────────────────────────────╣")
-	print("║  📊 ROLLING WINDOW ACCURACY (Weighted):                                  ║")
-	print("║  [%s]" % window_acc_str)
-	print("╠──────────────────────────────────────────────────────────────────────────╣")
-	print("║  🧮 PROFICIENCY INDEX CALCULATION:                                       ║")
-	print("║                                                                          ║")
-	print("║     Φ (Phi) = WMA - CP                                                   ║")
-	print("║                                                                          ║")
-	print("║     WMA (Weighted Moving Average) = %.4f                                ║" % wma)
-	print("║     σ (Standard Deviation)        = %.1f ms                             ║" % sigma)
-	print("║     CP (Consistency Penalty)      = min(σ/5000, 0.2) = %.4f            ║" % penalty)
-	print("║                                                                          ║")
-	print("║     Φ = %.4f - %.4f = %.4f                                          ║" % [wma, penalty, phi])
-	print("╠──────────────────────────────────────────────────────────────────────────╣")
-	print("║  🎯 DECISION TREE:                                                       ║")
-	print("║                                                                          ║")
-	print("║     Φ < 0.50  → Easy   (Struggling/Erratic)                             ║")
-	print("║     Φ > 0.85  → Hard   (Mastery)                                        ║")
-	print("║     else      → Medium (Flow State)                                     ║")
-	print("║                                                                          ║")
-	print("║     Current Φ = %.4f                                                    ║" % phi)
-	if phi < 0.5:
-		print("║     [✓] Φ < 0.50 = TRUE  → EASY                                         ║")
-	elif phi > 0.85:
-		print("║     [✓] Φ > 0.85 = TRUE  → HARD                                         ║")
-	else:
-		print("║     [✓] 0.50 ≤ Φ ≤ 0.85  → MEDIUM                                       ║")
-	print("╠──────────────────────────────────────────────────────────────────────────╣")
-	print("║  📈 RESULT: %s → %s%s" % [old_difficulty.to_upper(), new_diff.to_upper(), difficulty_arrow])
-	print("║                                                                          ║")
-	print("║  💬 %s" % reason.substr(0, 60))
-	if reason.length() > 60:
-		print("║     %s" % reason.substr(60))
-	print("╚══════════════════════════════════════════════════════════════════════════╝")
-	print("")
+	# Simplified output - just difficulty and calculation
+	print("🎮 Game #%d | Φ=%.3f | %s %s %s" % [
+		performance_history.size(),
+		phi,
+		old_difficulty.to_upper(),
+		change_icon,
+		new_diff.to_upper()
+	])
 
 func _calculate_window_metrics() -> Dictionary:
 	"""
@@ -651,22 +567,57 @@ func _calculate_window_metrics() -> Dictionary:
 	# ═══════════════════════════════════════════════════════════════════════
 	# STEP 1: Calculate Weighted Moving Average (WMA) of Accuracy
 	# ═══════════════════════════════════════════════════════════════════════
+	# ELI5: Imagine grading a student, but recent tests matter MORE than old tests.
+	#       If the window has 5 games:
+	#         - Oldest game (Game 1) gets weight = 1
+	#         - Game 2 gets weight = 2
+	#         - Game 3 gets weight = 3
+	#         - Game 4 gets weight = 4
+	#         - Newest game (Game 5) gets weight = 5  ← This matters the MOST!
+	#
+	# Example:
+	#   Game 1: 50% × weight 1 = 0.50
+	#   Game 2: 60% × weight 2 = 1.20
+	#   Game 3: 70% × weight 3 = 2.10
+	#   Game 4: 80% × weight 4 = 3.20
+	#   Game 5: 90% × weight 5 = 4.50
+	#   ────────────────────────────────────────
+	#   Total = 11.50
+	#   Sum of weights = (1+2+3+4+5) = 15
+	#   WMA = 11.50 / 15 = 0.767 (76.7%)
+	#
+	# Compare to simple average: (50%+60%+70%+80%+90%) / 5 = 70%
+	# The WMA is higher because we give MORE CREDIT to the recent 90% game!
+	# ═══════════════════════════════════════════════════════════════════════
 	
-	var weighted_sum: float = 0.0      # Σ(w_i * x_i)
-	var weight_sum: float = 0.0        # Σ(w_i)
+	var weighted_sum: float = 0.0      # Σ(w_i * x_i) - Running total of weighted scores
+	var weight_sum: float = 0.0        # Σ(w_i) - Total of all weights used
 	
 	for i in range(perf_window_size):
-		var weight: float = float(i + 1)  # Linear weights: 1, 2, 3, 4, 5
+		var weight: float = float(i + 1)  # Linear weights: 1, 2, 3 (recent = higher)
 		var accuracy: float = performance_window[i]["accuracy"]
 		
 		weighted_sum += weight * accuracy
 		weight_sum += weight
 	
-	# Weighted Moving Average = Σ(w_i * x_i) / Σ(w_i)
+	# Final calculation: Weighted Moving Average = Σ(w_i * x_i) / Σ(w_i)
 	var weighted_accuracy: float = weighted_sum / weight_sum
 	
 	# ═══════════════════════════════════════════════════════════════════════
 	# STEP 2: Calculate Standard Deviation (σ) of Reaction Time
+	# ═══════════════════════════════════════════════════════════════════════
+	# ELI5: Standard Deviation measures how "jumpy" or "stable" the player is.
+	#       If their game times are very different, they might be:
+	#         - Still learning (inconsistent)
+	#         - Guessing randomly (erratic)
+	#         - Getting distracted (unstable)
+	#
+	# Example:
+	#   Player A: [10s, 11s, 10s] - Very consistent! Low σ
+	#   Player B: [5s, 20s, 8s]  - All over the place! High σ
+	#
+	# We PENALIZE high σ because even if they have good average accuracy,
+	# erratic timing suggests they don't truly understand the task yet.
 	# ═══════════════════════════════════════════════════════════════════════
 	
 	# First, calculate mean (μ) of reaction times
@@ -674,32 +625,77 @@ func _calculate_window_metrics() -> Dictionary:
 	for perf in performance_window:
 		total_time += float(perf["reaction_time"])
 	
-	var mean_time: float = total_time / float(perf_window_size)
+	var mean_time: float = total_time / float(perf_window_size)  # Average time
 	
 	# Second, calculate variance (σ²)
 	# Variance = Σ(x_i - μ)² / N
+	# ELI5: For each game, see how far it is from the average, square it,
+	#       then average all those squared differences.
 	var variance: float = 0.0
 	for perf in performance_window:
 		var deviation: float = float(perf["reaction_time"]) - mean_time
-		variance += deviation * deviation  # (x_i - μ)²
+		variance += deviation * deviation  # (x_i - μ)² - Square to make all positive
 	
 	variance /= float(perf_window_size)
 	
 	# Third, calculate standard deviation (σ)
 	# σ = sqrt(variance)
+	# ELI5: Take the square root to get back to original units (milliseconds)
 	var std_deviation: float = sqrt(variance)
 	
 	# ═══════════════════════════════════════════════════════════════════════
 	# STEP 3: Calculate Consistency Penalty
 	# ═══════════════════════════════════════════════════════════════════════
+	# ELI5: Convert the standard deviation into a penalty between 0.0 and 0.2
+	#
+	# Formula: penalty = min(σ / T_max_ms, 0.2)
+	#
+	# Why divide by T_max_ms? This normalizes σ RELATIVE to the game's time window.
+	# A σ of 2000ms is normal variation in a 20s game, but very erratic in a 10s game.
+	# Why cap at 0.2? We don't want to penalize TOO harshly (max 20% reduction).
+	#
+	# Example (Easy, T_max = 20000ms):
+	#   σ = 2000ms → penalty = 2000/20000 = 0.10 (10% penalty)
+	#   σ = 4000ms → penalty = 4000/20000 = 0.20 (20% penalty - capped)
+	# Example (Hard, T_max = 10000ms):
+	#   σ = 2000ms → penalty = 2000/10000 = 0.20 (20% penalty - harder to stay!)
+	# ═══════════════════════════════════════════════════════════════════════
 	
 	# Normalize standard deviation to penalty range [0.0, 0.2]
 	# High σ → High penalty (erratic timing)
 	# Low σ → Low penalty (consistent timing)
-	var consistency_penalty: float = min(std_deviation / 5000.0, 0.2)
+	# Paper: CP = min(σ / normalizer, 0.2)
+	# Normalizer scaled to current difficulty's time_limit so CP fairly
+	# reflects timing variability RELATIVE to the available time window.
+	# (e.g., σ=2s is very erratic in a 10s game, but normal in a 20s game)
+	var time_limit_ms: float = float(DIFFICULTY_SETTINGS[current_difficulty]["time_limit"]) * 1000.0
+	var consistency_penalty: float = min(std_deviation / time_limit_ms, 0.2)
 	
 	# ═══════════════════════════════════════════════════════════════════════
-	# STEP 4: Calculate Proficiency Index (Φ)
+	# STEP 4: Calculate Proficiency Index (Φ - Greek letter Phi)
+	# ═══════════════════════════════════════════════════════════════════════
+	# ELI5: This is THE MAGIC NUMBER that determines difficulty!
+	#
+	# Formula: Φ = WMA - Penalty
+	#
+	# Translation: Player's TRUE skill = How well they do - How erratic they are
+	#
+	# Example 1: GOOD PLAYER
+	#   WMA = 0.85 (85% average accuracy, recent games weighted higher)
+	#   Penalty = 0.05 (very consistent timing)
+	#   Φ = 0.85 - 0.05 = 0.80  ← High proficiency! Make it harder!
+	#
+	# Example 2: STRUGGLING PLAYER
+	#   WMA = 0.50 (50% average accuracy)
+	#   Penalty = 0.15 (erratic timing, still learning)
+	#   Φ = 0.50 - 0.15 = 0.35  ← Low proficiency! Make it easier!
+	#
+	# Example 3: TRICKY CASE - "Lucky but Unstable"
+	#   WMA = 0.70 (70% accuracy - looks okay)
+	#   Penalty = 0.20 (VERY erratic - guessing?)
+	#   Φ = 0.70 - 0.20 = 0.50  ← Borderline! Not truly proficient yet.
+	#
+	# This ONE NUMBER captures both skill AND consistency!
 	# ═══════════════════════════════════════════════════════════════════════
 	
 	# Φ = WMA - Penalty
@@ -830,7 +826,13 @@ func _evaluate_decision_tree(metrics: Dictionary) -> Dictionary:
 	var path: Array[String] = []
 	
 	# ═══════════════════════════════════════════════════════════════════════
-	# RULE 1: STRUGGLING / ERRATIC → Easy
+	# RULE 1: STRUGGLING / ERRATIC (Φ < 0.5) → Easy Difficulty
+	# ═══════════════════════════════════════════════════════════════════════
+	# ELI5: If Φ is below 0.5, the player needs help!
+	#       This could mean:
+	#       A) They're genuinely struggling (low accuracy)
+	#       B) They're erratic/guessing (high inconsistency penalty)
+	#       Either way → Make the game EASIER so they can learn
 	# ═══════════════════════════════════════════════════════════════════════
 	
 	if proficiency < 0.5:
@@ -839,38 +841,75 @@ func _evaluate_decision_tree(metrics: Dictionary) -> Dictionary:
 		# Detailed diagnostic reasoning
 		if weighted_accuracy < 0.6:
 			# Primary issue: Poor performance
-			reason = "Struggling - Low proficiency (Φ=%.2f): Poor weighted accuracy (%.2f) indicates difficulty understanding tasks" % [proficiency, weighted_accuracy]
+			reason = (
+				"Struggling (Φ=%.2f): Poor WMA (%.2f)"
+				+ " indicates difficulty with tasks"
+			) % [proficiency, weighted_accuracy]
 		elif consistency_penalty > 0.15:
 			# Primary issue: Erratic timing
-			reason = "Erratic - Low proficiency (Φ=%.2f): High consistency penalty (%.2f, σ=%.0fms) indicates unstable performance" % [proficiency, consistency_penalty, std_deviation]
+			reason = (
+				"Erratic (Φ=%.2f): High CP (%.2f,"
+				+ " σ=%.0fms) unstable performance"
+			) % [proficiency, consistency_penalty,
+				std_deviation]
 		else:
 			# General struggling
-			reason = "Support needed - Proficiency index (Φ=%.2f) below threshold (0.5)" % proficiency
+			reason = (
+				"Support needed - Φ=%.2f"
+				+ " below threshold (0.5)"
+			) % proficiency
 		
 		path.append("Rule 1: STRUGGLING/ERRATIC (Φ < 0.5) → Easy")
-		path.append("  └─ WMA: %.2f, Penalty: %.2f, σ: %.0fms" % [weighted_accuracy, consistency_penalty, std_deviation])
+		path.append(
+			"  └─ WMA: %.2f, Penalty: %.2f, σ: %.0fms"
+			% [weighted_accuracy, consistency_penalty,
+				std_deviation])
 	
 	# ═══════════════════════════════════════════════════════════════════════
-	# RULE 2: MASTERY + CONSISTENCY → Hard
+	# RULE 2: MASTERY + CONSISTENCY (Φ > 0.85) → Hard Difficulty
+	# ═══════════════════════════════════════════════════════════════════════
+	# ELI5: If Φ is above 0.85, the player is doing GREAT!
+	#       High Φ means:
+	#       - High accuracy in recent games (weighted higher)
+	#       - Consistent timing (low penalty)
+	#       → Make the game HARDER to keep them challenged and engaged!
 	# ═══════════════════════════════════════════════════════════════════════
 	
 	elif proficiency > 0.85:
 		new_difficulty = "Hard"
-		reason = "Mastery - High proficiency (Φ=%.2f): Strong weighted accuracy (%.2f) with low penalty (%.2f) shows consistent excellence" % [proficiency, weighted_accuracy, consistency_penalty]
+		reason = (
+			"Mastery (Φ=%.2f): Strong WMA (%.2f)"
+			+ " with low penalty (%.2f)"
+		) % [proficiency, weighted_accuracy,
+			consistency_penalty]
 		
 		path.append("Rule 2: MASTERY+CONSISTENCY (Φ > 0.85) → Hard")
-		path.append("  └─ WMA: %.2f, Penalty: %.2f, σ: %.0fms" % [weighted_accuracy, consistency_penalty, std_deviation])
+		path.append(
+			"  └─ WMA: %.2f, Penalty: %.2f, σ: %.0fms"
+			% [weighted_accuracy, consistency_penalty,
+				std_deviation])
 	
 	# ═══════════════════════════════════════════════════════════════════════
-	# RULE 3: FLOW STATE → Medium
+	# RULE 3: FLOW STATE (0.5 ≤ Φ ≤ 0.85) → Medium Difficulty
+	# ═══════════════════════════════════════════════════════════════════════
+	# ELI5: If Φ is between 0.5 and 0.85, the player is in the SWEET SPOT!
+	#       Not too easy, not too hard - this is called "Flow State"
+	#       where learning happens best.
+	#       → Keep difficulty at MEDIUM to maintain this optimal challenge
 	# ═══════════════════════════════════════════════════════════════════════
 	
 	else:
 		new_difficulty = "Medium"
-		reason = "Flow state - Optimal proficiency (Φ=%.2f): Balanced performance in learning zone" % proficiency
+		reason = (
+			"Flow state (Φ=%.2f): Balanced"
+			+ " performance in learning zone"
+		) % proficiency
 		
 		path.append("Rule 3: FLOW STATE (0.5 ≤ Φ ≤ 0.85) → Medium")
-		path.append("  └─ WMA: %.2f, Penalty: %.2f, σ: %.0fms" % [weighted_accuracy, consistency_penalty, std_deviation])
+		path.append(
+			"  └─ WMA: %.2f, Penalty: %.2f, σ: %.0fms"
+			% [weighted_accuracy, consistency_penalty,
+				std_deviation])
 	
 	# ═══════════════════════════════════════════════════════════════════════
 	# RETURN: Decision with detailed reasoning
@@ -902,8 +941,10 @@ func get_behavioral_metrics() -> Dictionary:
 		}
 	
 	# Learning Velocity (improvement rate)
-	var first_half = performance_history.slice(0, int(performance_history.size() / 2.0))
-	var second_half = performance_history.slice(int(performance_history.size() / 2.0), performance_history.size())
+	var half_idx = int(performance_history.size() / 2.0)
+	var first_half = performance_history.slice(0, half_idx)
+	var second_half = performance_history.slice(
+		half_idx, performance_history.size())
 	
 	var first_avg = _calculate_avg_accuracy(first_half)
 	var second_avg = _calculate_avg_accuracy(second_half)
@@ -982,260 +1023,7 @@ func _has_milestone(milestone: String) -> bool:
 func _add_milestone(milestone: String) -> void:
 	_milestones_achieved.append(milestone)
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# SUMMATIVE ASSESSMENT - POST-TEST SYSTEM
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-func _check_posttest_unlock() -> void:
-	if posttest_unlocked_flag:
-		return
-	
-	var games_played = performance_history.size()
-	
-	if total_score >= posttest_min_score or games_played >= posttest_min_games:
-		posttest_unlocked_flag = true
-		posttest_unlocked.emit()
-		
-		if enable_verbose_logging:
-			print("🎓 POST-TEST UNLOCKED (Score: %d, Games: %d)" % [total_score, games_played])
-
-func is_posttest_unlocked() -> bool:
-	return posttest_unlocked_flag
-
-func get_posttest_questions() -> Array:
-	return posttest_questions
-
-func start_posttest() -> void:
-	if not posttest_unlocked_flag:
-		push_warning("Post-test not unlocked yet!")
-		return
-	
-	posttest_started = true
-	posttest_start_time = int(Time.get_unix_time_from_system())
-	current_question_start_time = int(Time.get_unix_time_from_system())
-	posttest_answers.clear()
-	
-	if enable_verbose_logging:
-		print("📝 POST-TEST STARTED")
-
-func submit_posttest_answer(question_id: int, answer_index: int) -> void:
-	if not posttest_started:
-		push_warning("Post-test not started!")
-		return
-	
-	var question = _get_question_by_id(question_id)
-	if question == null:
-		push_warning("Question not found: %d" % question_id)
-		return
-	
-	var time_taken = Time.get_unix_time_from_system() - current_question_start_time
-	var is_correct = (answer_index == question["correct_answer"])
-	
-	var answer_data = {
-		"question_id": question_id,
-		"category": question["category"],
-		"answer_selected": answer_index,
-		"correct_answer": question["correct_answer"],
-		"is_correct": is_correct,
-		"time_to_answer": time_taken,
-		"related_minigame": question["related_minigame"],
-		"timestamp": Time.get_unix_time_from_system()
-	}
-	
-	posttest_answers.append(answer_data)
-	
-	# Emit signal
-	posttest_question_answered.emit(question_id, is_correct, time_taken)
-	
-	# Reset timer for next question
-	current_question_start_time = int(Time.get_unix_time_from_system())
-	
-	# Check if all questions answered
-	if posttest_answers.size() >= total_posttest_questions:
-		_complete_posttest()
-
-func _get_question_by_id(id: int) -> Dictionary:
-	for q in posttest_questions:
-		if q["id"] == id:
-			return q
-	return {}
-
-func _complete_posttest() -> void:
-	posttest_completed_flag = true
-	
-	var results = get_posttest_results()
-	var correct = results["correct_answers"]
-	var total = results["total_questions"]
-	var percentage = results["percentage"]
-	
-	# Calculate correlation
-	var correlation_data = calculate_correlation()
-	
-	# Emit signals
-	posttest_completed.emit(correct, total, percentage)
-	correlation_calculated.emit(
-		correlation_data["gameplay_performance"],
-		correlation_data["posttest_knowledge"],
-		correlation_data["correlation_coefficient"]
-	)
-	
-	if enable_research_logging:
-		_log_posttest_results(results, correlation_data)
-
-func get_posttest_results() -> Dictionary:
-	if posttest_answers.is_empty():
-		return {
-			"total_score": 0,
-			"correct_answers": 0,
-			"total_questions": 0,
-			"percentage": 0.0,
-			"category_breakdown": {},
-			"avg_time_per_question": 0.0
-		}
-	
-	var correct_count = 0
-	var total_time = 0.0
-	var category_stats = {}
-	
-	for answer in posttest_answers:
-		if answer["is_correct"]:
-			correct_count += 1
-		
-		total_time += answer["time_to_answer"]
-		
-		# Category breakdown
-		var cat = answer["category"]
-		if not category_stats.has(cat):
-			category_stats[cat] = {"correct": 0, "total": 0}
-		category_stats[cat]["total"] += 1
-		if answer["is_correct"]:
-			category_stats[cat]["correct"] += 1
-	
-	# Calculate category percentages
-	var category_breakdown = {}
-	for cat in category_stats:
-		var stats = category_stats[cat]
-		category_breakdown[cat] = (float(stats["correct"]) / stats["total"]) * 100.0
-	
-	var percentage = (float(correct_count) / posttest_answers.size()) * 100.0
-	
-	return {
-		"total_score": int(percentage),
-		"correct_answers": correct_count,
-		"total_questions": posttest_answers.size(),
-		"percentage": percentage,
-		"category_breakdown": category_breakdown,
-		"avg_time_per_question": total_time / posttest_answers.size()
-	}
-
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# CORRELATION ANALYSIS (Research Validation)
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-func calculate_correlation() -> Dictionary:
-	gameplay_performance_score = _calculate_overall_gameplay_performance()
-	posttest_knowledge_score = _get_posttest_percentage()
-	correlation_coefficient = _pearson_correlation()
-	
-	return {
-		"gameplay_performance": gameplay_performance_score,
-		"posttest_knowledge": posttest_knowledge_score,
-		"correlation_coefficient": correlation_coefficient,
-		"interpretation": _interpret_correlation(correlation_coefficient),
-		"sample_size": performance_history.size(),
-		"valid_correlation": performance_history.size() >= 10
-	}
-
-func _calculate_overall_gameplay_performance() -> float:
-	if performance_history.is_empty():
-		return 0.0
-	
-	var total_accuracy = 0.0
-	for perf in performance_history:
-		total_accuracy += perf["accuracy"]
-	
-	return (total_accuracy / performance_history.size()) * 100.0
-
-func _get_posttest_percentage() -> float:
-	var results = get_posttest_results()
-	return results["percentage"]
-
-func _pearson_correlation() -> float:
-	# Simplified correlation: compare gameplay performance to post-test score
-	# For proper Pearson correlation, we'd need paired data points
-	# Here we're doing a basic comparison
-	
-	if performance_history.is_empty() or posttest_answers.is_empty():
-		return 0.0
-	
-	# Calculate per-game correlation where possible
-	var correlations = []
-	
-	for answer in posttest_answers:
-		var related_game = answer["related_minigame"]
-		var game_performance = _get_average_performance_for_game(related_game)
-		var test_performance = 1.0 if answer["is_correct"] else 0.0
-		
-		correlations.append({
-			"gameplay": game_performance,
-			"test": test_performance
-		})
-	
-	if correlations.is_empty():
-		return 0.0
-	
-	# Calculate Pearson correlation coefficient
-	var n = correlations.size()
-	var sum_x = 0.0
-	var sum_y = 0.0
-	var sum_xy = 0.0
-	var sum_x2 = 0.0
-	var sum_y2 = 0.0
-	
-	for pair in correlations:
-		var x = pair["gameplay"]
-		var y = pair["test"]
-		sum_x += x
-		sum_y += y
-		sum_xy += x * y
-		sum_x2 += x * x
-		sum_y2 += y * y
-	
-	var numerator = n * sum_xy - sum_x * sum_y
-	var denominator = sqrt((n * sum_x2 - sum_x * sum_x) * (n * sum_y2 - sum_y * sum_y))
-	
-	if denominator == 0:
-		return 0.0
-	
-	return numerator / denominator
-
-func _get_average_performance_for_game(game_name: String) -> float:
-	var relevant_games = []
-	for perf in performance_history:
-		if perf.get("game_name", "") == game_name:
-			relevant_games.append(perf)
-	
-	if relevant_games.is_empty():
-		# Fallback to overall average
-		return _calculate_overall_gameplay_performance() / 100.0
-	
-	var total = 0.0
-	for game in relevant_games:
-		total += game["accuracy"]
-	
-	return total / relevant_games.size()
-
-func _interpret_correlation(r: float) -> String:
-	var abs_r = abs(r)
-	
-	if abs_r >= 0.7:
-		return "STRONG correlation - Algorithm successfully facilitated learning"
-	elif abs_r >= 0.4:
-		return "MODERATE correlation - Some learning transfer occurred"
-	elif abs_r >= 0.2:
-		return "WEAK correlation - Limited learning transfer"
-	else:
-		return "NO correlation - Gameplay did not translate to knowledge"
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # DIFFICULTY SETTINGS ACCESS
@@ -1245,7 +1033,112 @@ func get_current_difficulty() -> String:
 	return current_difficulty
 
 func get_difficulty_settings() -> Dictionary:
-	return DIFFICULTY_SETTINGS[current_difficulty].duplicate()
+	var base_settings = DIFFICULTY_SETTINGS[current_difficulty].duplicate()
+	
+	# Apply progressive difficulty multipliers (NO CEILING!)
+	# The better the player performs, the harder it gets - infinitely!
+	if progressive_level > 0:
+		# Each progressive level makes the game harder
+		var progression_multiplier = 1.0 + (progressive_level * 0.15)  # +15% per level
+		
+		# Speed increases exponentially
+		base_settings["speed_multiplier"] *= progression_multiplier
+		
+		# Time limit decreases (minimum 3 seconds to keep it playable)
+		var new_limit = int(
+			base_settings["time_limit"] / progression_multiplier)
+		base_settings["time_limit"] = max(3, new_limit)
+		
+		# Task complexity increases
+		base_settings["task_complexity"] += progressive_level
+		
+		# Item count increases (more things to manage)
+		base_settings["item_count"] += progressive_level * 2
+		
+		# Distractors increase
+		base_settings["distractors"] += progressive_level
+		
+		# Add progressive level indicator
+		base_settings["progressive_level"] = progressive_level
+		base_settings["progression_bonus"] = int(
+			(progression_multiplier - 1.0) * 100)
+	else:
+		base_settings["progressive_level"] = 0
+		base_settings["progression_bonus"] = 0
+	
+	return base_settings
+
+## ═══════════════════════════════════════════════════════════════════════
+## GET ALGORITHM STATUS - For Panelist/Research Display
+## ═══════════════════════════════════════════════════════════════════════
+## ELI5: This function packages all the algorithm's current state into
+##       a dictionary that can be displayed in the UI or logged for research.
+##       Perfect for showing panelists "Here's what the algorithm is doing!"
+## ═══════════════════════════════════════════════════════════════════════
+func get_algorithm_status() -> Dictionary:
+	"""
+	Returns comprehensive algorithm state for research/demo purposes.
+	Use this to display the algorithm's work to panelists or in debug UI.
+	"""
+	var metrics = _get_window_metrics() if performance_window.size() > 0 else {}
+	
+	var status = {
+		# Current State
+		"current_difficulty": current_difficulty,
+		"games_in_window": performance_window.size(),
+		"games_until_next_adaptation": max(0, adaptation_frequency - games_since_adaptation),
+		"total_games_played": performance_history.size(),
+		
+		# Algorithm Metrics (if available)
+		"proficiency_index": metrics.get("proficiency_index", 0.0),
+		"weighted_accuracy": metrics.get("weighted_accuracy", 0.0),
+		"consistency_penalty": metrics.get("consistency_penalty", 0.0),
+		"std_deviation": metrics.get("std_deviation", 0.0),
+		
+		# Window Data (for visualization)
+		"window_accuracies": [],
+		"window_times": [],
+		
+		# Status Messages (human-readable)
+		"status_message": "",
+		"algorithm_active": performance_window.size() >= min_games_before_adaptation
+	}
+	
+	# Populate window data for visualization
+	for i in range(performance_window.size()):
+		var perf = performance_window[i]
+		status["window_accuracies"].append({
+			"accuracy": perf["accuracy"],
+			"weight": i + 1,
+			"game_name": perf.get("game_name", "Game")
+		})
+		status["window_times"].append(perf["reaction_time"])
+	
+	# Generate status message
+	if performance_window.size() < min_games_before_adaptation:
+		var games_left = (
+			min_games_before_adaptation
+			- performance_window.size())
+		status["status_message"] = (
+			"Rolling Window: %d/5 games collected."
+			+ " Play %d more to fill window and activate algorithm."
+		) % [performance_window.size(), games_left]
+	else:
+		var phi = status["proficiency_index"]
+		if phi < 0.5:
+			status["status_message"] = (
+				"Algorithm: STRUGGLING (Φ=%.2f)"
+				+ " → Easy difficulty") % phi
+		elif phi > 0.85:
+			status["status_message"] = (
+				"Algorithm: MASTERY (Φ=%.2f)"
+				+ " → Hard difficulty") % phi
+		else:
+			status["status_message"] = (
+				"Algorithm: FLOW STATE (Φ=%.2f)"
+				+ " → Medium difficulty") % phi
+	
+	return status
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # JUICE SYSTEM (Game Feel)
@@ -1261,7 +1154,7 @@ func get_screen_shake_intensity() -> float:
 	var effects = settings["chaos_effects"]
 	if "screen_shake_heavy" in effects:
 		return 1.0
-	elif "screen_shake_mild" in effects:
+	if "screen_shake_mild" in effects:
 		return 0.5
 	return 0.0
 
@@ -1299,7 +1192,7 @@ func export_complete_session() -> Dictionary:
 		"timestamp": Time.get_unix_time_from_system(),
 		"session_duration": Time.get_unix_time_from_system() - session_start_time,
 		
-		# Formative Data
+		# Gameplay Data
 		"gameplay": {
 			"total_games_played": performance_history.size(),
 			"total_score": total_score,
@@ -1309,20 +1202,6 @@ func export_complete_session() -> Dictionary:
 			"final_difficulty": current_difficulty,
 			"window_metrics": _get_window_metrics()
 		},
-		
-		# Summative Data
-		"posttest": {
-			"unlocked": posttest_unlocked_flag,
-			"completed": posttest_completed_flag,
-			"score": get_posttest_results()["total_score"],
-			"total_questions": total_posttest_questions,
-			"answers": posttest_answers,
-			"category_breakdown": get_posttest_results()["category_breakdown"],
-			"avg_time_per_question": get_posttest_results()["avg_time_per_question"]
-		},
-		
-		# Correlation Analysis
-		"research_validation": calculate_correlation(),
 		
 		# Algorithm Performance
 		"algorithm_stats": {
@@ -1428,28 +1307,4 @@ func _log_difficulty_change(change_data: Dictionary) -> void:
 		var settings = DIFFICULTY_SETTINGS["Hard"]
 		print("🎪 CHAOS EFFECTS: %s" % str(settings["chaos_effects"]))
 	
-	print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
-
-func _log_posttest_results(results: Dictionary, correlation: Dictionary) -> void:
-	if not enable_research_logging:
-		return
-	
-	print("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-	print("📝 POST-TEST RESULTS (Summative)")
-	print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-	print("📊 Score: %d/%d (%.1f%%)" % [results["correct_answers"], results["total_questions"], results["percentage"]])
-	print("")
-	print("📈 Category Breakdown:")
-	for category in results["category_breakdown"]:
-		var percentage = results["category_breakdown"][category]
-		print("  • %s: %.1f%%" % [category.capitalize(), percentage])
-	print("")
-	print("⏱️  Avg Time Per Question: %.1fs" % results["avg_time_per_question"])
-	print("")
-	print("🔗 CORRELATION ANALYSIS:")
-	print("  • Gameplay Performance: %.1f%%" % correlation["gameplay_performance"])
-	print("  • Post-Test Knowledge: %.1f%%" % correlation["posttest_knowledge"])
-	print("  • Correlation (r): %.2f" % correlation["correlation_coefficient"])
-	print("")
-	print("✅ VALIDATION: %s" % correlation["interpretation"])
 	print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")

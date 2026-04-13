@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://c8vqy7x3m5rkq"]
+
+[ext_resource type="Script" path="res://test/ExpressionStateChangesPropertyTest.gd" id="1_expression_property_test"]
+
+[node name="ExpressionStateChangesPropertyTest" type="Node"]
+script = ExtResource("1_expression_property_test")

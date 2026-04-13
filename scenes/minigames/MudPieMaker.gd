@@ -16,23 +16,23 @@ var fill_node: Polygon2D
 func _apply_difficulty_settings() -> void:
 	match current_difficulty:
 		"Easy":
-			target_min = 30.0
-			target_max = 70.0  # Wider green zone
+			target_min = 25.0
+			target_max = 75.0  # Very wide green zone
 			pour_speed = 30.0
 			drain_speed = 15.0
-			game_duration = 15.0
+			game_duration = 8.0
 		"Medium":
 			target_min = 35.0
 			target_max = 65.0
-			pour_speed = 40.0
-			drain_speed = 25.0
-			game_duration = 12.0
-		"Hard":
-			target_min = 40.0
-			target_max = 60.0  # Narrower green zone
-			pour_speed = 55.0
-			drain_speed = 35.0
+			pour_speed = 45.0
+			drain_speed = 28.0
 			game_duration = 10.0
+		"Hard":
+			target_min = 42.0
+			target_max = 58.0  # Very narrow green zone
+			pour_speed = 60.0
+			drain_speed = 40.0
+			game_duration = 12.0
 
 func _ready():
 	game_name = "Mud Pie Maker"

@@ -36,6 +36,14 @@ func _ready() -> void:
 	_update_translations()
 	_animate_entrance()
 	_start_character_animation()
+
+	# Start menu music
+	if AudioManager:
+		AudioManager.play_music("menu")
+	
+	# Apply mobile UI scaling if on mobile platform
+	if MobileUIManager and MobileUIManager.is_mobile_platform():
+		_apply_mobile_ui_scaling()
 	
 	# Connect to language changes
 	if Localization:
@@ -43,14 +51,26 @@ func _ready() -> void:
 
 	# Connect button hover/press signals for smooth animations
 	if play_button:
-		play_button.connect("mouse_entered", Callable(self, "_on_button_mouse_entered").bind(play_button))
-		play_button.connect("mouse_exited", Callable(self, "_on_button_mouse_exited").bind(play_button))
-		play_button.connect("pressed", Callable(self, "_on_button_pressed_anim").bind(play_button))
+		var cb_enter = Callable(self, "_on_button_mouse_entered")
+		play_button.connect("mouse_entered",
+			cb_enter.bind(play_button))
+		var cb_exit = Callable(self, "_on_button_mouse_exited")
+		play_button.connect("mouse_exited",
+			cb_exit.bind(play_button))
+		play_button.connect("pressed",
+			Callable(self, "_on_button_pressed_anim")
+			.bind(play_button))
 
 	if quit_button:
-		quit_button.connect("mouse_entered", Callable(self, "_on_button_mouse_entered").bind(quit_button))
-		quit_button.connect("mouse_exited", Callable(self, "_on_button_mouse_exited").bind(quit_button))
-		quit_button.connect("pressed", Callable(self, "_on_button_pressed_anim").bind(quit_button))
+		var cb_enter = Callable(self, "_on_button_mouse_entered")
+		quit_button.connect("mouse_entered",
+			cb_enter.bind(quit_button))
+		var cb_exit = Callable(self, "_on_button_mouse_exited")
+		quit_button.connect("mouse_exited",
+			cb_exit.bind(quit_button))
+		quit_button.connect("pressed",
+			Callable(self, "_on_button_pressed_anim")
+			.bind(quit_button))
 
 func _update_translations() -> void:
 	if not Localization:
@@ -75,41 +95,65 @@ func _start_character_animation() -> void:
 
 	# ROTATION - separate looping tween
 	var rotation_tween = create_tween().set_loops()
-	rotation_tween.tween_property(character, "rotation", 0.261799, 1.0).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
-	rotation_tween.tween_property(character, "rotation", 0.436332, 1.0).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	var rt1 = rotation_tween.tween_property(
+		character, "rotation", 0.261799, 1.0)
+	rt1.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	var rt2 = rotation_tween.tween_property(
+		character, "rotation", 0.436332, 1.0)
+	rt2.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
 
 	# UP / DOWN MOVEMENT (Y axis) - separate looping tween
 	var position_tween = create_tween().set_loops()
-	position_tween.tween_property(character, "position:y", 727.07, 1.0).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
-	position_tween.tween_property(character, "position:y", 750.0, 1.0).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	var pt1 = position_tween.tween_property(
+		character, "position:y", 727.07, 1.0)
+	pt1.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	var pt2 = position_tween.tween_property(
+		character, "position:y", 750.0, 1.0)
+	pt2.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
 
 	# Wave arms up and down
 	if left_arm and right_arm:
 		# LEFT ARM
 		var arm_tween = create_tween().set_loops()
-		arm_tween.tween_property(left_arm, "rotation", -5.565, 0.7).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
-		arm_tween.tween_property(left_arm, "rotation", -3.609, 0.7).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+		var at1 = arm_tween.tween_property(
+			left_arm, "rotation", -5.565, 0.7)
+		at1.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+		var at2 = arm_tween.tween_property(
+			left_arm, "rotation", -3.609, 0.7)
+		at2.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
 
 		# RIGHT ARM
 		var arm_tween2 = create_tween().set_loops()
-		arm_tween2.tween_property(right_arm, "rotation", -0.702, 0.7).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
-		arm_tween2.tween_property(right_arm, "rotation", -2.360, 0.7).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+		var at3 = arm_tween2.tween_property(
+			right_arm, "rotation", -0.702, 0.7)
+		at3.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+		var at4 = arm_tween2.tween_property(
+			right_arm, "rotation", -2.360, 0.7)
+		at4.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
 
 
 
 func _on_button_mouse_entered(btn: Button) -> void:
 	var t = create_tween()
-	t.tween_property(btn, "scale", Vector2(1.03, 1.03), 0.18).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	var tw = t.tween_property(
+		btn, "scale", Vector2(1.03, 1.03), 0.18)
+	tw.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 
 func _on_button_mouse_exited(btn: Button) -> void:
 	var t = create_tween()
-	t.tween_property(btn, "scale", Vector2(1, 1), 0.18).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	var tw = t.tween_property(
+		btn, "scale", Vector2(1, 1), 0.18)
+	tw.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 
 func _on_button_pressed_anim(btn: Button) -> void:
 	# quick press down then recover
 	var t = create_tween()
-	t.tween_property(btn, "scale", Vector2(0.98, 0.98), 0.06).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
-	t.tween_property(btn, "scale", Vector2(1.03, 1.03), 0.12).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	var tw1 = t.tween_property(
+		btn, "scale", Vector2(0.98, 0.98), 0.06)
+	tw1.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+	var tw2 = t.tween_property(
+		btn, "scale", Vector2(1.03, 1.03), 0.12)
+	tw2.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 
 func _on_play_button_pressed() -> void:
 	_play_button_sound()
@@ -133,7 +177,9 @@ func _on_play_button_pressed() -> void:
 	
 	# Simulate loading
 	var tween = create_tween()
-	tween.tween_property(progress_bar, "value", 100.0, 4.0).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+	var tw = tween.tween_property(
+		progress_bar, "value", 100.0, 4.0)
+	tw.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
 	tween.tween_callback(func():
 		text_timer.stop()
 		text_timer.queue_free()
@@ -162,5 +208,40 @@ func _on_quit_button_pressed() -> void:
 	get_tree().quit()
 
 func _play_button_sound() -> void:
-	# Placeholder for button sound
-	pass
+	if AudioManager:
+		AudioManager.play_click()
+
+# ═══════════════════════════════════════════════════════════════════
+# MOBILE UI SCALING
+# ═══════════════════════════════════════════════════════════════════
+
+func _apply_mobile_ui_scaling() -> void:
+	# Apply mobile-specific UI scaling to all UI elements.
+	# Scale main UI container
+	var ui_container = $UI/VBoxContainer
+	if ui_container:
+		MobileUIManager.apply_mobile_scaling(ui_container)
+	
+	# Scale individual buttons
+	if play_button:
+		MobileUIManager.apply_mobile_scaling(play_button)
+	if quit_button:
+		MobileUIManager.apply_mobile_scaling(quit_button)
+	
+	# Scale labels
+	if title_label:
+		MobileUIManager.apply_mobile_scaling(title_label)
+	if subtitle_label:
+		MobileUIManager.apply_mobile_scaling(subtitle_label)
+	
+	# Apply safe area margins to root UI container
+	var ui_root = $UI
+	if ui_root:
+		var margins = MobileUIManager.get_safe_area_margins()
+		LayoutManager.apply_safe_area_margins(ui_root, margins)
+	
+	# Enable haptic feedback for buttons
+	if TouchInputManager:
+		TouchInputManager.enable_haptics_for_scene(self)
+	
+	print("📱 Mobile UI scaling applied to MainMenu")

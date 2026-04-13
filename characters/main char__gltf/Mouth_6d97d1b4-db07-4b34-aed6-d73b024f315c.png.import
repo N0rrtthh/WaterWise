@@ -4,15 +4,16 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://br4x2hfw20gvn"
 path.s3tc="res://.godot/imported/Mouth_6d97d1b4-db07-4b34-aed6-d73b024f315c.png-b0f6e4fd7a99573681689872cf308fd2.s3tc.ctex"
+path.etc2="res://.godot/imported/Mouth_6d97d1b4-db07-4b34-aed6-d73b024f315c.png-b0f6e4fd7a99573681689872cf308fd2.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 
 [deps]
 
 source_file="res://characters/main char__gltf/Mouth_6d97d1b4-db07-4b34-aed6-d73b024f315c.png"
-dest_files=["res://.godot/imported/Mouth_6d97d1b4-db07-4b34-aed6-d73b024f315c.png-b0f6e4fd7a99573681689872cf308fd2.s3tc.ctex"]
+dest_files=["res://.godot/imported/Mouth_6d97d1b4-db07-4b34-aed6-d73b024f315c.png-b0f6e4fd7a99573681689872cf308fd2.s3tc.ctex", "res://.godot/imported/Mouth_6d97d1b4-db07-4b34-aed6-d73b024f315c.png-b0f6e4fd7a99573681689872cf308fd2.etc2.ctex"]
 
 [params]
 

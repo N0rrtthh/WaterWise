@@ -1,17 +1,17 @@
-class_name MiniGameLeafSort
+﻿class_name MiniGameLeafSort
 extends Node2D
 
-## ═══════════════════════════════════════════════════════════════════
+## 
 ## MINIGAME_LEAF_SORT.GD - Multiplayer Leaf Sorting Game
-## ═══════════════════════════════════════════════════════════════════
-## Theme: "Sort the Leaves" 🍃
+## 
+## Theme: "Sort the Leaves" 
 ## 
 ## ASYMMETRIC GAMEPLAY:
 ## - Player 1 (Host): Catches CLEAN leaves (green) with bucket
 ## - Player 2 (Client): Swipes DIRTY leaves (brown) down to remove
 ##
 ## G-Counter: Both players submit scores independently
-## ═══════════════════════════════════════════════════════════════════
+## 
 
 signal game_won()
 signal game_lost()
@@ -20,25 +20,25 @@ signal score_updated(new_score: int)
 # Use same structure as Rain game
 const DIFFICULTY_SETTINGS: Dictionary = {
 	"Easy": {
-		"quota": 15,
-		"p1_spawn_rate": 2.0,
-		"p1_leaf_speed": 200.0,
-		"p2_spawn_rate": 2.0,
-		"p2_leaf_speed": 150.0
+		"quota": 20,
+		"p1_spawn_rate": 2.5,
+		"p1_leaf_speed": 180.0,
+		"p2_spawn_rate": 2.8,
+		"p2_leaf_speed": 140.0
 	},
 	"Medium": {
-		"quota": 25,
-		"p1_spawn_rate": 1.5,
-		"p1_leaf_speed": 300.0,
-		"p2_spawn_rate": 1.5,
-		"p2_leaf_speed": 200.0
+		"quota": 30,
+		"p1_spawn_rate": 1.8,
+		"p1_leaf_speed": 250.0,
+		"p2_spawn_rate": 2.0,
+		"p2_leaf_speed": 190.0
 	},
 	"Hard": {
-		"quota": 40,
-		"p1_spawn_rate": 0.8,
-		"p1_leaf_speed": 400.0,
-		"p2_spawn_rate": 0.8,
-		"p2_leaf_speed": 280.0
+		"quota": 45,
+		"p1_spawn_rate": 1.2,
+		"p1_leaf_speed": 350.0,
+		"p2_spawn_rate": 1.4,
+		"p2_leaf_speed": 260.0
 	}
 }
 
@@ -70,6 +70,13 @@ var leaf_scene: PackedScene = null
 
 func _ready() -> void:
 	screen_size = get_viewport_rect().size
+	
+	# Verify multiplayer is active
+	if not multiplayer or not multiplayer.has_multiplayer_peer():
+		push_error(" Multiplayer not active! Returning to lobby...")
+		get_tree().change_scene_to_file("res://scenes/ui/MultiplayerLobby.tscn")
+		return
+	
 	is_player_one = (multiplayer.get_unique_id() == 1)
 	
 	_load_difficulty()
@@ -87,8 +94,16 @@ func _ready() -> void:
 		GameManager.team_lost.connect(_on_team_lost)
 		GameManager.team_life_lost.connect(_on_life_lost)
 	
+	# Connect NetworkManager resource transfer signal for interconnected gameplay
+	if NetworkManager and NetworkManager.has_signal("resource_sent"):
+		NetworkManager.resource_sent.connect(_on_resource_received)
+	
 	_create_pause_ui()
 	_start_game()
+
+func _is_host() -> bool:
+	# Helper: Check if this player is the host
+	return multiplayer.get_unique_id() == 1
 
 func _preload_scenes() -> void:
 	var moving_obj_path := "res://scripts/multiplayer/MovingObject.tscn"
@@ -142,14 +157,14 @@ func _setup_role_ui() -> void:
 	controls_label.add_theme_font_size_override("font_size", 20)
 	
 	if is_player_one:
-		role_label.text = "🍃 PLAYER 1: COLLECTOR"
+		role_label.text = " PLAYER 1: COLLECTOR"
 		title_label.text = "YOUR ROLE: Catch Clean Green Leaves!"
-		controls_label.text = "🕹️ CONTROLS: Move mouse to move bucket | Catch GREEN leaves only!"
+		controls_label.text = " CONTROLS: Move mouse to move bucket | Catch GREEN leaves only!"
 		bucket.visible = true
 	else:
-		role_label.text = "🧹 PLAYER 2: CLEANER"
+		role_label.text = " PLAYER 2: CLEANER"
 		title_label.text = "YOUR ROLE: Remove Dirty Brown Leaves!"
-		controls_label.text = "🕹️ CONTROLS: SWIPE DOWN on brown leaves to remove them"
+		controls_label.text = " CONTROLS: SWIPE DOWN on brown leaves to remove them"
 		bucket.visible = false
 	
 	instruction_vbox.add_child(title_label)
@@ -160,6 +175,7 @@ func _setup_role_ui() -> void:
 	await get_tree().create_timer(5.0).timeout
 	if instruction_panel:
 		var fade_tween = create_tween()
+		fade_tween.set_loops(1)
 		fade_tween.tween_property(instruction_panel, "modulate:a", 0.0, 1.0)
 		fade_tween.tween_callback(instruction_panel.queue_free)
 	
@@ -169,7 +185,7 @@ func _setup_role_ui() -> void:
 
 func _update_lives_display() -> void:
 	if GameManager:
-		lives_label.text = "❤️".repeat(GameManager.team_lives)
+		lives_label.text = "".repeat(GameManager.team_lives)
 
 func _update_quota_bar() -> void:
 	if quota_bar and GameManager:
@@ -203,20 +219,38 @@ func _on_spawn_timer_timeout() -> void:
 	if not game_active:
 		return
 	
-	if is_player_one:
-		_spawn_clean_leaf()
-	else:
-		_spawn_dirty_leaf()
+	# Only host spawns to ensure synchronization
+	if not is_player_one:
+		return
+	
+	# Spawn both types and sync
+	_spawn_clean_leaf_synced()
+	_spawn_dirty_leaf_synced()
 
-func _spawn_clean_leaf() -> void:
+func _spawn_clean_leaf_synced() -> void:
+	# HOST: Spawn clean leaf and sync
+	if not _is_host():
+		return
+	
+	var spawn_x: float = randf_range(50, screen_size.x - 50)
+	var spawn_id: int = Time.get_ticks_msec()
+	
+	rpc("_create_clean_leaf_at", spawn_x, spawn_id)
+
+@rpc("authority", "call_local", "reliable")
+func _create_clean_leaf_at(spawn_x: float, spawn_id: int) -> void:
+	# Create clean leaf (P1 only)
+	if not is_player_one:
+		return
+	
 	var leaf: Area2D
 	if leaf_scene:
 		leaf = leaf_scene.instantiate()
 	else:
 		leaf = _create_dynamic_leaf(false)
 	
-	var spawn_x: float = randf_range(50, screen_size.x - 50)
 	leaf.position = Vector2(spawn_x, -50)
+	leaf.name = "CleanLeaf_" + str(spawn_id)
 	
 	if leaf.has_method("setup"):
 		leaf.setup(Vector2.DOWN, current_settings["p1_leaf_speed"], false)
@@ -229,18 +263,33 @@ func _spawn_clean_leaf() -> void:
 	else:
 		add_child(leaf)
 
-func _spawn_dirty_leaf() -> void:
+func _spawn_dirty_leaf_synced() -> void:
+	# HOST: Spawn dirty leaf and sync
+	if not _is_host():
+		return
+	
+	var spawn_y: float = randf_range(100, screen_size.y - 200)
+	var spawn_id: int = Time.get_ticks_msec() + 1000
+	
+	rpc("_create_dirty_leaf_at", spawn_y, spawn_id)
+
+@rpc("authority", "call_local", "reliable")
+func _create_dirty_leaf_at(spawn_y: float, spawn_id: int) -> void:
+	# Create dirty leaf (P2 only)
+	if is_player_one:
+		return
+	
 	var leaf: Area2D
 	if leaf_scene:
 		leaf = leaf_scene.instantiate()
 	else:
 		leaf = _create_dynamic_leaf(true)
 	
-	var spawn_x: float = randf_range(50, screen_size.x - 50)
-	leaf.position = Vector2(spawn_x, 100)
+	leaf.position = Vector2(-50, spawn_y)
+	leaf.name = "DirtyLeaf_" + str(spawn_id)
 	
 	if leaf.has_method("setup"):
-		leaf.setup(Vector2.DOWN, current_settings["p2_leaf_speed"], false)
+		leaf.setup(Vector2.RIGHT, current_settings["p2_leaf_speed"], true)
 	
 	if leaf.has_signal("destroyed"):
 		leaf.destroyed.connect(_on_leaf_destroyed)
@@ -256,7 +305,7 @@ func _spawn_dirty_leaf() -> void:
 	# Add visual hint for Player 2
 	if not is_player_one:
 		var hint_label = Label.new()
-		hint_label.text = "⬇️"
+		hint_label.text = ""
 		hint_label.add_theme_font_size_override("font_size", 24)
 		hint_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		hint_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -309,6 +358,11 @@ func _on_leaf_caught(leaf: Area2D, _is_special: bool) -> void:
 		# Also update display immediately
 		_update_score_display()
 	
+	# RESOURCE TRANSFER: P1 sends clean leaves to P2 as a "dirty leaf task"
+	if NetworkManager and NetworkManager.has_method("send_resource"):
+		NetworkManager.send_resource("clean_leaf", 1, 1.0)
+		print(" Sent clean leaf signal to partner")
+	
 	# Sync to other players
 	if is_player_one:
 		rpc("_sync_score_update")
@@ -344,13 +398,27 @@ func _on_dirty_leaf_missed(leaf: Area2D, _is_special: bool) -> void:
 		GameManager.rpc("report_damage")
 	leaf.queue_free()
 
+func _on_resource_received(
+	from_player: int, resource_type: String, amount: int, _quality: float
+) -> void:
+	# Receive resources from partner - creates interconnected gameplay
+	if resource_type == "clean_leaf" and not is_player_one:
+		# P2 receives clean leaf signal from P1 and spawns a dirty leaf to clean
+		print(
+			"Received %d clean leaf from P%d - spawning dirty leaves to clean"
+			% [amount, from_player]
+		)
+		for i in range(amount):
+			var spawn_y: float = randf_range(100, screen_size.y - 200)
+			_create_dirty_leaf_at(spawn_y, Time.get_ticks_msec() + i)
+
 func _process(delta: float) -> void:
 	if not game_active or is_paused:
 		return
 	
 	game_timer -= delta
 	if timer_label:
-		timer_label.text = "⏱️ " + str(int(max(0, game_timer)))
+		timer_label.text = " " + str(int(max(0, game_timer)))
 	
 	if game_timer <= 0 and game_active:
 		game_active = false
@@ -370,9 +438,17 @@ func _process(delta: float) -> void:
 
 func _update_score_display() -> void:
 	var global_score: int = GameManager.get_global_score() if GameManager else local_score
-	score_label.text = "🍃 Score: %d / %d" % [global_score, current_settings["quota"]]
+	score_label.text = " Score: %d / %d" % [global_score, current_settings["quota"]]
 	quota_bar.value = global_score
 	score_updated.emit(global_score)
+	
+	# Check if quota reached (host only)
+	if is_player_one and game_active and global_score >= current_settings["quota"]:
+		print(" Quota reached! Score: %d >= %d" % [global_score, current_settings["quota"]])
+		game_active = false
+		spawn_timer.stop()
+		if GameManager:
+			GameManager.rpc("_announce_team_won")
 
 @rpc("any_peer", "call_local", "reliable")
 func _sync_score_update() -> void:
@@ -389,7 +465,7 @@ func _on_team_won() -> void:
 		var round_time_sec: float = float(round_time_ms) / 1000.0
 		GameManager.add_round_time(round_time_sec)
 		GameManager.minigames_played_this_session += 1
-		print("📊 [Rolling Window] Round completed in %.2fs" % round_time_sec)
+		print(" [Rolling Window] Round completed in %.2fs" % round_time_sec)
 	
 	_show_result_screen(true)
 	await get_tree().create_timer(2.0).timeout
@@ -424,7 +500,7 @@ func _show_result_screen(victory: bool) -> void:
 	result.add_child(bg)
 	
 	var label: Label = Label.new()
-	label.text = "🏆 TEAM WINS!" if victory else "💀 GAME OVER"
+	label.text = " TEAM WINS!" if victory else " GAME OVER"
 	label.add_theme_font_size_override("font_size", 72)
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -443,7 +519,7 @@ func _show_result_screen(victory: bool) -> void:
 
 func _create_pause_ui() -> void:
 	pause_button = Button.new()
-	pause_button.text = "⏸"
+	pause_button.text = ""
 	pause_button.custom_minimum_size = Vector2(50, 50)
 	pause_button.add_theme_font_size_override("font_size", 32)
 	
@@ -508,10 +584,10 @@ func _on_pause_button_pressed() -> void:
 	is_paused = true
 	get_tree().paused = true
 	pause_menu.visible = true
-	pause_button.text = "▶"
+	pause_button.text = ""
 	if NetworkManager:
 		NetworkManager.rpc("sync_pause_state", true)
-	print("⏸ Game paused by local player")
+	print(" Game paused by local player")
 
 func _on_resume_pressed() -> void:
 	if not is_paused:
@@ -519,10 +595,10 @@ func _on_resume_pressed() -> void:
 	is_paused = false
 	get_tree().paused = false
 	pause_menu.visible = false
-	pause_button.text = "⏸"
+	pause_button.text = ""
 	if NetworkManager:
 		NetworkManager.rpc("sync_pause_state", false)
-	print("▶ Game resumed by local player")
+	print(" Game resumed by local player")
 
 func _on_exit_pressed() -> void:
 	get_tree().paused = false
@@ -541,8 +617,8 @@ func _on_remote_pause() -> void:
 	if pause_menu:
 		pause_menu.visible = true
 	if pause_button:
-		pause_button.text = "▶"
-	print("⏸ Game paused by remote player")
+		pause_button.text = ""
+	print(" Game paused by remote player")
 
 func _on_remote_resume() -> void:
 	is_paused = false
@@ -550,5 +626,6 @@ func _on_remote_resume() -> void:
 	if pause_menu:
 		pause_menu.visible = false
 	if pause_button:
-		pause_button.text = "⏸"
-	print("▶ Game resumed by remote player")
+		pause_button.text = ""
+	print(" Game resumed by remote player")
+

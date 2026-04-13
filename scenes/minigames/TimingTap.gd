@@ -16,22 +16,36 @@ var fill_rate: float = 50.0
 var is_holding: bool = false
 
 func _apply_difficulty_settings() -> void:
+	# Get progressive difficulty settings
+	var settings = AdaptiveDifficulty.get_difficulty_settings() if AdaptiveDifficulty else {}
+	var progressive_level = settings.get("progressive_level", 0)
+	
 	match current_difficulty:
 		"Easy":
-			target_containers = 3
+			target_containers = 2  # Achievable in 18s
 			fill_tolerance = 15.0
 			fill_rate = 35.0
-			game_duration = 30.0
+			game_duration = 18.0
 		"Medium":
-			target_containers = 5
+			target_containers = 3  # Achievable in 12s
 			fill_tolerance = 10.0
 			fill_rate = 50.0
-			game_duration = 25.0
+			game_duration = 12.0
 		"Hard":
-			target_containers = 7
+			target_containers = 4  # Achievable in 8s
 			fill_tolerance = 5.0
 			fill_rate = 70.0
-			game_duration = 20.0
+			game_duration = 8.0
+	
+	# Apply PROGRESSIVE DIFFICULTY (NO CEILING!)
+	if progressive_level > 0:
+		target_containers += mini(progressive_level, 2)  # +1 container per level, max +2
+		fill_rate += progressive_level * 8.0  # Faster filling = harder timing
+		fill_tolerance = max(4.0, fill_tolerance - progressive_level * 0.5)  # Smaller target, floor at 4%
+		game_duration += progressive_level * 2.0  # Give more time for extra containers
+		if settings.has("time_limit"):
+			game_duration = max(game_duration, settings.get("time_limit", game_duration))
+		print("🔥 Progressive Lvl %d: %d containers, %.1f fill rate" % [progressive_level, target_containers, fill_rate])
 
 func _ready():
 	game_name = "Timing Tap"
@@ -224,6 +238,7 @@ func _check_fill():
 		flash.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		add_child(flash)
 		var tw = create_tween()
+		tw.set_loops(1)
 		tw.tween_property(flash, "modulate:a", 0.0, 0.3)
 		tw.tween_callback(flash.queue_free)
 		
@@ -243,6 +258,7 @@ func _check_fill():
 		flash.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		add_child(flash)
 		var tw = create_tween()
+		tw.set_loops(1)
 		tw.tween_property(flash, "modulate:a", 0.0, 0.3)
 		tw.tween_callback(flash.queue_free)
 		
@@ -258,6 +274,7 @@ func _check_fill():
 		add_child(feedback)
 		
 		var tw2 = create_tween()
+		tw2.set_loops(1)
 		tw2.tween_property(feedback, "modulate:a", 0.0, 0.5)
 		tw2.tween_callback(feedback.queue_free)
 		

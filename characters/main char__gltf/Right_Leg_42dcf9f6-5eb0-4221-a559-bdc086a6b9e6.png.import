@@ -4,15 +4,16 @@ importer="texture"
 type="CompressedTexture2D"
 uid="uid://l512wywoalrj"
 path.s3tc="res://.godot/imported/Right_Leg_42dcf9f6-5eb0-4221-a559-bdc086a6b9e6.png-9e638807d39ccf908cbd43e6395ec337.s3tc.ctex"
+path.etc2="res://.godot/imported/Right_Leg_42dcf9f6-5eb0-4221-a559-bdc086a6b9e6.png-9e638807d39ccf908cbd43e6395ec337.etc2.ctex"
 metadata={
-"imported_formats": ["s3tc_bptc"],
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
 "vram_texture": true
 }
 
 [deps]
 
 source_file="res://characters/main char__gltf/Right_Leg_42dcf9f6-5eb0-4221-a559-bdc086a6b9e6.png"
-dest_files=["res://.godot/imported/Right_Leg_42dcf9f6-5eb0-4221-a559-bdc086a6b9e6.png-9e638807d39ccf908cbd43e6395ec337.s3tc.ctex"]
+dest_files=["res://.godot/imported/Right_Leg_42dcf9f6-5eb0-4221-a559-bdc086a6b9e6.png-9e638807d39ccf908cbd43e6395ec337.s3tc.ctex", "res://.godot/imported/Right_Leg_42dcf9f6-5eb0-4221-a559-bdc086a6b9e6.png-9e638807d39ccf908cbd43e6395ec337.etc2.ctex"]
 
 [params]
 

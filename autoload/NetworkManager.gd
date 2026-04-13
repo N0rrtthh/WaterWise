@@ -31,7 +31,7 @@ signal round_completed(p1_score: int, p2_score: int, team_total: int)
 # CONFIGURATION
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-const DEFAULT_PORT: int = 7777
+const DEFAULT_PORT: int = 7777  # UDP Port 7777 (Paper: P2P UDP Port 7777)
 const MAX_PLAYERS: int = 2
 const RECONNECT_GRACE_PERIOD: float = 30.0  # 30 seconds
 
@@ -94,17 +94,44 @@ func _ready() -> void:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func create_server(port: int = DEFAULT_PORT) -> bool:
-	"""Create a server (host) for LAN multiplayer"""
+	# Create a server (host) for LAN multiplayer
 	if connection_active:
 		_log("❌ Server already running or connected to another server")
 		return false
 	
+	# Create ENet peer
 	network = ENetMultiplayerPeer.new()
+	
+	# Validate port range
+	if port < 1024 or port > 65535:
+		_log("❌ Invalid port: %d (must be 1024-65535)" % port)
+		connection_failed.emit()
+		return false
+	
+	# Create server with proper parameters
+	_log("🔧 Attempting to create server on port %d..." % port)
 	var error = network.create_server(port, MAX_PLAYERS - 1)  # -1 because host counts as one player
 	
 	if error != OK:
-		_log("❌ Failed to create server: " + str(error))
+		_log("❌ Failed to create server on port %d: %s" % [port, error_string(error)])
+		_log("   Possible causes:")
+		_log("   - Port %d is already in use by another application" % port)
+		_log("   - Firewall is blocking the connection")
+		_log("   - ENet module not properly initialized")
+		_log("   Try port 8888 or 9999 instead")
 		connection_failed.emit()
+		network = null
+		return false
+	
+	# Verify network peer was created successfully
+	var peer_connected = (
+		network != null
+		and network.get_connection_status()
+		== MultiplayerPeer.CONNECTION_CONNECTED)
+	if not peer_connected:
+		_log("❌ Network peer creation failed - peer is null or not connected")
+		connection_failed.emit()
+		network = null
 		return false
 	
 	multiplayer.multiplayer_peer = network
@@ -120,20 +147,59 @@ func create_server(port: int = DEFAULT_PORT) -> bool:
 	}
 	
 	# Connect multiplayer signals
-	multiplayer.peer_connected.connect(_on_player_connected)
-	multiplayer.peer_disconnected.connect(_on_player_disconnected)
+	if not multiplayer.peer_connected.is_connected(_on_player_connected):
+		multiplayer.peer_connected.connect(_on_player_connected)
+	
+	if not multiplayer.peer_disconnected.is_connected(_on_player_disconnected):
+		multiplayer.peer_disconnected.connect(_on_player_disconnected)
 	
 	_log("✅ Server created on port " + str(port))
 	_log("🎮 You are Player 1 (Collector)")
 	connection_succeeded.emit()
 	return true
 
+func set_local_player_ready() -> void:
+	# Mark local player as ready and sync
+	var my_id = multiplayer.get_unique_id()
+	if players.has(my_id):
+		players[my_id]["ready"] = true
+		_log("✅ Local player ready")
+		rpc("_sync_player_ready", my_id, true)
+		_check_all_players_ready()
+
+@rpc("any_peer", "reliable")
+func _sync_player_ready(peer_id: int, is_ready: bool) -> void:
+	# Sync player ready status
+	if players.has(peer_id):
+		players[peer_id]["ready"] = is_ready
+		player_ready_changed.emit(peer_id, is_ready)
+		_log("✅ Player %d ready: %s" % [peer_id, is_ready])
+		
+		if is_host:
+			_check_all_players_ready()
+
+func _check_all_players_ready() -> void:
+	# Check if all players are ready to start
+	if not is_host:
+		return
+		
+	var all_ready = true
+	for p in players.values():
+		if not p.get("ready", false):
+			all_ready = false
+			break
+	
+	if all_ready and players.size() >= 1: # Allow single player testing if needed, but usually 2
+		_log("🚀 All players ready! Starting countdown...")
+		both_players_ready.emit()
+		start_countdown()
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # CLIENT FUNCTIONS
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func join_server(ip: String, port: int = DEFAULT_PORT) -> bool:
-	"""Join an existing server (client)"""
+	# Join an existing server (client)
 	if connection_active:
 		_log("❌ Already connected to a server")
 		return false
@@ -168,7 +234,7 @@ func join_server(ip: String, port: int = DEFAULT_PORT) -> bool:
 	return true
 
 func _on_connected_to_server() -> void:
-	"""Called when client successfully connects to server"""
+	# Called when client successfully connects to server
 	_log("✅ Connected to server!")
 	_log("🎮 You are Player 2 (User)")
 	
@@ -177,13 +243,13 @@ func _on_connected_to_server() -> void:
 	connection_succeeded.emit()
 
 func _on_connection_failed() -> void:
-	"""Called when client fails to connect"""
+	# Called when client fails to connect
 	_log("❌ Connection failed!")
 	connection_active = false
 	connection_failed.emit()
 
 func _on_server_disconnected() -> void:
-	"""Called when server disconnects (client side)"""
+	# Called when server disconnects (client side)
 	_log("⚠️ Server disconnected!")
 	_start_grace_period()
 	server_disconnected.emit()
@@ -193,7 +259,7 @@ func _on_server_disconnected() -> void:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func _on_player_connected(peer_id: int) -> void:
-	"""Called on server when a player connects"""
+	# Called on server when a player connects
 	if players.size() >= MAX_PLAYERS:
 		_log("❌ Max players reached, rejecting connection")
 		network.disconnect_peer(peer_id)
@@ -204,7 +270,7 @@ func _on_player_connected(peer_id: int) -> void:
 
 @rpc("any_peer", "reliable")
 func _register_player(peer_id: int, player_name: String) -> void:
-	"""Register a new player (called by client, executed on server)"""
+	# Register a new player (called by client, executed on server)
 	if not is_host:
 		return
 	
@@ -220,12 +286,12 @@ func _register_player(peer_id: int, player_name: String) -> void:
 
 @rpc("authority", "reliable")
 func _sync_player_list(updated_players: Dictionary) -> void:
-	"""Sync player list from server to clients"""
+	# Sync player list from server to clients
 	players = updated_players
 	_log("Player list synced: " + str(players.size()) + " players")
 
 func _on_player_disconnected(peer_id: int) -> void:
-	"""Called when a player disconnects"""
+	# Called when a player disconnects
 	_log("⚠️ Player disconnected (Peer ID: " + str(peer_id) + ")")
 	
 	if players.has(peer_id):
@@ -233,12 +299,21 @@ func _on_player_disconnected(peer_id: int) -> void:
 		players.erase(peer_id)
 		player_disconnected.emit(peer_id)
 		
-		# Start grace period if game is in progress
+		# If game is in progress and we're the client, force return to lobby
 		if game_in_progress:
-			_start_grace_period()
+			if not is_host:
+				_log("🔌 Host disconnected during game, returning to lobby...")
+				game_in_progress = false
+				# Use call_deferred to avoid issues with scene tree
+				var lobby = "res://scenes/ui/MultiplayerLobby.tscn"
+				get_tree().call_deferred(
+					"change_scene_to_file", lobby)
+			else:
+				# Host continues, but mark game as ended
+				game_in_progress = false
 
 func _start_grace_period() -> void:
-	"""Start reconnection grace period"""
+	# Start reconnection grace period
 	if grace_period_active:
 		return
 	
@@ -247,7 +322,7 @@ func _start_grace_period() -> void:
 	_log("⏱️ Reconnection grace period started (" + str(RECONNECT_GRACE_PERIOD) + " seconds)")
 
 func _on_grace_period_timeout() -> void:
-	"""Called when grace period expires"""
+	# Called when grace period expires
 	grace_period_active = false
 	_log("⏰ Grace period expired - game failed")
 	
@@ -257,18 +332,37 @@ func _on_grace_period_timeout() -> void:
 		# Trigger game failure (implement in game scene)
 
 func disconnect_multiplayer() -> void:
-	"""Disconnect from multiplayer session"""
+	# Disconnect from multiplayer session
 	if not connection_active:
 		return
 	
+	# Close the network connection
+	if network:
+		network.close()
+		network = null
+	
+	# Clear multiplayer peer
 	if multiplayer.multiplayer_peer:
 		multiplayer.multiplayer_peer = null
 	
-	network = null
+	# Disconnect signals to prevent cross-session issues
+	if multiplayer.peer_connected.is_connected(_on_player_connected):
+		multiplayer.peer_connected.disconnect(_on_player_connected)
+	if multiplayer.peer_disconnected.is_connected(_on_player_disconnected):
+		multiplayer.peer_disconnected.disconnect(_on_player_disconnected)
+	if multiplayer.connected_to_server.is_connected(_on_connected_to_server):
+		multiplayer.connected_to_server.disconnect(_on_connected_to_server)
+	if multiplayer.connection_failed.is_connected(_on_connection_failed):
+		multiplayer.connection_failed.disconnect(_on_connection_failed)
+	if multiplayer.server_disconnected.is_connected(_on_server_disconnected):
+		multiplayer.server_disconnected.disconnect(_on_server_disconnected)
+	
 	is_host = false
 	connection_active = false
 	players.clear()
 	game_in_progress = false
+	local_player_id = 0
+	remote_player_id = 0
 	
 	_log("🔌 Disconnected from multiplayer")
 
@@ -277,7 +371,7 @@ func disconnect_multiplayer() -> void:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func set_ready(is_ready: bool) -> void:
-	"""Set local player ready status"""
+	# Set local player ready status
 	var my_peer_id = multiplayer.get_unique_id()
 	
 	if players.has(my_peer_id):
@@ -295,7 +389,7 @@ func set_ready(is_ready: bool) -> void:
 
 @rpc("any_peer", "reliable")
 func _sync_ready_status(peer_id: int, is_ready: bool) -> void:
-	"""Sync ready status across network"""
+	# Sync ready status across network
 	if players.has(peer_id):
 		players[peer_id]["ready"] = is_ready
 		
@@ -309,7 +403,7 @@ func _sync_ready_status(peer_id: int, is_ready: bool) -> void:
 		_check_all_ready()
 
 func _check_all_ready() -> void:
-	"""Check if all players are ready"""
+	# Check if all players are ready
 	if players.size() < MAX_PLAYERS:
 		return
 	
@@ -321,7 +415,7 @@ func _check_all_ready() -> void:
 	both_players_ready.emit()
 
 func are_all_players_ready() -> bool:
-	"""Check if all players are ready"""
+	# Check if all players are ready
 	if players.size() < MAX_PLAYERS:
 		return false
 	
@@ -336,7 +430,7 @@ func are_all_players_ready() -> bool:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func start_game(scenario_id: String) -> void:
-	"""Start cooperative game session (host only)"""
+	# Start cooperative game session (host only)
 	if not is_host:
 		_log("❌ Only host can start the game")
 		return
@@ -361,7 +455,7 @@ func start_game(scenario_id: String) -> void:
 	game_started.emit(scenario_id, player_roles)
 
 func start_multiplayer_game(scene_path: String) -> void:
-	"""Start multiplayer game and load scene on all clients (host only)"""
+	# Start multiplayer game and load scene on all clients (host only)
 	if not is_host:
 		_log("❌ Only host can start the game")
 		return
@@ -378,7 +472,7 @@ func start_multiplayer_game(scene_path: String) -> void:
 
 @rpc("authority", "call_local", "reliable")
 func _load_game_scene(scene_path: String) -> void:
-	"""Load game scene on this peer"""
+	# Load game scene on this peer
 	_log("📥 Loading game scene: " + scene_path)
 	
 	var packed_scene = load(scene_path)
@@ -390,9 +484,33 @@ func _load_game_scene(scene_path: String) -> void:
 	if result != OK:
 		_log("❌ Failed to change scene, error code: " + str(result))
 
+func start_multiplayer_game_pair(p1_scene: String, p2_scene: String) -> void:
+	# Start multiplayer game with DIFFERENT scenes for each player (host only)
+	if not is_host:
+		_log("❌ Only host can start the game")
+		return
+	
+	if not are_all_players_ready():
+		_log("❌ Not all players are ready")
+		return
+	
+	game_in_progress = true
+	
+	_log("🎮 Loading INTERCONNECTED games:")
+	_log("   Player 1 (Host) → %s" % p1_scene)
+	_log("   Player 2 (Client) → %s" % p2_scene)
+	
+	# Host loads P1 scene
+	_load_game_scene(p1_scene)
+	
+	# Tell client to load P2 scene
+	for peer_id in players.keys():
+		if peer_id != multiplayer.get_unique_id():  # Not the host
+			rpc_id(peer_id, "_load_game_scene", p2_scene)
+
 @rpc("authority", "reliable")
 func _receive_game_start(scenario_id: String, roles: Dictionary) -> void:
-	"""Receive game start signal (client side)"""
+	# Receive game start signal (client side)
 	current_scenario_id = scenario_id
 	game_in_progress = true
 	player_roles = roles
@@ -405,19 +523,22 @@ func _receive_game_start(scenario_id: String, roles: Dictionary) -> void:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func reset_g_counter() -> void:
-	"""Reset G-Counter for new game session"""
+	# Reset G-Counter for new game session
 	g_counter.clear()
 	var my_id = multiplayer.get_unique_id()
 	g_counter[my_id] = 0
 	_log("🔄 G-Counter reset")
 
 func increment_local(amount: int) -> void:
-	"""
-	Increment local player's counter (CRDT operation)
-	Each player only increments their own counter
-	"""
+	# Increment local player's counter (CRDT operation)
+	# Each player only increments their own counter
 	var my_id = multiplayer.get_unique_id()
 	g_counter[my_id] = g_counter.get(my_id, 0) + amount
+	
+	# Also update the dedicated GCounter singleton
+	var gc = get_node_or_null("/root/GCounter")
+	if gc:
+		gc.increment(my_id, amount)
 	
 	_log("💧 Local score +%d → G-Counter[%d] = %d" % [amount, my_id, g_counter[my_id]])
 	
@@ -429,26 +550,29 @@ func increment_local(amount: int) -> void:
 
 @rpc("any_peer", "reliable")
 func _merge_counter(peer_id: int, value: int) -> void:
-	"""
-	Merge counter value from remote peer (CRDT merge operation)
-	Takes MAX of existing and new value to ensure monotonic growth
-	"""
+	# Merge counter value from remote peer (CRDT merge operation)
+	# Takes MAX of existing and new value to ensure monotonic growth
 	var old_value = g_counter.get(peer_id, 0)
 	g_counter[peer_id] = max(old_value, value)
+	
+	# Also merge into the dedicated GCounter singleton
+	var gc = get_node_or_null("/root/GCounter")
+	if gc:
+		gc.merge({peer_id: value})
 	
 	if g_counter[peer_id] > old_value:
 		_log("📡 Merged counter[%d]: %d → %d" % [peer_id, old_value, g_counter[peer_id]])
 		team_score_updated.emit(get_total_score())
 
 func get_total_score() -> int:
-	"""Calculate global score = sum of all peer counters"""
+	# Calculate global score = sum of all peer counters
 	var total = 0
 	for count in g_counter.values():
 		total += count
 	return total
 
 func get_player_score(peer_id: int) -> int:
-	"""Get individual player's score"""
+	# Get individual player's score
 	return g_counter.get(peer_id, 0)
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -456,7 +580,7 @@ func get_player_score(peer_id: int) -> int:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func reset_team_lives() -> void:
-	"""Reset team lives for new game session (host only)"""
+	# Reset team lives for new game session (host only)
 	if not is_host:
 		return
 	
@@ -468,10 +592,8 @@ func reset_team_lives() -> void:
 	rpc("_sync_team_lives", team_lives)
 
 func lose_life() -> void:
-	"""
-	Team loses a life (called by any player when they fail)
-	Only host has authority to modify lives
-	"""
+	# Team loses a life (called by any player when they fail)
+	# Only host has authority to modify lives
 	if is_host:
 		team_lives = max(0, team_lives - 1)
 		_log("💔 Team lost a life! Remaining: %d" % team_lives)
@@ -489,22 +611,23 @@ func lose_life() -> void:
 
 @rpc("any_peer", "reliable")
 func _request_lose_life() -> void:
-	"""Client requests host to deduct a life"""
+	# Client requests host to deduct a life
 	if is_host:
 		lose_life()
 
 @rpc("authority", "call_local", "reliable")
 func _sync_team_lives(lives: int) -> void:
-	"""Sync team lives from host to all clients"""
+	# Sync team lives from host to all clients
 	team_lives = lives
 	team_lives_updated.emit(team_lives)
 	_log("📡 Team lives synced: %d" % lives)
 
 @rpc("authority", "call_local", "reliable")
 func _execute_game_over() -> void:
-	"""Execute game over sequence on all clients"""
+	# Execute game over sequence on all clients
 	game_in_progress = false
-	_log("🏁 GAME OVER - Rounds survived: %d, Final score: %d" % [rounds_survived, get_total_score()])
+	_log("🏁 GAME OVER - Rounds: %d, Score: %d"
+		% [rounds_survived, get_total_score()])
 	# Game will handle showing game over screen
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -513,7 +636,7 @@ func _execute_game_over() -> void:
 
 @rpc("any_peer", "reliable")
 func send_game_event(event_type: String, data: Dictionary) -> void:
-	"""Send a game event to the partner"""
+	# Send a game event to the partner
 	var _sender_id = multiplayer.get_remote_sender_id()
 	
 	# If host, broadcast to other client
@@ -525,7 +648,7 @@ func send_game_event(event_type: String, data: Dictionary) -> void:
 
 @rpc("any_peer", "reliable")
 func _relay_game_event(event_type: String, data: Dictionary) -> void:
-	"""Host relays event from client to other clients (if we had >2 players) or processes it"""
+	# Host relays event from client to other clients (if we had >2 players) or processes it
 	# For 2 players, host just receives it and broadcasts to itself (handled by local call) 
 	# or broadcasts to others.
 	# Since we are 2 players, if client sends to host, host receives it.
@@ -534,14 +657,14 @@ func _relay_game_event(event_type: String, data: Dictionary) -> void:
 
 @rpc("any_peer", "reliable")
 func _receive_game_event(event_type: String, data: Dictionary) -> void:
-	"""Receive game event"""
+	# Receive game event
 	# Find the current active minigame and notify it
 	var current_scene = get_tree().current_scene
 	if current_scene.has_method("on_partner_event"):
 		current_scene.on_partner_event(event_type, data)
 
 func return_to_lobby() -> void:
-	"""Return all players to lobby"""
+	# Return all players to lobby
 	if is_host:
 		rpc("_execute_return_to_lobby")
 	else:
@@ -555,6 +678,11 @@ func _request_return_to_lobby() -> void:
 
 @rpc("authority", "call_local", "reliable")
 func _execute_return_to_lobby() -> void:
+	# Fully tear down the connection so the lobby loads in a clean state
+	disconnect_multiplayer()
+	# Ensure the game is not paused so lobby inputs work
+	if get_tree().paused:
+		get_tree().paused = false
 	get_tree().change_scene_to_file("res://scenes/ui/MultiplayerLobby.tscn")
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -563,7 +691,7 @@ func _execute_return_to_lobby() -> void:
 
 @rpc("any_peer", "reliable")
 func send_performance_data(performance: Dictionary) -> void:
-	"""Send player performance data to all peers"""
+	# Send player performance data to all peers
 	var sender_id = multiplayer.get_remote_sender_id()
 	
 	# Determine player number from peer ID
@@ -585,7 +713,7 @@ func send_performance_data(performance: Dictionary) -> void:
 
 @rpc("authority", "reliable")
 func _broadcast_performance(player_num: int, performance: Dictionary) -> void:
-	"""Broadcast performance data to all clients (from host)"""
+	# Broadcast performance data to all clients (from host)
 	performance_data_received.emit(player_num, performance)
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -594,7 +722,7 @@ func _broadcast_performance(player_num: int, performance: Dictionary) -> void:
 
 @rpc("any_peer", "reliable")
 func sync_game_state(state: Dictionary) -> void:
-	"""Sync game state across network"""
+	# Sync game state across network
 	_log("🔄 Game state synced")
 	game_state_synced.emit(state)
 	
@@ -606,7 +734,7 @@ func sync_game_state(state: Dictionary) -> void:
 
 @rpc("authority", "reliable")
 func _broadcast_game_state(state: Dictionary) -> void:
-	"""Broadcast game state to all clients (from host)"""
+	# Broadcast game state to all clients (from host)
 	game_state_synced.emit(state)
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -615,7 +743,7 @@ func _broadcast_game_state(state: Dictionary) -> void:
 
 @rpc("any_peer", "reliable")
 func notify_game_end(team_result: Dictionary) -> void:
-	"""Notify all players that game has ended"""
+	# Notify all players that game has ended
 	game_in_progress = false
 	_log("🏁 Game ended - Team " + ("Success" if team_result.get("success", false) else "Failed"))
 	
@@ -625,7 +753,7 @@ func notify_game_end(team_result: Dictionary) -> void:
 
 @rpc("authority", "reliable")
 func _broadcast_game_end(team_result: Dictionary) -> void:
-	"""Broadcast game end to all clients (from host)"""
+	# Broadcast game end to all clients (from host)
 	game_in_progress = false
 	_log("🏁 Game ended - Team " + ("Success" if team_result.get("success", false) else "Failed"))
 
@@ -634,27 +762,27 @@ func _broadcast_game_end(team_result: Dictionary) -> void:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func get_player_count() -> int:
-	"""Get current number of connected players"""
+	# Get current number of connected players
 	return players.size()
 
 func get_local_player_num() -> int:
-	"""Get local player number (1 or 2)"""
+	# Get local player number (1 or 2)
 	return local_player_id
 
 func get_player_role(player_num: int) -> String:
-	"""Get role for specific player"""
+	# Get role for specific player
 	return player_roles.get(player_num, "Unknown")
 
 func is_multiplayer_connected() -> bool:
-	"""Check if currently connected to multiplayer session"""
+	# Check if currently connected to multiplayer session
 	return connection_active
 
 func is_server() -> bool:
-	"""Check if this instance is the server/host"""
+	# Check if this instance is the server/host
 	return is_host
 
 func _log(message: String) -> void:
-	"""Internal logging function"""
+	# Internal logging function
 	print("[NetworkManager] " + message)
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -689,7 +817,7 @@ var total_consumed: int = 0
 var total_wasted: int = 0  # Overflow or failed consumption
 
 func reset_producer_consumer() -> void:
-	"""Reset the producer-consumer state for a new game"""
+	# Reset the producer-consumer state for a new game
 	water_queue.clear()
 	for timer in transfer_timers:
 		if is_instance_valid(timer):
@@ -709,10 +837,8 @@ func reset_producer_consumer() -> void:
 ## PRODUCER FUNCTIONS (Player 1 - Dishwasher/Water Collector)
 
 func produce_water(water_type: String, quality: float = 1.0) -> bool:
-	"""
-	Player 1 produces a water unit after completing their task.
-	Returns false if buffer is full (game over condition).
-	"""
+	# Player 1 produces a water unit after completing their task.
+	# Returns false if buffer is full (game over condition).
 	if water_queue.size() >= BUFFER_MAX_SIZE:
 		_log("❌ Buffer OVERFLOW! Queue full (%d/%d)" % [water_queue.size(), BUFFER_MAX_SIZE])
 		buffer_overflow.emit()
@@ -749,7 +875,7 @@ func produce_water(water_type: String, quality: float = 1.0) -> bool:
 	return true
 
 func _start_transfer_timer(water_data: Dictionary) -> void:
-	"""Create a timer for water transfer (visual delay between P1 and P2)"""
+	# Create a timer for water transfer (visual delay between P1 and P2)
 	var timer = Timer.new()
 	timer.one_shot = true
 	timer.wait_time = current_flow_speed
@@ -761,7 +887,7 @@ func _start_transfer_timer(water_data: Dictionary) -> void:
 	_log("⏱️ Water transfer started (%.1fs)" % current_flow_speed)
 
 func _on_water_arrives(water_data: Dictionary) -> void:
-	"""Called when water arrives at Player 2's station"""
+	# Called when water arrives at Player 2's station
 	_log("🚿 Water ARRIVED at Consumer station")
 	
 	# Notify Player 2 (Consumer) that they have water to process
@@ -773,12 +899,12 @@ func _on_water_arrives(water_data: Dictionary) -> void:
 
 @rpc("authority", "reliable")
 func _notify_water_arrived(water_data: Dictionary) -> void:
-	"""RPC: Notify consumer that water has arrived"""
+	# RPC: Notify consumer that water has arrived
 	if local_player_id == 2:  # Only consumer receives this
 		_receive_water_for_consumption(water_data)
 
 func _receive_water_for_consumption(water_data: Dictionary) -> void:
-	"""Consumer receives water to process"""
+	# Consumer receives water to process
 	var current_scene = get_tree().current_scene
 	if current_scene and current_scene.has_method("on_water_received"):
 		current_scene.on_water_received(water_data)
@@ -786,10 +912,8 @@ func _receive_water_for_consumption(water_data: Dictionary) -> void:
 ## CONSUMER FUNCTIONS (Player 2 - Pipe Manager/Water User)
 
 func consume_water(success: bool) -> Dictionary:
-	"""
-	Player 2 consumes a water unit from the queue.
-	Returns the water data that was consumed.
-	"""
+	# Player 2 consumes a water unit from the queue.
+	# Returns the water data that was consumed.
 	if water_queue.is_empty():
 		_log("⚠️ Buffer EMPTY! No water to consume")
 		buffer_empty.emit()
@@ -815,7 +939,7 @@ func consume_water(success: bool) -> Dictionary:
 
 @rpc("any_peer", "reliable")
 func _sync_water_produced(water_data: Dictionary) -> void:
-	"""RPC: Sync water production to other player"""
+	# RPC: Sync water production to other player
 	if local_player_id != water_data.producer_id:
 		water_queue.append(water_data)
 		water_produced.emit(water_data)
@@ -823,7 +947,7 @@ func _sync_water_produced(water_data: Dictionary) -> void:
 
 @rpc("any_peer", "reliable")
 func _sync_water_consumed(water_data: Dictionary, success: bool) -> void:
-	"""RPC: Sync water consumption to other player"""
+	# RPC: Sync water consumption to other player
 	# Remove from queue if we have it
 	for i in range(water_queue.size()):
 		if water_queue[i].timestamp == water_data.timestamp:
@@ -836,14 +960,14 @@ func _sync_water_consumed(water_data: Dictionary, success: bool) -> void:
 
 @rpc("any_peer", "reliable")
 func _notify_buffer_overflow() -> void:
-	"""RPC: Notify all players of buffer overflow"""
+	# RPC: Notify all players of buffer overflow
 	buffer_overflow.emit()
 	_log("📡 Buffer overflow notification received")
 
 ## ROLLING WINDOW INTEGRATION (Difficulty Adjustment)
 
 func update_flow_speed(new_speed: float) -> void:
-	"""Update the transfer speed based on Rolling Window algorithm"""
+	# Update the transfer speed based on Rolling Window algorithm
 	current_flow_speed = clampf(new_speed, 0.5, 5.0)
 	_log("🌊 Flow speed updated: %.2fs" % current_flow_speed)
 	
@@ -853,12 +977,12 @@ func update_flow_speed(new_speed: float) -> void:
 
 @rpc("authority", "reliable")
 func _sync_flow_speed(speed: float) -> void:
-	"""RPC: Sync flow speed from host"""
+	# RPC: Sync flow speed from host
 	current_flow_speed = speed
 	_log("📡 Flow speed synced: %.2fs" % speed)
 
 func update_player_efficiency(player_num: int, efficiency: float) -> void:
-	"""Update a player's efficiency rating (0.0-1.0)"""
+	# Update a player's efficiency rating (0.0-1.0)
 	if player_num == 1:
 		producer_efficiency = clampf(efficiency, 0.0, 1.0)
 	else:
@@ -872,10 +996,8 @@ func update_player_efficiency(player_num: int, efficiency: float) -> void:
 	])
 
 func calculate_difficulty_adjustment() -> float:
-	"""
-	Rolling Window: Calculate difficulty adjustment based on team performance.
-	Returns multiplier for flow_speed (lower = harder, faster flow)
-	"""
+	# Rolling Window: Calculate difficulty adjustment based on team performance.
+	# Returns multiplier for flow_speed (lower = harder, faster flow)
 	# If team is doing well, speed up (decrease time)
 	# If team is struggling, slow down (increase time)
 	
@@ -897,7 +1019,7 @@ func calculate_difficulty_adjustment() -> float:
 	return adjustment
 
 func get_buffer_status() -> Dictionary:
-	"""Get current buffer status for UI display"""
+	# Get current buffer status for UI display
 	return {
 		"current_size": water_queue.size(),
 		"max_size": BUFFER_MAX_SIZE,
@@ -913,23 +1035,23 @@ func get_buffer_status() -> Dictionary:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func request_pause() -> void:
-	"""Request game pause (either player can pause)"""
+	# Request game pause (either player can pause)
 	_log("⏸️ Pause requested by Player %d" % local_player_id)
 	rpc("_execute_pause")
 
 @rpc("any_peer", "call_local", "reliable")
 func _execute_pause() -> void:
-	"""Execute pause on all clients"""
+	# Execute pause on all clients
 	get_tree().paused = true
 	_log("⏸️ Game paused")
 	
 	# Notify current scene
 	var current_scene = get_tree().current_scene
 	if current_scene and current_scene.has_method("_on_remote_pause"):
-		current_scene._on_remote_pause()
+		current_scene.call("_on_remote_pause")
 
 func request_resume() -> void:
-	"""Request game resume (either player can resume, but host has priority)"""
+	# Request game resume (either player can resume, but host has priority)
 	if is_host:
 		_log("▶️ Resume requested by host")
 		rpc("_execute_resume")
@@ -939,44 +1061,45 @@ func request_resume() -> void:
 
 @rpc("any_peer", "reliable")
 func _request_resume_from_client() -> void:
-	"""Client requests host to resume"""
+	# Client requests host to resume
 	if is_host:
 		rpc("_execute_resume")
 
 @rpc("any_peer", "call_local", "reliable")
 func _execute_resume() -> void:
-	"""Execute resume on all clients"""
+	# Execute resume on all clients
 	get_tree().paused = false
 	_log("▶️ Game resumed")
 	
 	# Notify current scene
 	var current_scene = get_tree().current_scene
 	if current_scene and current_scene.has_method("_on_remote_resume"):
-		current_scene._on_remote_resume()
+		current_scene.call("_on_remote_resume")
 
 @rpc("any_peer", "call_local", "reliable")
 func sync_pause_state(paused: bool) -> void:
-	"""Synchronize pause state across all connected players (legacy support)"""
+	# Synchronize pause state across all connected players (legacy)
 	var sender_id = multiplayer.get_remote_sender_id()
 	if sender_id == 0:  # Local call
 		sender_id = multiplayer.get_unique_id()
 	
-	_log("🔄 Pause state sync: " + ("PAUSED" if paused else "RESUMED") + " by peer " + str(sender_id))
+	var state_str = "PAUSED" if paused else "RESUMED"
+	_log("🔄 Pause state sync: %s by peer %d" % [state_str, sender_id])
 	
 	# Notify the current scene about remote pause
 	var current_scene = get_tree().current_scene
 	if current_scene:
 		if paused and current_scene.has_method("_on_remote_pause"):
-			current_scene._on_remote_pause()
+			current_scene.call("_on_remote_pause")
 		elif not paused and current_scene.has_method("_on_remote_resume"):
-			current_scene._on_remote_resume()
+			current_scene.call("_on_remote_resume")
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # SYNCHRONIZED COUNTDOWN
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func start_countdown() -> void:
-	"""Start synchronized countdown (3-2-1-GO!) before round (host only)"""
+	# Start synchronized countdown (3-2-1-GO!) before round (host only)
 	if not is_host:
 		return
 	
@@ -985,7 +1108,7 @@ func start_countdown() -> void:
 
 @rpc("authority", "call_local", "reliable")
 func _execute_countdown(count: int) -> void:
-	"""Execute countdown on all clients"""
+	# Execute countdown on all clients
 	round_starting.emit(count)
 	_log("⏱️ Countdown: %d" % count)
 	
@@ -997,15 +1120,15 @@ func _execute_countdown(count: int) -> void:
 		_log("🎮 GO! Round started")
 		# Signal game can start
 		var current_scene = get_tree().current_scene
-		if current_scene and current_scene.has_method("_on_countdown_complete"):
-			current_scene._on_countdown_complete()
+		if current_scene and current_scene.has_method("on_countdown_complete"):
+			current_scene.on_countdown_complete()
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # ROUND MANAGEMENT
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func complete_round() -> void:
-	"""Mark round as complete and show results (host only)"""
+	# Mark round as complete and show results (host only)
 	if not is_host:
 		return
 	
@@ -1023,14 +1146,16 @@ func complete_round() -> void:
 	
 	var team_total = get_total_score()
 	
-	_log("🏁 Round %d complete! P1: %d | P2: %d | Total: %d" % [rounds_survived, p1_score, p2_score, team_total])
+	_log("🏁 Round %d done! P1:%d P2:%d Total:%d"
+		% [rounds_survived, p1_score,
+			p2_score, team_total])
 	
 	# Broadcast round completion
 	rpc("_show_round_results", p1_score, p2_score, team_total, rounds_survived)
 
 @rpc("authority", "call_local", "reliable")
 func _show_round_results(p1_score: int, p2_score: int, team_total: int, rounds: int) -> void:
-	"""Show round results on all clients"""
+	# Show round results on all clients
 	round_completed.emit(p1_score, p2_score, team_total)
 	_log("📊 Round %d results - Your score: %d | Partner: %d | Team: %d" % [
 		rounds,
@@ -1047,29 +1172,243 @@ signal resource_sent(from_player: int, resource_type: String, amount: int, quali
 signal task_marked(from_player: int, task_id: int, position: Vector2)
 
 func send_resource(resource_type: String, amount: int, quality: float = 1.0) -> void:
-	"""Send resource to partner player (e.g., water, greywater)"""
+	# Send resource to partner player (e.g., water, greywater)
 	var my_player_num = _get_player_num(multiplayer.get_unique_id())
-	_log("💧 Sending resource: %s (x%d, quality: %.1f) from P%d" % [resource_type, amount, quality, my_player_num])
+	_log("💧 Sending: %s (x%d, q:%.1f) from P%d"
+		% [resource_type, amount,
+			quality, my_player_num])
 	rpc("_receive_resource", my_player_num, resource_type, amount, quality)
 
 @rpc("any_peer", "reliable")
-func _receive_resource(from_player: int, resource_type: String, amount: int, quality: float) -> void:
-	"""Receive resource from partner"""
+func _receive_resource(
+	from_player: int, resource_type: String,
+	amount: int, quality: float
+) -> void:
+	# Receive resource from partner
 	resource_sent.emit(from_player, resource_type, amount, quality)
 	_log("📥 Received resource: %s (x%d) from P%d" % [resource_type, amount, from_player])
 
 func mark_task(task_id: int, task_position: Vector2) -> void:
-	"""Mark a task for partner to complete (e.g., leak spotted, tap found)"""
+	# Mark a task for partner to complete (e.g., leak spotted, tap found)
 	var my_player_num = _get_player_num(multiplayer.get_unique_id())
 	_log("🎯 Marking task #%d at %s for partner" % [task_id, task_position])
 	rpc("_receive_task_mark", my_player_num, task_id, task_position)
 
 @rpc("any_peer", "reliable")
 func _receive_task_mark(from_player: int, task_id: int, position: Vector2) -> void:
-	"""Receive task mark from partner"""
+	# Receive task mark from partner
 	task_marked.emit(from_player, task_id, position)
 	_log("📍 Task #%d marked by P%d at %s" % [task_id, from_player, position])
 
 func _get_player_num(peer_id: int) -> int:
-	"""Helper to get player number from peer ID"""
+	# Helper to get player number from peer ID
 	return players.get(peer_id, {}).get("player_num", 0)
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ROUND COMPLETION & COORDINATION
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+signal both_players_completed(p1_success: bool, p2_success: bool, p1_score: int, p2_score: int)
+
+var round_completion_status: Dictionary = {} # {peer_id: {success: bool, score: int}}
+var round_in_progress: bool = false
+
+func start_round() -> void:
+	# Mark round as started (host only)
+	if not is_host:
+		return
+	
+	round_in_progress = true
+	round_completion_status.clear()
+	_log("🎮 Round started")
+
+func report_player_completion(success: bool, score: int) -> void:
+	# Report that local player has completed their game
+	if not round_in_progress:
+		round_in_progress = true
+	
+	var my_id = multiplayer.get_unique_id()
+	round_completion_status[my_id] = {
+		"success": success,
+		"score": score
+	}
+	
+	var status_str = "Success" if success else "Failed"
+	_log("✅ Player %d completed (%s, score: %d)"
+		% [my_id, status_str, score])
+	
+	# Notify other players
+	rpc("_sync_player_completion", my_id, success, score)
+	
+	# Check if both completed
+	_check_both_completed()
+
+@rpc("any_peer", "reliable")
+func _sync_player_completion(peer_id: int, success: bool, score: int) -> void:
+	# Receive completion report from remote player
+	round_completion_status[peer_id] = {
+		"success": success,
+		"score": score
+	}
+	var status_str = "Success" if success else "Failed"
+	_log("📡 Player %d completed (%s, score: %d)"
+		% [peer_id, status_str, score])
+	
+	_check_both_completed()
+
+func _check_both_completed() -> void:
+	# Check if both players have completed their games
+	if round_completion_status.size() < 2:
+		return  # Still waiting for other player
+	
+	round_in_progress = false
+	
+	# Get results
+	var p1_data = round_completion_status.get(1, {"success": false, "score": 0})
+	var p2_data = round_completion_status.get(2, {"success": false, "score": 0})
+	
+	# Find peer IDs for each player
+	for peer_id in round_completion_status:
+		var player_num = players.get(peer_id, {}).get("player_num", 0)
+		if player_num == 1:
+			p1_data = round_completion_status[peer_id]
+		elif player_num == 2:
+			p2_data = round_completion_status[peer_id]
+	
+	var p1_success = p1_data.get("success", false)
+	var p2_success = p2_data.get("success", false)
+	var p1_score = p1_data.get("score", 0)
+	var p2_score = p2_data.get("score", 0)
+	
+	_log("🏁 Both players completed - P1: %s (%d), P2: %s (%d)" % [
+		"Win" if p1_success else "Fail", p1_score,
+		"Win" if p2_success else "Fail", p2_score
+	])
+	
+	# Handle life deduction (only host)
+	if is_host:
+		if not p1_success and not p2_success:
+			# Both failed: deduct 1 life
+			lose_life()
+		elif not p1_success or not p2_success:
+			# One failed: deduct 1 life
+			lose_life()
+		# Both succeeded: no life loss
+		
+		# Calculate difficulty adjustment with rolling window
+		_apply_rolling_window_adjustment(p1_success, p2_success, p1_score, p2_score)
+		
+		# Increment rounds
+		rounds_survived += 1
+	
+	# Emit signal
+	both_players_completed.emit(p1_success, p2_success, p1_score, p2_score)
+	
+	# Show round results
+	if is_host:
+		await get_tree().create_timer(2.0).timeout
+		_transition_to_next_round()
+
+func _apply_rolling_window_adjustment(
+	p1_success: bool, p2_success: bool,
+	_p1_score: int, _p2_score: int
+) -> void:
+	# Apply rolling window rule-based difficulty adjustment
+	var team_success_rate = 0.0
+	var success_count = 0
+	
+	if p1_success: success_count += 1
+	if p2_success: success_count += 1
+	
+	team_success_rate = success_count / 2.0
+	
+	# Update efficiency metrics
+	producer_efficiency = 1.0 if p1_success else 0.5
+	consumer_efficiency = 1.0 if p2_success else 0.5
+	combined_efficiency = (producer_efficiency + consumer_efficiency) / 2.0
+	
+	# Rule-based adjustment
+	var _difficulty_change = "MAINTAIN"  # Prefixed with _ to indicate intentionally unused
+	
+	if team_success_rate >= 1.0:
+		# Both succeeded - make harder
+		_difficulty_change = "HARDER"
+		current_flow_speed = max(0.5, current_flow_speed * 0.85)
+		_log("📈 Difficulty increased! Both succeeded. Flow speed: %.2fs" % current_flow_speed)
+	elif team_success_rate == 0.0:
+		# Both failed - make easier
+		_difficulty_change = "EASIER"
+		current_flow_speed = min(5.0, current_flow_speed * 1.2)
+		_log("📉 Difficulty decreased! Both failed. Flow speed: %.2fs" % current_flow_speed)
+	else:
+		# Mixed results - maintain
+		_log("➡️ Difficulty maintained. Mixed results.")
+	
+	# Sync to clients
+	rpc("_sync_difficulty", current_flow_speed, combined_efficiency)
+
+@rpc("authority", "reliable")
+func _sync_difficulty(flow_speed: float, efficiency: float) -> void:
+	# Sync difficulty settings from host
+	current_flow_speed = flow_speed
+	combined_efficiency = efficiency
+	_log("📡 Difficulty synced - Speed: %.2fs, Efficiency: %.0f%%" % [flow_speed, efficiency * 100])
+
+func _transition_to_next_round() -> void:
+	# Transition to next round (host only)
+	if not is_host:
+		return
+	
+	# Check if game over
+	if team_lives <= 0:
+		_log("💀 GAME OVER - Team ran out of lives!")
+		rpc("_show_game_over")
+		return
+	
+	# Load next level set
+	if not LevelSets or not LevelSets.has_method("get_random_level_set"):
+		push_error("LevelSets autoload not found!")
+		return
+	
+	var level_set = LevelSets.get_random_level_set()
+	
+	# Update roles
+	player_roles = {
+		1: level_set["player1_role"],
+		2: level_set["player2_role"]
+	}
+	
+	# Reset G-Counter for next round
+	reset_g_counter()
+	
+	# Broadcast round transition
+	rpc("_load_next_round", level_set, get_total_score(), team_lives, rounds_survived)
+
+@rpc("authority", "call_local", "reliable")
+func _load_next_round(level_set: Dictionary, _total_score: int, lives: int, rounds: int) -> void:
+	# Load next round for all players
+	var my_player_num = get_local_player_num()
+	var my_game_scene: String
+	
+	if my_player_num == 1:
+		my_game_scene = level_set["player1_game"]
+	else:
+		my_game_scene = level_set["player2_game"]
+	
+	_log("🎮 Loading round %d: %s (Lives: %d)"
+		% [rounds + 1, my_game_scene, lives])
+	
+	if ResourceLoader.exists(my_game_scene):
+		get_tree().change_scene_to_file(my_game_scene)
+	else:
+		push_error("Game scene not found: " + my_game_scene)
+
+@rpc("authority", "call_local", "reliable")
+func _show_game_over() -> void:
+	# Show game over on all clients
+	_log("💀 GAME OVER - Rounds: %d, Score: %d" % [rounds_survived, get_total_score()])
+	
+	# The game scene will show the game over screen
+	var current_scene = get_tree().current_scene
+	if current_scene and current_scene.has_method("_show_game_over_screen"):
+		current_scene.call("_show_game_over_screen")
