@@ -124,7 +124,7 @@ func _ready() -> void:
 	_start_game()
 
 func _get_assigned_mode() -> PlayerMode:
-	"""Get the randomly assigned mode for this player"""
+	# Get the randomly assigned mode for this player
 	if GameManager and GameManager.has_method("get_my_player_mode"):
 		var mode_num = GameManager.get_my_player_mode()
 		return PlayerMode.MODE_1_COLLECTOR if mode_num == 1 else PlayerMode.MODE_2_FILTER
@@ -300,7 +300,7 @@ func _on_spawn_timer_timeout() -> void:
 	_spawn_dirt_particle_synced()
 
 func _spawn_water_drop_synced() -> void:
-	"""HOST: Spawn water drop and sync"""
+	# HOST: Spawn water drop and sync
 	if not _is_host():
 		return
 	
@@ -311,7 +311,7 @@ func _spawn_water_drop_synced() -> void:
 
 @rpc("authority", "call_local", "reliable")
 func _create_water_drop_at(spawn_x: float, spawn_id: int) -> void:
-	"""Create water drop (Mode 1 only)"""
+	# Create water drop (Mode 1 only)
 	if my_mode != PlayerMode.MODE_1_COLLECTOR:
 		return
 	
@@ -338,7 +338,7 @@ func _create_water_drop_at(spawn_x: float, spawn_id: int) -> void:
 		add_child(drop)
 
 func _spawn_dirt_particle_synced() -> void:
-	"""HOST: Spawn dirt particle and sync"""
+	# HOST: Spawn dirt particle and sync
 	if not _is_host():
 		return
 	
@@ -349,7 +349,7 @@ func _spawn_dirt_particle_synced() -> void:
 
 @rpc("authority", "call_local", "reliable")
 func _create_dirt_particle_at(spawn_y: float, spawn_id: int) -> void:
-	"""Create dirt particle (Mode 2 only)"""
+	# Create dirt particle (Mode 2 only)
 	if my_mode != PlayerMode.MODE_2_FILTER:
 		return
 	
@@ -431,7 +431,7 @@ func _create_dynamic_dirt() -> Area2D:
 	return dirt
 
 func _on_object_caught(obj: Area2D) -> void:
-	"""Called when bucket catches a water drop"""
+	# Called when bucket catches a water drop
 	_on_water_caught(obj)
 
 func _on_water_caught(drop: Area2D) -> void:
@@ -467,7 +467,7 @@ func _on_dirt_missed(dirt: Area2D) -> void:
 	dirt.queue_free()
 
 func _on_resource_received(from_player: int, resource_type: String, amount: int, _quality: float) -> void:
-	"""Receive resources from partner - creates interconnected gameplay"""
+	# Receive resources from partner - creates interconnected gameplay
 	if resource_type == "harvested_water":
 		print("📥 Received %d harvested water from P%d" % [amount, from_player])
 		# Partner's harvested water could trigger special effects or bonuses

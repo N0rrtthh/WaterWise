@@ -109,7 +109,7 @@ func _setup_audio_player() -> void:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func get_color(color_type: String) -> Color:
-	"""Get appropriate color based on accessibility settings"""
+	# Get appropriate color based on accessibility settings
 	if colorblind_mode:
 		return colorblind_colors.get(color_type, Color.WHITE)
 	return standard_colors.get(color_type, Color.WHITE)
@@ -141,7 +141,7 @@ func set_colorblind_mode(enabled: bool) -> void:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func get_indicator_shape(is_good: bool) -> PackedVector2Array:
-	"""Get shape indicator for colorblind users"""
+	# Get shape indicator for colorblind users
 	if is_good:
 		# Checkmark shape ✓
 		return PackedVector2Array([
@@ -162,7 +162,7 @@ func get_indicator_shape(is_good: bool) -> PackedVector2Array:
 		])
 
 func create_indicator_node(is_good: bool) -> Node2D:
-	"""Create a shape indicator node"""
+	# Create a shape indicator node
 	var indicator = Node2D.new()
 	
 	var line = Line2D.new()
@@ -178,7 +178,7 @@ func create_indicator_node(is_good: bool) -> Node2D:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func get_touch_target_size() -> float:
-	"""Get appropriate touch target size"""
+	# Get appropriate touch target size
 	return LARGE_TARGET_SIZE if large_touch_targets else NORMAL_TARGET_SIZE
 
 func set_large_touch_targets(enabled: bool) -> void:
@@ -189,12 +189,12 @@ func set_large_touch_targets(enabled: bool) -> void:
 	large_targets_changed.emit(enabled)
 
 func apply_touch_target_to_button(button: Button) -> void:
-	"""Apply appropriate touch target size to a button"""
+	# Apply appropriate touch target size to a button
 	var size = get_touch_target_size()
 	button.custom_minimum_size = Vector2(size, size)
 
 func apply_touch_targets_to_container(container: Node) -> void:
-	"""Apply touch targets to all buttons in a container"""
+	# Apply touch targets to all buttons in a container
 	for child in container.get_children():
 		if child is Button:
 			apply_touch_target_to_button(child)
@@ -206,7 +206,7 @@ func apply_touch_targets_to_container(container: Node) -> void:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func play_audio_cue(cue_type: String) -> void:
-	"""Play an audio cue for accessibility"""
+	# Play an audio cue for accessibility
 	if not audio_cues_enabled:
 		return
 	
@@ -217,7 +217,7 @@ func play_audio_cue(cue_type: String) -> void:
 	_play_tone(cue.freq, cue.duration)
 
 func _play_tone(frequency: float, duration: float) -> void:
-	"""Generate and play a simple tone"""
+	# Generate and play a simple tone
 	var sample_rate := 44100.0
 	var num_samples := int(sample_rate * duration)
 	
@@ -279,11 +279,11 @@ func set_reduced_motion(enabled: bool) -> void:
 		save_mgr.set_setting("reduced_motion", enabled)
 
 func get_animation_speed() -> float:
-	"""Get animation speed multiplier (faster for reduced motion)"""
+	# Get animation speed multiplier (faster for reduced motion)
 	return 3.0 if reduced_motion else 1.0
 
 func should_show_particles() -> bool:
-	"""Check if particles should be shown"""
+	# Check if particles should be shown
 	var save_mgr = _get_save_manager()
 	if save_mgr:
 		return save_mgr.get_setting("particles", true) and not reduced_motion
@@ -303,11 +303,11 @@ func set_high_contrast(enabled: bool) -> void:
 		save_mgr.set_setting("high_contrast", enabled)
 
 func get_text_color() -> Color:
-	"""Get appropriate text color for contrast"""
+	# Get appropriate text color for contrast
 	return Color.WHITE if high_contrast else Color(0.1, 0.1, 0.1)
 
 func get_background_color() -> Color:
-	"""Get appropriate background color for contrast"""
+	# Get appropriate background color for contrast
 	return Color.BLACK if high_contrast else Color(0.95, 0.95, 0.95)
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -315,7 +315,7 @@ func get_background_color() -> Color:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func announce(text: String) -> void:
-	"""Announce text for screen readers (future implementation)"""
+	# Announce text for screen readers (future implementation)
 	# This would integrate with OS accessibility APIs
 	print("[Accessibility] " + text)
 	
@@ -324,7 +324,7 @@ func announce(text: String) -> void:
 		play_audio_cue("click")
 
 func create_accessible_button(text: String, icon: String = "") -> Button:
-	"""Create a button with accessibility features"""
+	# Create a button with accessibility features
 	var btn = Button.new()
 	btn.text = icon + " " + text if icon else text
 	

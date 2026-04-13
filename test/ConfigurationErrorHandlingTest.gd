@@ -76,7 +76,7 @@ func assert_lte(actual, expected, message: String) -> void:
 # ============================================================================
 
 func test_missing_configuration_file_error_message():
-	"""Test that missing configuration files produce descriptive error messages"""
+	# Test that missing configuration files produce descriptive error messages
 	print("\nTEST: Missing configuration file error message")
 	
 	var config = CutsceneParser.parse_config("res://nonexistent/missing_file.json")
@@ -87,7 +87,7 @@ func test_missing_configuration_file_error_message():
 
 
 func test_invalid_json_error_message():
-	"""Test that invalid JSON produces descriptive error messages"""
+	# Test that invalid JSON produces descriptive error messages
 	print("\nTEST: Invalid JSON error message")
 	
 	# Create a temporary invalid JSON file
@@ -107,7 +107,7 @@ func test_invalid_json_error_message():
 
 
 func test_empty_file_error_message():
-	"""Test that empty files produce descriptive error messages"""
+	# Test that empty files produce descriptive error messages
 	print("\nTEST: Empty file error message")
 	
 	# Create a temporary empty JSON file
@@ -127,7 +127,7 @@ func test_empty_file_error_message():
 
 
 func test_validation_error_with_fallback():
-	"""Test that validation errors result in default value fallback"""
+	# Test that validation errors result in default value fallback
 	print("\nTEST: Validation error with fallback")
 	
 	# Create a config with invalid duration
@@ -161,7 +161,7 @@ func test_validation_error_with_fallback():
 
 
 func test_corrupted_data_fallback():
-	"""Test that corrupted data falls back to minimal config"""
+	# Test that corrupted data falls back to minimal config
 	print("\nTEST: Corrupted data fallback")
 	
 	# Create a config with multiple invalid fields
@@ -186,7 +186,7 @@ func test_corrupted_data_fallback():
 
 
 func test_missing_required_fields_fallback():
-	"""Test that missing required fields get default values"""
+	# Test that missing required fields get default values
 	print("\nTEST: Missing required fields fallback")
 	
 	# Create a config missing keyframes
@@ -210,7 +210,7 @@ func test_missing_required_fields_fallback():
 
 
 func test_apply_validation_defaults_duration():
-	"""Test that _apply_validation_defaults fixes duration issues"""
+	# Test that _apply_validation_defaults fixes duration issues
 	print("\nTEST: Apply validation defaults - duration")
 	
 	var player = AnimatedCutscenePlayer.new()
@@ -240,7 +240,7 @@ func test_apply_validation_defaults_duration():
 
 
 func test_apply_validation_defaults_keyframes():
-	"""Test that _apply_validation_defaults adds missing keyframes"""
+	# Test that _apply_validation_defaults adds missing keyframes
 	print("\nTEST: Apply validation defaults - keyframes")
 	
 	var player = AnimatedCutscenePlayer.new()
@@ -261,7 +261,7 @@ func test_apply_validation_defaults_keyframes():
 
 
 func test_apply_validation_defaults_character():
-	"""Test that _apply_validation_defaults adds missing character config"""
+	# Test that _apply_validation_defaults adds missing character config
 	print("\nTEST: Apply validation defaults - character")
 	
 	var player = AnimatedCutscenePlayer.new()

@@ -4,7 +4,7 @@ extends Node
 ## This ensures the animated cutscene system works even without pre-generated assets
 
 static func ensure_assets_exist() -> bool:
-	"""Create placeholder assets if they don't exist. Returns true if assets are available."""
+	# Create placeholder assets if they don't exist. Returns true if assets are available.
 	
 	# Check if base droplet exists
 	if not ResourceLoader.exists("res://assets/characters/droplet_base.png"):
@@ -23,7 +23,7 @@ static func ensure_assets_exist() -> bool:
 
 
 static func _create_base_droplet() -> bool:
-	"""Create a simple blue water droplet texture"""
+	# Create a simple blue water droplet texture
 	var size = 512
 	var image = Image.create(size, size, false, Image.FORMAT_RGBA8)
 	
@@ -61,7 +61,7 @@ static func _create_base_droplet() -> bool:
 
 
 static func _create_expression_texture(expression_name: String) -> bool:
-	"""Create a simple expression overlay texture"""
+	# Create a simple expression overlay texture
 	var size = 512
 	var image = Image.create(size, size, false, Image.FORMAT_RGBA8)
 	

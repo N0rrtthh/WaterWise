@@ -106,7 +106,7 @@ func _ready() -> void:
 	vbox.add_child(back_btn)
 
 func _create_button(text: String, color: Color) -> Button:
-	"""Create a styled button"""
+	# Create a styled button
 	var btn = Button.new()
 	btn.text = text
 	btn.custom_minimum_size = Vector2(500, 70)
@@ -125,7 +125,7 @@ func _create_button(text: String, color: Color) -> Button:
 	return btn
 
 func _update_info() -> void:
-	"""Update the info display"""
+	# Update the info display
 	if not info_label or not has_node("/root/AdaptiveDifficulty"):
 		return
 	
@@ -145,29 +145,29 @@ func _update_info() -> void:
 	info_label.text = text
 
 func _on_play_demo() -> void:
-	"""Start the demo minigame"""
+	# Start the demo minigame
 	print("🎮 Starting Demo Game...")
 	get_tree().change_scene_to_file("res://test/DemoMinigame.tscn")
 
 func _on_run_test() -> void:
-	"""Run automated algorithm test"""
+	# Run automated algorithm test
 	print("🧪 Starting Automated Test...")
 	get_tree().change_scene_to_file("res://test/AutomatedTest.tscn")
 
 func _on_test_gcounter() -> void:
-	"""Test G-Counter algorithm"""
+	# Test G-Counter algorithm
 	print("🔢 Starting G-Counter Test...")
 	get_tree().change_scene_to_file("res://test/GCounterTest.tscn")
 
 func _on_reset() -> void:
-	"""Reset the adaptive difficulty system"""
+	# Reset the adaptive difficulty system
 	if AdaptiveDifficulty:
 		AdaptiveDifficulty.reset()
 		print("🔄 Algorithm Reset")
 		_update_info()
 
 func _on_back() -> void:
-	"""Return to main game"""
+	# Return to main game
 	get_tree().change_scene_to_file("res://scenes/ui/InitialScreen.tscn")
 
 func _process(_delta: float) -> void:

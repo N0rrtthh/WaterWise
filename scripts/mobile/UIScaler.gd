@@ -194,7 +194,7 @@ static func add_text_backdrop(label: Label, color: Color = Color(0, 0, 0, 0.6), 
 		label.resized.connect(_on_label_resized.bind(label, backdrop, padding))
 
 static func _on_label_resized(label: Label, backdrop: ColorRect, padding: float) -> void:
-	"""Update backdrop size when label is resized"""
+	# Update backdrop size when label is resized
 	if backdrop and is_instance_valid(backdrop):
 		backdrop.size = label.size + Vector2(padding * 2, padding * 2)
 
@@ -220,7 +220,7 @@ static func check_contrast_ratio(text_color: Color, bg_color: Color) -> bool:
 	return contrast_ratio >= 4.5
 
 static func _calculate_relative_luminance(color: Color) -> float:
-	"""Calculate relative luminance according to WCAG formula"""
+	# Calculate relative luminance according to WCAG formula
 	# Convert sRGB to linear RGB
 	var r = _srgb_to_linear(color.r)
 	var g = _srgb_to_linear(color.g)
@@ -230,7 +230,7 @@ static func _calculate_relative_luminance(color: Color) -> float:
 	return 0.2126 * r + 0.7152 * g + 0.0722 * b
 
 static func _srgb_to_linear(component: float) -> float:
-	"""Convert sRGB component to linear RGB"""
+	# Convert sRGB component to linear RGB
 	if component <= 0.03928:
 		return component / 12.92
 	else:

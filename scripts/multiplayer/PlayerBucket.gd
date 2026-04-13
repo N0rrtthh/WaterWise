@@ -84,17 +84,15 @@ func _ready() -> void:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func set_difficulty(multiplier: float) -> void:
-	"""
-	Set difficulty multiplier from Rolling Window algorithm.
-	
-	Higher difficulty = smaller bucket
-	Multiplier range: 0.8 (easy) to 1.4 (hard)
-	"""
+	# Set difficulty multiplier from Rolling Window algorithm.
+	#
+	# Higher difficulty = smaller bucket
+	# Multiplier range: 0.8 (easy) to 1.4 (hard)
 	difficulty_multiplier = multiplier
 	_update_bucket_width()
 
 func _update_bucket_width() -> void:
-	"""Update bucket width based on difficulty"""
+	# Update bucket width based on difficulty
 	# Invert multiplier for bucket size (harder = smaller)
 	var size_factor: float = 1.0 / difficulty_multiplier
 	current_width = base_width * size_factor
@@ -106,7 +104,7 @@ func _update_bucket_width() -> void:
 	_update_visual()
 
 func _update_visual() -> void:
-	"""Update the visual representation of the bucket"""
+	# Update the visual representation of the bucket
 	# Update collision shape if it exists
 	var collision: CollisionShape2D = get_node_or_null("CollisionShape2D")
 	if collision:
@@ -157,7 +155,7 @@ func _input(event: InputEvent) -> void:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func _on_area_entered(other: Area2D) -> void:
-	"""Handle collision with falling objects"""
+	# Handle collision with falling objects
 	if not is_active:
 		return
 	
@@ -175,7 +173,7 @@ func _on_area_entered(other: Area2D) -> void:
 			_flash_green()
 
 func _flash_green() -> void:
-	"""Flash green for successful catch"""
+	# Flash green for successful catch
 	var tween: Tween = create_tween()
 	tween.set_loops(1)
 	var original: Color = modulate
@@ -183,7 +181,7 @@ func _flash_green() -> void:
 	tween.tween_property(self, "modulate", original, 0.1)
 
 func _flash_red() -> void:
-	"""Flash red for bad catch"""
+	# Flash red for bad catch
 	var tween: Tween = create_tween()
 	tween.set_loops(1)
 	var original: Color = modulate
@@ -201,12 +199,12 @@ func _flash_red() -> void:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func activate() -> void:
-	"""Enable bucket control"""
+	# Enable bucket control
 	is_active = true
 	modulate.a = 1.0
 
 func deactivate() -> void:
-	"""Disable bucket control"""
+	# Disable bucket control
 	is_active = false
 	modulate.a = 0.5
 
@@ -215,7 +213,7 @@ func deactivate() -> void:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func apply_size_boost(duration: float = 5.0) -> void:
-	"""Temporarily increase bucket size"""
+	# Temporarily increase bucket size
 	var original_width: float = current_width
 	current_width *= 1.5
 	_update_visual()
@@ -230,7 +228,7 @@ func apply_size_boost(duration: float = 5.0) -> void:
 	modulate = Color.WHITE
 
 func apply_magnet(duration: float = 5.0, radius: float = 100.0) -> void:
-	"""Temporarily attract nearby drops"""
+	# Temporarily attract nearby drops
 	var timer: float = 0.0
 	
 	while timer < duration:

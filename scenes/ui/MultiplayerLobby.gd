@@ -281,7 +281,7 @@ func _on_connection_failed() -> void:
 	_show_mode_selection()
 
 func _on_player_ready_changed(_peer_id: int, ready_status: bool) -> void:
-	"""Update UI when any player's ready status changes"""
+	# Update UI when any player's ready status changes
 	print("🔄 Player ready changed: ", _peer_id, " = ", ready_status)
 	_update_player_list()
 
@@ -292,7 +292,7 @@ func _on_both_players_ready() -> void:
 		start_game_button.disabled = false
 
 func _load_level_set_games(level_set: Dictionary) -> void:
-	"""Load the correct game scene for EACH PLAYER based on level set"""
+	# Load the correct game scene for EACH PLAYER based on level set
 	# P1 and P2 load DIFFERENT scenes with interconnected gameplay
 	var p1_scene: String = level_set["player1_game"]
 	var p2_scene: String = level_set["player2_game"]
@@ -379,7 +379,7 @@ func _update_player_list() -> void:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func _get_local_ip() -> String:
-	"""Get local IP address for LAN"""
+	# Get local IP address for LAN
 	var addresses = IP.get_local_addresses()
 	
 	# Find IPv4 address that's not localhost
@@ -390,7 +390,7 @@ func _get_local_ip() -> String:
 	return "Unknown"
 
 func _validate_ip(ip: String) -> bool:
-	"""Validate IP address format"""
+	# Validate IP address format
 	var parts = ip.split(".")
 	if parts.size() != 4:
 		return false
@@ -405,7 +405,7 @@ func _validate_ip(ip: String) -> bool:
 	return true
 
 func _show_error(message: String) -> void:
-	"""Show error message (can be enhanced with popup)"""
+	# Show error message (can be enhanced with popup)
 	status_label.text = message
 	status_label.modulate = Color.RED
 	
@@ -414,11 +414,11 @@ func _show_error(message: String) -> void:
 	status_label.modulate = Color.WHITE
 
 func _t(key: String) -> String:
-	"""Get translated text"""
+	# Get translated text
 	return translations[current_language].get(key, key)
 
 func _update_translations() -> void:
-	"""Update all UI text based on current language"""
+	# Update all UI text based on current language
 	title_label.text = _t("title")
 	host_button.text = _t("host")
 	join_button.text = _t("join")

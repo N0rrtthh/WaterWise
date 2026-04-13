@@ -22,7 +22,7 @@ var right: float = 0.0
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func from_display_safe_area() -> void:
-	"""Calculate safe area margins from DisplayServer.get_display_safe_area()"""
+	# Calculate safe area margins from DisplayServer.get_display_safe_area()
 	var safe_area = DisplayServer.get_display_safe_area()
 	var screen_size = DisplayServer.screen_get_size()
 	
@@ -45,7 +45,7 @@ func from_display_safe_area() -> void:
 	right = max(0.0, right)
 
 func to_dictionary() -> Dictionary:
-	"""Convert safe area margins to dictionary for easy access"""
+	# Convert safe area margins to dictionary for easy access
 	return {
 		"top": top,
 		"bottom": bottom,
@@ -58,7 +58,7 @@ func to_dictionary() -> Dictionary:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func _is_valid_safe_area(safe_area: Rect2i, screen_size: Vector2i) -> bool:
-	"""Validate safe area data to prevent invalid calculations"""
+	# Validate safe area data to prevent invalid calculations
 	# Check for zero or negative screen size
 	if screen_size.x <= 0 or screen_size.y <= 0:
 		push_error("Invalid screen size: %s" % screen_size)
@@ -86,7 +86,7 @@ func _is_valid_safe_area(safe_area: Rect2i, screen_size: Vector2i) -> bool:
 	return true
 
 func _reset_margins() -> void:
-	"""Reset all margins to zero (fallback for invalid data)"""
+	# Reset all margins to zero (fallback for invalid data)
 	top = 0.0
 	bottom = 0.0
 	left = 0.0

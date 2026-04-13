@@ -28,13 +28,13 @@ func _ready() -> void:
 		game_over_scene = load("res://scenes/ui/MultiplayerGameOver.tscn")
 
 func start_round() -> void:
-	"""Mark round as started"""
+	# Mark round as started
 	round_active = true
 	players_completed.clear()
 	print("[Coordinator] Round started")
 
 func report_completion(success: bool) -> void:
-	"""Report that local player has completed their task"""
+	# Report that local player has completed their task
 	if not round_active:
 		return
 	
@@ -51,14 +51,14 @@ func report_completion(success: bool) -> void:
 
 @rpc("any_peer", "reliable")
 func _report_completion_remote(peer_id: int, success: bool) -> void:
-	"""Receive completion report from remote player"""
+	# Receive completion report from remote player
 	players_completed[peer_id] = success
 	print("[Coordinator] Player %d completed remotely (%s)" % [peer_id, "Success" if success else "Failed"])
 	
 	_check_both_completed()
 
 func _check_both_completed() -> void:
-	"""Check if both players have completed"""
+	# Check if both players have completed
 	if players_completed.size() < 2:
 		return  # Still waiting for other player
 	
@@ -87,7 +87,7 @@ func _check_both_completed() -> void:
 		NetworkManager.complete_round()
 
 func _on_round_completed(p1_score: int, p2_score: int, team_total: int) -> void:
-	"""Round completed - show transition or game over"""
+	# Round completed - show transition or game over
 	print("[Coordinator] Round results: P1=%d, P2=%d, Total=%d" % [p1_score, p2_score, team_total])
 	
 	# Check if game over
@@ -97,7 +97,7 @@ func _on_round_completed(p1_score: int, p2_score: int, team_total: int) -> void:
 		_show_round_transition(p1_score, p2_score, team_total)
 
 func _show_round_transition(p1_score: int, p2_score: int, team_total: int) -> void:
-	"""Show transition screen between rounds"""
+	# Show transition screen between rounds
 	if not round_transition_scene:
 		_load_next_round()
 		return
@@ -129,7 +129,7 @@ func _show_round_transition(p1_score: int, p2_score: int, team_total: int) -> vo
 	_load_next_round()
 
 func _load_next_round() -> void:
-	"""Load next random level set (host only)"""
+	# Load next random level set (host only)
 	if not NetworkManager.is_server():
 		return
 	
@@ -156,7 +156,7 @@ func _load_next_round() -> void:
 
 @rpc("authority", "call_local", "reliable")
 func _load_level_set_games(level_set: Dictionary) -> void:
-	"""Load the correct game scene for each player"""
+	# Load the correct game scene for each player
 	var my_player_num = NetworkManager.get_local_player_num()
 	var my_game_scene: String
 	
@@ -173,7 +173,7 @@ func _load_level_set_games(level_set: Dictionary) -> void:
 		push_error("Game scene not found: " + my_game_scene)
 
 func _show_game_over(final_score: int, rounds: int, p1_score: int, p2_score: int) -> void:
-	"""Show game over screen"""
+	# Show game over screen
 	if not game_over_scene:
 		# Fallback: return to lobby
 		if NetworkManager:
@@ -185,7 +185,7 @@ func _show_game_over(final_score: int, rounds: int, p1_score: int, p2_score: int
 	game_over.show_game_over(final_score, rounds, p1_score, p2_score)
 
 func _on_team_lives_updated(remaining_lives: int) -> void:
-	"""Team lives updated"""
+	# Team lives updated
 	if remaining_lives <= 0:
 		print("[Coordinator] GAME OVER - Team ran out of lives!")
 		# Game over will be shown when round completes
