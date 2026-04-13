@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://c8v7y3m4n5p6q"]
+
+[ext_resource type="Script" path="res://test/MobileConfigTest.gd" id="1"]
+
+[node name="MobileConfigTest" type="Node"]
+script = ExtResource("1")

@@ -1,0 +1,122 @@
+{
+  "version": "1.0",
+  "minigame_key": "default",
+  "cutscene_type": "win",
+  "duration": 2.5,
+  "character": {
+    "expression": "happy",
+    "deformation_enabled": true
+  },
+  "background_color": "#0a1e0f",
+  "keyframes": [
+    {
+      "time": 0.0,
+      "transforms": [
+        {
+          "type": "scale",
+          "value": [0.3, 0.3],
+          "relative": false
+        },
+        {
+          "type": "position",
+          "value": [0, 0],
+          "relative": false
+        },
+        {
+          "type": "rotation",
+          "value": 0.0,
+          "relative": false
+        }
+      ],
+      "easing": "ease_out"
+    },
+    {
+      "time": 0.5,
+      "transforms": [
+        {
+          "type": "scale",
+          "value": [1.2, 1.2],
+          "relative": false
+        },
+        {
+          "type": "rotation",
+          "value": 0.3,
+          "relative": false
+        }
+      ],
+      "easing": "bounce"
+    },
+    {
+      "time": 1.0,
+      "transforms": [
+        {
+          "type": "scale",
+          "value": [1.1, 1.1],
+          "relative": false
+        },
+        {
+          "type": "rotation",
+          "value": -0.1,
+          "relative": false
+        }
+      ],
+      "easing": "ease_in_out"
+    },
+    {
+      "time": 1.5,
+      "transforms": [
+        {
+          "type": "scale",
+          "value": [1.0, 1.0],
+          "relative": false
+        },
+        {
+          "type": "rotation",
+          "value": 0.0,
+          "relative": false
+        }
+      ],
+      "easing": "ease_in_out"
+    },
+    {
+      "time": 2.0,
+      "transforms": [
+        {
+          "type": "scale",
+          "value": [1.0, 1.0],
+          "relative": false
+        }
+      ],
+      "easing": "linear"
+    },
+    {
+      "time": 2.5,
+      "transforms": [
+        {
+          "type": "scale",
+          "value": [0.8, 0.8],
+          "relative": false
+        }
+      ],
+      "easing": "ease_in"
+    }
+  ],
+  "particles": [
+    {
+      "time": 0.5,
+      "type": "sparkles",
+      "duration": 2.0,
+      "density": "high"
+    }
+  ],
+  "audio_cues": [
+    {
+      "time": 0.0,
+      "sound": "success"
+    },
+    {
+      "time": 0.5,
+      "sound": "water_splash"
+    }
+  ]
+}

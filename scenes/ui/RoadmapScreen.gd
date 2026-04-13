@@ -210,8 +210,8 @@ func _create_stage_nodes():
 		# Pop-in animation
 		node.scale = Vector2.ZERO
 		var tween = create_tween()
+		tween.tween_interval(i * 0.08)
 		tween.tween_property(node, "scale", Vector2.ONE, 0.4) \
-			.set_delay(i * 0.08) \
 			.set_ease(Tween.EASE_OUT) \
 			.set_trans(Tween.TRANS_BACK)
 
@@ -429,6 +429,8 @@ func _show_stage_popup(stage: Dictionary, _index: int):
 	play_btn.add_theme_color_override("font_color", Color.WHITE)
 	play_btn.add_theme_font_size_override("font_size", 20)
 	play_btn.pressed.connect(func():
+		if AudioManager:
+			AudioManager.play_click()
 		# Start the first minigame of this stage
 		if stage.minigames.size() > 0:
 			var minigame = stage.minigames[0]
@@ -441,6 +443,8 @@ func _show_stage_popup(stage: Dictionary, _index: int):
 	close_btn.custom_minimum_size = Vector2(120, 40)
 	close_btn.add_theme_font_size_override("font_size", 16)
 	close_btn.pressed.connect(func():
+		if AudioManager:
+			AudioManager.play_click()
 		overlay.queue_free()
 		popup.queue_free()
 	)
@@ -530,6 +534,8 @@ func _create_back_button():
 	btn.add_theme_font_size_override("font_size", 18)
 	
 	btn.pressed.connect(func():
+		if AudioManager:
+			AudioManager.play_click()
 		get_tree().change_scene_to_file("res://scenes/ui/InitialScreen.tscn")
 	)
 	add_child(btn)

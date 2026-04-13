@@ -17,15 +17,15 @@ func _apply_difficulty_settings() -> void:
 		"Easy":
 			veggies_to_wash = 3
 			time_penalty = 2.0
-			game_duration = 30.0
-		"Medium":
-			veggies_to_wash = 5
-			time_penalty = 3.0
-			game_duration = 25.0
-		"Hard":
-			veggies_to_wash = 7
-			time_penalty = 5.0
 			game_duration = 20.0
+		"Medium":
+			veggies_to_wash = 4
+			time_penalty = 3.0
+			game_duration = 20.0
+		"Hard":
+			veggies_to_wash = 5
+			time_penalty = 5.0
+			game_duration = 18.0
 
 func _ready():
 	game_name = "Vegetable Bath"

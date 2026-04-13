@@ -13,96 +13,59 @@ extends Node
 
 const LEVEL_SETS = [
 	{
-		"id": "water_collection_chain",
-		"name": "Water Collection Chain",
-		"description": "Catch rain and filter it for use",
-		"player1_game": "res://scripts/multiplayer/MiniGame_Rain.tscn",
-		"player2_game": "res://scripts/multiplayer/MiniGame_Rain.tscn",  # Both play same game with different modes
-		"player1_role": "Rain Catcher",
-		"player2_role": "Water Filter",
-		"connection_type": "resource_transfer",
-		"connection_description": "P1's caught water feeds into P2's filter",
-		"difficulty_easy": {
-			"p1_spawn_rate": 2.0,
-			"p2_filter_capacity": 10
-		},
-		"difficulty_medium": {
-			"p1_spawn_rate": 1.5,
-			"p2_filter_capacity": 15
-		},
-		"difficulty_hard": {
-			"p1_spawn_rate": 1.0,
-			"p2_filter_capacity": 20
-		}
-	},
-	{
-		"id": "pipe_repair_team",
-		"name": "Pipe Repair Team",
-		"description": "Spot leaks and plug them",
-		"player1_game": "res://scripts/multiplayer/MiniGame_LeafSort.tscn",
-		"player2_game": "res://scripts/multiplayer/MiniGame_LeafSort.tscn",  # Using existing game
-		"player1_role": "Leak Spotter",
-		"player2_role": "Leak Plugger",
-		"connection_type": "task_marking",
-		"connection_description": "P1 marks leaks, P2 sees and repairs them",
-		"difficulty_easy": {
-			"p1_leak_count": 3,
-			"p2_time_per_leak": 5.0
-		},
-		"difficulty_medium": {
-			"p1_leak_count": 5,
-			"p2_time_per_leak": 4.0
-		},
-		"difficulty_hard": {
-			"p1_leak_count": 7,
-			"p2_time_per_leak": 3.0
-		}
-	},
-	{
-		"id": "garden_conservation",
-		"name": "Garden Conservation",
-		"description": "Collect greywater and water plants",
-		"player1_game": "res://scripts/multiplayer/MiniGame_GreywaterSort.tscn",
-		"player2_game": "res://scripts/multiplayer/MiniGame_GreywaterSort.tscn",  # Using existing game
-		"player1_role": "Greywater Collector",
+		"id": "water_reuse_vegetables",
+		"name": "Water Reuse: Vegetable Washing",
+		"description": "P1 washes vegetables, P2 reuses water for plants",
+		"player1_game": "res://scenes/multiplayer/MP_WashVegetables.tscn",
+		"player2_game": "res://scenes/multiplayer/MP_WaterPlants.tscn",
+		"player1_role": "Vegetable Washer",
 		"player2_role": "Plant Waterer",
 		"connection_type": "resource_transfer",
-		"connection_description": "P2 can only water with what P1 collected",
-		"difficulty_easy": {
-			"p1_collection_target": 5,
-			"p2_plant_count": 3
-		},
-		"difficulty_medium": {
-			"p1_collection_target": 8,
-			"p2_plant_count": 5
-		},
-		"difficulty_hard": {
-			"p1_collection_target": 12,
-			"p2_plant_count": 7
-		}
+		"connection_description": "P1's dirty water from washing → P2 waters plants"
 	},
 	{
-		"id": "household_savings",
-		"name": "Household Savings",
-		"description": "Turn off taps and cover water drums",
-		"player1_game": "res://scripts/multiplayer/MiniGame_BucketBrigade.tscn",
-		"player2_game": "res://scripts/multiplayer/MiniGame_BucketBrigade.tscn",  # Using existing game
-		"player1_role": "Tap Turner",
-		"player2_role": "Drum Coverer",
-		"connection_type": "combined_efficiency",
-		"connection_description": "Both must complete tasks to save water",
-		"difficulty_easy": {
-			"p1_tap_count": 3,
-			"p2_drum_count": 3
-		},
-		"difficulty_medium": {
-			"p1_tap_count": 5,
-			"p2_drum_count": 5
-		},
-		"difficulty_hard": {
-			"p1_tap_count": 7,
-			"p2_drum_count": 7
-		}
+		"id": "shower_water_reuse",
+		"name": "Shower Water Reuse",
+		"description": "P1 collects shower water, P2 flushes toilets",
+		"player1_game": "res://scenes/multiplayer/MP_CollectShowerWater.tscn",
+		"player2_game": "res://scenes/multiplayer/MP_FlushToilets.tscn",
+		"player1_role": "Shower Water Collector",
+		"player2_role": "Toilet Flusher",
+		"connection_type": "resource_transfer",
+		"connection_description": "P1's shower water → P2 flushes toilets"
+	},
+	{
+		"id": "rain_aquarium",
+		"name": "Rain Collection for Aquarium",
+		"description": "P1 catches rain, P2 fills aquarium",
+		"player1_game": "res://scenes/multiplayer/MP_CatchRainAquarium.tscn",
+		"player2_game": "res://scenes/multiplayer/MP_FillAquarium.tscn",
+		"player1_role": "Rain Catcher",
+		"player2_role": "Aquarium Keeper",
+		"connection_type": "resource_transfer",
+		"connection_description": "P1's rainwater → P2 fills aquarium"
+	},
+	{
+		"id": "laundry_water_reuse",
+		"name": "Laundry Water Reuse",
+		"description": "P1 collects laundry water, P2 mops floors",
+		"player1_game": "res://scenes/multiplayer/MP_CollectLaundryWater.tscn",
+		"player2_game": "res://scenes/multiplayer/MP_MopFloor.tscn",
+		"player1_role": "Laundry Water Collector",
+		"player2_role": "Floor Mopper",
+		"connection_type": "resource_transfer",
+		"connection_description": "P1's laundry water → P2 mops floors"
+	},
+	{
+		"id": "dishwater_car_wash",
+		"name": "Dish Water Car Wash",
+		"description": "P1 collects dish water, P2 washes car",
+		"player1_game": "res://scenes/multiplayer/MP_CollectDishWater.tscn",
+		"player2_game": "res://scenes/multiplayer/MP_WashCar.tscn",
+		"player1_role": "Dish Water Collector",
+		"player2_role": "Car Washer",
+		"connection_type": "resource_transfer",
+		"connection_description": "P1's dish water → P2 washes car"
 	}
 ]
 
@@ -113,6 +76,7 @@ const LEVEL_SETS = [
 var available_sets: Array = []
 var current_set_index: int = 0
 var roles_swapped: bool = false
+var rounds_played: int = 0
 
 func _ready() -> void:
 	# Initialize available sets with all level sets
@@ -121,27 +85,29 @@ func _ready() -> void:
 	print("🎮 LevelSets initialized with %d sets" % available_sets.size())
 
 func get_random_level_set() -> Dictionary:
-	"""Get a random level set (without replacement until all played)"""
+	"""Get a random level set with role swapping every round"""
 	if available_sets.is_empty():
 		# All sets played, reshuffle
 		available_sets = LEVEL_SETS.duplicate()
 		available_sets.shuffle()
 		print("🔄 Reshuffling level sets")
 	
-	var level_set = available_sets.pop_front()
+	var level_set = available_sets.pop_front().duplicate(true)
 	
-	# Randomly decide if roles should be swapped
-	roles_swapped = randf() > 0.5
+	# Swap roles every round (P1↔P2 alternates)
+	rounds_played += 1
+	roles_swapped = (rounds_played % 2 == 0)
 	
 	if roles_swapped:
-		print("🔀 Swapping roles for this round")
+		print("🔀 Round %d: Swapping roles - P1 becomes P2, P2 becomes P1" % rounds_played)
 		var temp_game = level_set["player1_game"]
 		var temp_role = level_set["player1_role"]
-		level_set = level_set.duplicate()
 		level_set["player1_game"] = level_set["player2_game"]
 		level_set["player1_role"] = level_set["player2_role"]
 		level_set["player2_game"] = temp_game
 		level_set["player2_role"] = temp_role
+	else:
+		print("➡️ Round %d: Normal roles - P1=%s, P2=%s" % [rounds_played, level_set["player1_role"], level_set["player2_role"]])
 	
 	print("🎯 Selected level set: %s" % level_set["name"])
 	return level_set
@@ -174,4 +140,5 @@ func reset() -> void:
 	available_sets.shuffle()
 	current_set_index = 0
 	roles_swapped = false
+	rounds_played = 0
 	print("🔄 LevelSets reset")

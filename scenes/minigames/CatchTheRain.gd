@@ -14,22 +14,29 @@ func _apply_difficulty_settings() -> void:
 	var speed_mult = get_difficulty_multiplier("speed_multiplier", 1.0)
 	var item_count = int(get_difficulty_multiplier("item_count", 5))
 	
+	# Apply mobile adjustments if on mobile
+	var mobile_speed_mult = 1.0
+	var mobile_spawn_mult = 1.0
+	if MobileUIManager and MobileUIManager.is_mobile_platform():
+		mobile_speed_mult = MobileUIManager.get_game_speed_multiplier()
+		mobile_spawn_mult = MobileUIManager.get_spawn_rate_multiplier()
+	
 	match current_difficulty:
 		"Easy":
-			drop_speed = 220.0
-			spawn_interval = 0.6
-			target_score = 8
-			game_duration = 25.0
-		"Medium":
-			drop_speed = 300.0
-			spawn_interval = 0.4
-			target_score = 10
-			game_duration = 20.0
-		"Hard":
-			drop_speed = 400.0 * speed_mult
-			spawn_interval = 0.25
-			target_score = 12 + item_count
+			drop_speed = 250.0 * mobile_speed_mult
+			spawn_interval = 0.5 / mobile_spawn_mult
+			target_score = 6
 			game_duration = 15.0
+		"Medium":
+			drop_speed = 350.0 * mobile_speed_mult
+			spawn_interval = 0.35 / mobile_spawn_mult
+			target_score = 8
+			game_duration = 10.0
+		"Hard":
+			drop_speed = 500.0 * speed_mult * mobile_speed_mult
+			spawn_interval = 0.2 / mobile_spawn_mult
+			target_score = 10 + item_count
+			game_duration = 8.0
 
 func _ready():
 	game_name = "Catch The Rain"
@@ -59,6 +66,10 @@ func _ready():
 	drum_node = Node2D.new()
 	drum_node.position = Vector2(screen_size.x * 0.5, screen_size.y - 120)
 	add_child(drum_node)
+	
+	# Apply mobile scaling to drum
+	if MobileUIManager and MobileUIManager.is_mobile_platform():
+		MobileUIManager.apply_game_object_scaling(drum_node)
 	
 	# Drum visual - Blue barrel style
 	var drum_body = Polygon2D.new()
@@ -152,6 +163,10 @@ func _spawn_drop():
 	drop.position = Vector2(randf_range(50, get_viewport_rect().size.x - 50), -30)
 	drop.set_meta("good", is_good)
 	add_child(drop)
+	
+	# Apply mobile scaling to drops
+	if MobileUIManager and MobileUIManager.is_mobile_platform():
+		MobileUIManager.apply_game_object_scaling(drop)
 	
 	# Raindrop shape (larger for visibility)
 	var visual = Polygon2D.new()

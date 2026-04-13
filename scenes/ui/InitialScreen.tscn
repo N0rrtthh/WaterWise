@@ -1,4 +1,4 @@
-[gd_scene load_steps=6 format=3 uid="uid://cks33gpdabacw"]
+[gd_scene load_steps=7 format=3 uid="uid://cks33gpdabacw"]
 
 [ext_resource type="Script" uid="uid://d12w4ldcunn2w" path="res://scenes/ui/InitialScreen.gd" id="1_initial"]
 [ext_resource type="FontFile" uid="uid://6gq30qbnrhfs" path="res://fonts/NTBrickSans.otf" id="4_brick"]
