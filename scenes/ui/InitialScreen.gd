@@ -837,21 +837,31 @@ func _on_play_button_pressed() -> void:
 func _on_settings_button_pressed() -> void:
 	if AudioManager:
 		AudioManager.play_click()
-	get_tree().change_scene_to_file("res://scenes/ui/Settings.tscn")
+	if GameManager:
+		GameManager.transition_to_scene("res://scenes/ui/Settings.tscn")
+	else:
+		get_tree().change_scene_to_file("res://scenes/ui/Settings.tscn")
 
 func _on_multiplayer_button_pressed() -> void:
 	if AudioManager:
 		AudioManager.play_click()
-	get_tree().change_scene_to_file("res://scenes/ui/MultiplayerLobby.tscn")
+	if GameManager:
+		GameManager.transition_to_scene("res://scenes/ui/MultiplayerLobby.tscn")
+	else:
+		get_tree().change_scene_to_file("res://scenes/ui/MultiplayerLobby.tscn")
 
 func _on_customize_button_pressed() -> void:
 	if AudioManager:
 		AudioManager.play_click()
-	# Navigate to unlockables screen (character customization)
-	get_tree().change_scene_to_file("res://scenes/ui/UnlockablesScreen.tscn")
+	if GameManager:
+		GameManager.transition_to_scene("res://scenes/ui/UnlockablesScreen.tscn")
+	else:
+		get_tree().change_scene_to_file("res://scenes/ui/UnlockablesScreen.tscn")
 
 func _on_store_button_pressed() -> void:
 	if AudioManager:
 		AudioManager.play_click()
-	# Navigate to roadmap/journey screen
-	get_tree().change_scene_to_file("res://scenes/ui/RoadmapScreen.tscn")
+	if GameManager:
+		GameManager.transition_to_scene("res://scenes/ui/RoadmapScreen.tscn")
+	else:
+		get_tree().change_scene_to_file("res://scenes/ui/RoadmapScreen.tscn")
