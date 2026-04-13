@@ -455,4 +455,7 @@ func _summary_line(total_score: int, rounds: Array) -> String:
 func _on_continue_pressed():
 	if AudioManager:
 		AudioManager.play_click()
-	get_tree().change_scene_to_file("res://scenes/ui/InitialScreen.tscn")
+	if GameManager:
+		GameManager.transition_to_scene("res://scenes/ui/InitialScreen.tscn")
+	else:
+		get_tree().change_scene_to_file("res://scenes/ui/InitialScreen.tscn")

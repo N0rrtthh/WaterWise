@@ -56,13 +56,15 @@ func _show_animated_droplet(is_win: bool) -> void:
 	ft.tween_property(flash, "color:a", 0.4 if is_win else 0.3, 0.1)
 	ft.tween_property(flash, "color:a", 0.0, 0.25)
 
-	# Center
-	var center = CenterContainer.new()
+	# Center area for character
+	var center = Control.new()
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
 	container.add_child(center)
 
-	# Build character
+	# Build character and position at viewport center
 	_character = _create_droplet_character(is_win)
+	var vp = get_viewport_rect().size
+	_character.position = Vector2(vp.x * 0.5, vp.y * 0.5)
 	center.add_child(_character)
 
 	# Spawn burst particles
@@ -342,18 +344,19 @@ func _animate_droplet(is_win: bool) -> void:
 	if not _character:
 		return
 
+	var rest_pos = _character.position
 	_character.modulate.a = 0.0
 	_character.scale = Vector2(0.05, 0.05)
 
 	if is_win:
 		# ══ WIN: Rocket in from below with triumphant landing ══
-		_character.position.y += 120
+		_character.position.y = rest_pos.y + 120
 
 		var enter = create_tween()
 		enter.tween_property(_character, "modulate:a", 1.0, 0.06)
 		# Rocket up (stretched tall)
 		enter.tween_property(_character, "scale", Vector2(0.7, 1.5), 0.12)
-		enter.tween_property(_character, "position:y", _character.position.y - 140, 0.22).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_BACK)
+		enter.tween_property(_character, "position:y", rest_pos.y - 20, 0.22).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_BACK)
 		# Squash on "landing" — EXTREME pancake
 		enter.tween_property(_character, "scale", Vector2(1.6, 0.4), 0.08)
 		enter.tween_callback(func():
@@ -365,6 +368,8 @@ func _animate_droplet(is_win: bool) -> void:
 		enter.tween_property(_character, "scale", Vector2(1.2, 0.8), 0.08)
 		enter.tween_property(_character, "scale", Vector2(0.95, 1.05), 0.06)
 		enter.tween_property(_character, "scale", Vector2(1.0, 1.0), 0.05)
+		# Land at rest position
+		enter.tween_property(_character, "position:y", rest_pos.y, 0.1)
 		await enter.finished
 
 		# Victory spin!
@@ -389,9 +394,9 @@ func _animate_droplet(is_win: bool) -> void:
 		# Happy bounce dance
 		var dance = create_tween().set_loops(4)
 		dance.tween_property(_character, "scale", Vector2(1.2, 0.7), 0.07)
-		dance.tween_property(_character, "position:y", _character.position.y - 25, 0.1).set_ease(Tween.EASE_OUT)
+		dance.tween_property(_character, "position:y", rest_pos.y - 25, 0.1).set_ease(Tween.EASE_OUT)
 		dance.tween_property(_character, "scale", Vector2(0.8, 1.3), 0.07)
-		dance.tween_property(_character, "position:y", _character.position.y, 0.1).set_ease(Tween.EASE_IN)
+		dance.tween_property(_character, "position:y", rest_pos.y, 0.1).set_ease(Tween.EASE_IN)
 		dance.tween_property(_character, "scale", Vector2(1.4, 0.5), 0.06)
 		dance.tween_property(_character, "scale", Vector2(1.0, 1.0), 0.06)
 		await dance.finished
@@ -410,14 +415,14 @@ func _animate_droplet(is_win: bool) -> void:
 		await get_tree().create_timer(1.5).timeout
 	else:
 		# ══ FAIL: Fall from sky, face-plant splat ══
-		_character.position.y -= 150
+		_character.position.y = rest_pos.y - 150
 		_character.scale = Vector2(0.6, 1.5)  # Stretched from falling
 
 		var fall = create_tween()
 		fall.tween_property(_character, "modulate:a", 1.0, 0.05)
 		# Accelerate downward
 		fall.tween_property(
-			_character, "position:y", _character.position.y + 150, 0.25
+			_character, "position:y", rest_pos.y, 0.25
 		).set_ease(Tween.EASE_IN).set_trans(Tween.TRANS_QUAD)
 		fall.tween_callback(func():
 			if AudioManager: AudioManager.play_damage()
