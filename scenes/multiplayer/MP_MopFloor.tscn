@@ -1,0 +1,9 @@
+[gd_scene load_steps=2 format=3 uid="uid://cjx5oaqb2w7mp"]
+
+[ext_resource type="Script" path="res://scripts/multiplayer/MP_MopFloor.gd" id="1_mop"]
+
+[node name="MP_MopFloor" type="Node2D"]
+script = ExtResource("1_mop")
+
+[node name="Camera2D" type="Camera2D" parent="."]
+position = Vector2(576, 324)

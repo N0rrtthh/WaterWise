@@ -1,0 +1,9 @@
+[gd_scene load_steps=2 format=3 uid="uid://cyr7n8hb3v2ps"]
+
+[ext_resource type="Script" path="res://scripts/multiplayer/MP_CatchRainAquarium.gd" id="1_catch_rain"]
+
+[node name="MP_CatchRainAquarium" type="Node2D"]
+script = ExtResource("1_catch_rain")
+
+[node name="Camera2D" type="Camera2D" parent="."]
+position = Vector2(576, 324)

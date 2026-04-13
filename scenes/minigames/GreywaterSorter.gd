@@ -15,23 +15,23 @@ var current_bucket: Node2D = null
 func _apply_difficulty_settings() -> void:
 	match current_difficulty:
 		"Easy":
-			spawn_interval = 1.2
-			bucket_speed = 120.0
-			target_sort = 8
+			spawn_interval = 1.0
+			bucket_speed = 150.0
+			target_sort = 6
 			max_buckets_on_screen = 3
-			game_duration = 30.0
+			game_duration = 18.0
 		"Medium":
-			spawn_interval = 0.8
-			bucket_speed = 180.0
-			target_sort = 12
-			max_buckets_on_screen = 5
-			game_duration = 25.0
+			spawn_interval = 0.7
+			bucket_speed = 220.0
+			target_sort = 8
+			max_buckets_on_screen = 4
+			game_duration = 15.0
 		"Hard":
-			spawn_interval = 0.5
-			bucket_speed = 250.0
-			target_sort = 16
-			max_buckets_on_screen = 7
-			game_duration = 20.0
+			spawn_interval = 0.4
+			bucket_speed = 320.0
+			target_sort = 10
+			max_buckets_on_screen = 5
+			game_duration = 12.0
 
 func _ready():
 	game_name = "Greywater Sorter"

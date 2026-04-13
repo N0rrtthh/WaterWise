@@ -150,6 +150,8 @@ func _get_accessibility_setting(key: String, default_val: bool = false) -> bool:
 	return default_val
 
 func _on_colorblind_toggled(pressed: bool) -> void:
+	if AudioManager:
+		AudioManager.play_click()
 	var acc_mgr = get_node_or_null("/root/AccessibilityManager")
 	if acc_mgr:
 		acc_mgr.set_colorblind_mode(pressed)
@@ -159,6 +161,8 @@ func _on_colorblind_toggled(pressed: bool) -> void:
 			save_mgr.set_setting("colorblind_mode", pressed)
 
 func _on_large_targets_toggled(pressed: bool) -> void:
+	if AudioManager:
+		AudioManager.play_click()
 	var acc_mgr = get_node_or_null("/root/AccessibilityManager")
 	if acc_mgr:
 		acc_mgr.set_large_touch_targets(pressed)
@@ -168,6 +172,8 @@ func _on_large_targets_toggled(pressed: bool) -> void:
 			save_mgr.set_setting("large_touch_targets", pressed)
 
 func _on_audio_cues_toggled(pressed: bool) -> void:
+	if AudioManager:
+		AudioManager.play_click()
 	var acc_mgr = get_node_or_null("/root/AccessibilityManager")
 	if acc_mgr:
 		acc_mgr.set_audio_cues_enabled(pressed)
@@ -177,11 +183,15 @@ func _on_audio_cues_toggled(pressed: bool) -> void:
 			save_mgr.set_setting("audio_cues", pressed)
 
 func _on_screen_shake_toggled(pressed: bool) -> void:
+	if AudioManager:
+		AudioManager.play_click()
 	var save_mgr = get_node_or_null("/root/SaveManager")
 	if save_mgr:
 		save_mgr.set_setting("screen_shake", pressed)
 
 func _on_particles_toggled(pressed: bool) -> void:
+	if AudioManager:
+		AudioManager.play_click()
 	var save_mgr = get_node_or_null("/root/SaveManager")
 	if save_mgr:
 		save_mgr.set_setting("particles", pressed)
@@ -222,10 +232,14 @@ func _on_language_changed(_new_lang: String) -> void:
 	_update_language_button()
 
 func _on_language_button_pressed() -> void:
+	if AudioManager:
+		AudioManager.play_click()
 	if Localization:
 		Localization.toggle_language()
 
 func _on_theme_button_pressed() -> void:
+	if AudioManager:
+		AudioManager.play_click()
 	# Use ThemeManager to toggle
 	var theme_mgr = get_node_or_null("/root/ThemeManager")
 	if theme_mgr:
@@ -262,8 +276,12 @@ func _apply_theme() -> void:
 	panel_card.add_theme_stylebox_override("panel", panel_style)
 
 func _on_back_pressed() -> void:
+	if AudioManager:
+		AudioManager.play_click()
 	# No need to modify welcome popup - it only shows on first_launch
 	get_tree().change_scene_to_file("res://scenes/ui/InitialScreen.tscn")
 
 func _on_exit_pressed() -> void:
+	if AudioManager:
+		AudioManager.play_click()
 	get_tree().change_scene_to_file("res://scenes/ui/MainMenu.tscn")

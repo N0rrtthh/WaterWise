@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://c8qvxj5yqh8yk"]
+
+[ext_resource type="Script" path="res://test/ValidateDefaultCutscenes.gd" id="1_validate"]
+
+[node name="ValidateDefaultCutscenes" type="Node"]
+script = ExtResource("1_validate")

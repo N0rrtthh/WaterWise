@@ -9,10 +9,17 @@ extends MultiplayerMiniGameBase
 
 const DIRT_SPEED: float = 150.0
 const PARTICLES_PER_WATER: int = 3
+const QUOTA: int = 50  # Team needs 50 points total (shared with P1)
 
 var water_queue: Array = []  # Water units received from P1
 var filtered_count: int = 0
 var dirt_particles: Array = []
+
+func get_instructions() -> String:
+	return "Wait for water from your partner.\nClick on dirt particles to filter the water!"
+
+func get_controls_text() -> String:
+	return "🖱️ Click particles\n💧 Filter water\n⏸ Pause game"
 
 func _on_multiplayer_ready() -> void:
 	"""Setup game when multiplayer is ready"""
@@ -25,7 +32,7 @@ func _on_game_start() -> void:
 	"""Called when game starts (after countdown)"""
 	_log("Filtering started - waiting for water from partner...")
 
-func _on_resource_received(from_player: int, resource_type: String, amount: int, quality: float) -> void:
+func _on_resource_received(_from_player: int, resource_type: String, amount: int, quality: float) -> void:
 	"""Receive water from Player 1"""
 	if resource_type == "clean_water":
 		water_queue.append({
@@ -56,10 +63,8 @@ func _spawn_dirt_particles(count: int) -> void:
 		particle.add_child(collision)
 		
 		# Visual
-		var sprite = ColorRect.new()
-		sprite.size = Vector2(40, 40)
-		sprite.color = Color(0.4, 0.3, 0.2, 0.8)
-		sprite.position = Vector2(-20, -20)
+		var sprite = Sprite2D.new()
+		sprite.texture = MiniGameAssets.create_dirt_texture(20)
 		particle.add_child(sprite)
 		
 		# Make clickable
@@ -153,3 +158,4 @@ func _play_filter_effect(pos: Vector2) -> void:
 func _on_game_over() -> void:
 	"""Game over handling"""
 	_log("Game over! Filtered: %d units" % filtered_count)
+	super._on_game_over()

@@ -11,27 +11,14 @@ var swipe_start: Vector2 = Vector2.ZERO
 var is_swiping: bool = false
 var spawn_delay: float = 0.8
 
-func _apply_difficulty_settings() -> void:
-	match current_difficulty:
-		"Easy":
-			target_soaps = 6
-			spawn_delay = 1.2
-			game_duration = 25.0
-		"Medium":
-			target_soaps = 8
-			spawn_delay = 0.8
-			game_duration = 20.0
-		"Hard":
-			target_soaps = 12
-			spawn_delay = 0.5
-			game_duration = 18.0
-
 func _ready():
+	# Set game properties BEFORE calling super._ready()
 	game_name = "Swipe The Soap"
 	game_instruction_text = Localization.get_text("swipe_soap_instructions") if Localization else "SWIPE in the direction shown!\nQuick rinse saves water! 🧼"
-	game_duration = 20.0
+	game_duration = 15.0  # Shorter default timer for challenge
 	game_mode = "quota"
 	
+	# Call super._ready() which will load difficulty and call _apply_difficulty_settings()
 	super._ready()
 	
 	var screen_size = get_viewport_rect().size
@@ -70,8 +57,45 @@ func _ready():
 	score_display.add_theme_constant_override("outline_size", 4)
 	score_display.position = Vector2(screen_size.x / 2 - 60, 120)
 	add_child(score_display)
+
+func _apply_difficulty_settings() -> void:
+	# Apply difficulty settings from AdaptiveDifficulty
+	# This makes difficulty progression VERY noticeable
+	super._apply_difficulty_settings()
 	
-	# Spawn first soap
+	# Get progressive difficulty settings
+	var settings = AdaptiveDifficulty.get_difficulty_settings() if AdaptiveDifficulty else {}
+	var progressive_level = settings.get("progressive_level", 0)
+	
+	match current_difficulty:
+		"Easy":  # Beginner - More time, fewer soaps, slower pace
+			target_soaps = 5  # 18s / 5 = 3.6s per soap
+			spawn_delay = 1.0
+			game_duration = 18.0
+		"Medium":  # Standard - Moderate challenge
+			target_soaps = 6  # 12s / 6 = 2.0s per soap
+			spawn_delay = 0.7
+			game_duration = 12.0
+		"Hard":  # Expert - Fast and furious!
+			target_soaps = 7  # 10s / 7 = 1.43s per soap
+			spawn_delay = 0.4
+			game_duration = 10.0
+	
+	# Apply PROGRESSIVE DIFFICULTY (NO CEILING!)
+	if progressive_level > 0:
+		# Increase quotas progressively
+		target_soaps += progressive_level  # +1 soap per progressive level
+		
+		# Speed up spawn rate (gets faster and faster!)
+		spawn_delay = max(0.2, spawn_delay * (1.0 - progressive_level * 0.1))  # Min 0.2s
+		
+		# Use the time limit from settings (already adjusted)
+		game_duration = settings.get("time_limit", game_duration)
+		
+		print("🔥 Progressive Lvl %d: %d soaps, %.2fs delay, %.1fs time" % [progressive_level, target_soaps, spawn_delay, game_duration])
+
+func _on_game_start():
+	# Called by MiniGameBase after game_active = true
 	_spawn_soap()
 
 func _spawn_soap():
@@ -127,6 +151,7 @@ func _spawn_soap():
 	# Pop-in animation
 	current_soap.scale = Vector2.ZERO
 	var tw = create_tween()
+	tw.set_loops(1)  # Fix infinite loop error
 	tw.tween_property(current_soap, "scale", Vector2(1, 1), 0.2).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_BACK)
 
 func _process(delta):
@@ -180,6 +205,7 @@ func _correct_swipe():
 		"RIGHT": target_pos.x += 500
 	
 	var tw = create_tween()
+	tw.set_loops(1)  # Fix infinite loop error
 	tw.tween_property(current_soap, "position", target_pos, 0.3)
 	tw.parallel().tween_property(current_soap, "modulate:a", 0.0, 0.3)
 	tw.tween_callback(current_soap.queue_free)
@@ -199,6 +225,7 @@ func _wrong_swipe():
 	# Shake soap
 	var original_pos = current_soap.position
 	var tw = create_tween()
+	tw.set_loops(1)  # Fix infinite loop error
 	tw.tween_property(current_soap, "position:x", original_pos.x + 20, 0.05)
 	tw.tween_property(current_soap, "position:x", original_pos.x - 20, 0.05)
 	tw.tween_property(current_soap, "position:x", original_pos.x, 0.05)
