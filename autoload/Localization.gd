@@ -104,8 +104,15 @@ func _load_translations() -> void:
 			"tl": "🎮 PAGLALARO"
 		},
 		"gameplay_text": {
-			"en": "Play fun mini-games about water conservation! Complete tasks quickly and accurately to score points.",
-			"tl": "Maglaro ng mga masayang mini-games tungkol sa pagtitipid ng tubig! Kumpletuhin ang mga gawain nang mabilis at tama para makakuha ng puntos."
+			"en": (
+				"Play fun mini-games about water conservation! "
+				+ "Complete tasks quickly and accurately to score points."
+			),
+			"tl": (
+				"Maglaro ng mga masayang mini-games tungkol sa "
+				+ "pagtitipid ng tubig! Kumpletuhin ang mga gawain "
+				+ "nang mabilis at tama para makakuha ng puntos."
+			)
 		},
 		"difficulty": {
 			"en": "🎯 DIFFICULTY",
@@ -204,7 +211,10 @@ func _load_translations() -> void:
 		# New instruction keys for minigames
 		"rice_wash_rescue_instructions": {
 			"en": "FOLLOW the moving pot with the basin!\nCatch the rice water! 🍚",
-			"tl": "SUNDAN ang kumikilos na kaldero gamit ang palanggana!\nSaluhin ang hugas-bigas! 🍚"
+			"tl": (
+				"SUNDAN ang kumikilos na kaldero gamit ang "
+				+ "palanggana!\nSaluhin ang hugas-bigas! 🍚"
+			)
 		},
 		"catch_the_rain_instructions": {
 			"en": "DRAG to move the drum!\nCatch BLUE drops! Avoid RED drops!",
@@ -221,7 +231,10 @@ func _load_translations() -> void:
 		# New Mini-Game Instructions
 		"plug_the_leak_instructions": {
 			"en": "HOLD on leaking pipes to plug them!\nDon't let damage reach 100%! 🔧",
-			"tl": "I-HOLD ang tumatagos na tubo para ayusin!\nHuwag hayaang umabot ng 100% ang pinsala! 🔧"
+			"tl": (
+				"I-HOLD ang tumatagos na tubo para ayusin!"
+				+ "\nHuwag hayaang umabot ng 100% ang pinsala! 🔧"
+			)
 		},
 		"swipe_the_soap_instructions": {
 			"en": "SWIPE in the shown direction!\nFast and accurate = water saved! 🧼",
@@ -237,8 +250,14 @@ func _load_translations() -> void:
 			"tl": "TAP kapag ang marker ay nasa BERDENG zone!\nIhinto ang shower sa tamang oras! 🚿"
 		},
 		"filter_builder_instructions": {
-			"en": "DRAG filter layers to the correct slots!\nBuild: Gravel → Sand → Charcoal → Cloth 🏺",
-			"tl": "I-DRAG ang mga layer ng filter sa tamang posisyon!\nBuuin: Graba → Buhangin → Uling → Tela 🏺"
+			"en": (
+				"DRAG filter layers to the correct slots!"
+				+ "\nBuild: Gravel → Sand → Charcoal → Cloth 🏾"
+			),
+			"tl": (
+				"I-DRAG ang mga layer ng filter sa tamang "
+				+ "posisyon!\nBuuin: Graba → Buhangin → Uling → Tela 🏾"
+			)
 		},
 		"toilet_tank_fix_instructions": {
 			"en": "HOLD to stop water flow!\nTAP to adjust the float mechanism! 🚽",
@@ -250,11 +269,17 @@ func _load_translations() -> void:
 		},
 		"trace_pipe_path_instructions": {
 			"en": "TRACE the path to connect the pipes!\nDraw from start to finish! 🛠️",
-			"tl": "I-TRACE ang landas para ikonekta ang mga tubo!\nGuhit mula simula hanggang dulo! 🛠️"
+			"tl": (
+				"I-TRACE ang landas para ikonekta ang mga "
+				+ "tubo!\nGuhit mula simula hanggang dulo! 🛠️"
+			)
 		},
 		"trace_pipe_instructions": {
 			"en": "DRAW along the pipe to connect water!\nFollow the dotted line! 🔧",
-			"tl": "GUMUHIT sa kahabaan ng tubo para ikonekta ang tubig!\nSundan ang tuldok na linya! 🔧"
+			"tl": (
+				"GUMUHIT sa kahabaan ng tubo para ikonekta "
+				+ "ang tubig!\nSundan ang tuldok na linya! 🔧"
+			)
 		},
 		"scrub_to_save_instructions": {
 			"en": "RUB dishes to clean them!\nUse water efficiently! 🍽️",
@@ -302,24 +327,52 @@ func _load_translations() -> void:
 		},
 		
 		"difficulty_text": {
-			"en": "The game adapts to your skill level! Play well and face harder challenges. Struggle a bit and get easier tasks.",
-			"tl": "Ang laro ay umaangkop sa iyong kakayahan! Maglaro nang mabuti at haharapin ang mas mahihirap na hamon. Kung nahihirapan ka, magiging mas madali ang mga gawain."
+			"en": (
+				"The game adapts to your skill level! Play well "
+				+ "and face harder challenges. Struggle a bit and "
+				+ "get easier tasks."
+			),
+			"tl": (
+				"Ang laro ay umaangkop sa iyong kakayahan! "
+				+ "Maglaro nang mabuti at haharapin ang mas "
+				+ "mahihirap na hamon. Kung nahihirapan ka, "
+				+ "magiging mas madali ang mga gawain."
+			)
 		},
 		"post_test": {
 			"en": "📝 POST-TEST",
 			"tl": "📝 PAGSUSULIT"
 		},
 		"post_test_text": {
-			"en": "After completing games, take a knowledge test to see how much you learned!",
-			"tl": "Pagkatapos maglaro, kumuha ng pagsusulit upang makita kung gaano karami ang iyong natutunan!"
+			"en": (
+				"After completing games, take a knowledge test "
+				+ "to see how much you learned!"
+			),
+			"tl": (
+				"Pagkatapos maglaro, kumuha ng pagsusulit "
+				+ "upang makita kung gaano karami ang iyong "
+				+ "natutunan!"
+			)
 		},
 		"water_tips": {
 			"en": "💧 WATER TIPS",
 			"tl": "💧 MGA TIPS SA TUBIG"
 		},
 		"water_tips_text": {
-			"en": "• Use watering cans instead of hoses\n• Fix leaks immediately\n• Time your showers\n• Use buckets wisely\n• Turn off taps when not in use",
-			"tl": "• Gumamit ng regadera kaysa hose\n• Ayusin kaagad ang mga tumatagos\n• Magpaligo nang mabilis\n• Gumamit ng timba nang maayos\n• Isara ang gripo kapag hindi ginagamit"
+			"en": (
+				"• Use watering cans instead of hoses\n"
+				+ "• Fix leaks immediately\n"
+				+ "• Time your showers\n"
+				+ "• Use buckets wisely\n"
+				+ "• Turn off taps when not in use"
+			),
+			"tl": (
+				"• Gumamit ng regadera kaysa hose\n"
+				+ "• Ayusin kaagad ang mga tumatagos\n"
+				+ "• Magpaligo nang mabilis\n"
+				+ "• Gumamit ng timba nang maayos\n"
+				+ "• Isara ang gripo kapag hindi ginagamit"
+			)
 		},
 		
 		# Mini-game Results
@@ -717,7 +770,10 @@ func _load_translations() -> void:
 		},
 		"water_memory_instructions": {
 			"en": "MATCH pairs of water-saving tips!\nFind all pairs before time runs out! 🧠",
-			"tl": "IPARES ang mga tip sa pagtitipid ng tubig!\nHanapin lahat ng pares bago maubos ang oras! 🧠"
+			"tl": (
+				"IPARES ang mga tip sa pagtitipid ng tubig!"
+				+ "\nHanapin lahat ng pares bago maubos ang oras! 🧠"
+			)
 		},
 		"droplet_dash": {
 			"en": "Droplet Dash",

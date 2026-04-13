@@ -931,7 +931,8 @@ func complete_minigame(
 		"score": round_score,
 		"combo": best_combo,
 		"accuracy": accuracy,
-		"mistakes": mistakes
+		"mistakes": mistakes,
+		"reaction_time": reaction_time
 	})
 	
 	# Add to rolling window for difficulty adjustment

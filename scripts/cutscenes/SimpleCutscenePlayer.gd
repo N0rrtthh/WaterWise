@@ -333,7 +333,9 @@ func _spawn_burst_particles(container: Control, is_win: bool) -> void:
 		var pt = create_tween()
 		pt.set_parallel(true)
 		pt.tween_property(p, "modulate:a", 0.9, 0.08)
-		pt.tween_property(p, "position", target, dur).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_CUBIC)
+		pt.tween_property(
+			p, "position", target, dur
+		).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_CUBIC)
 		pt.tween_property(p, "rotation", p.rotation + randf_range(-2, 2), dur)
 
 		var pf = create_tween()
@@ -356,7 +358,10 @@ func _animate_droplet(is_win: bool) -> void:
 		enter.tween_property(_character, "modulate:a", 1.0, 0.06)
 		# Rocket up (stretched tall)
 		enter.tween_property(_character, "scale", Vector2(0.7, 1.5), 0.12)
-		enter.tween_property(_character, "position:y", rest_pos.y - 20, 0.22).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_BACK)
+		enter.tween_property(
+			_character, "position:y",
+			rest_pos.y - 20, 0.22
+		).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_BACK)
 		# Squash on "landing" — EXTREME pancake
 		enter.tween_property(_character, "scale", Vector2(1.6, 0.4), 0.08)
 		enter.tween_callback(func():
@@ -394,7 +399,10 @@ func _animate_droplet(is_win: bool) -> void:
 		# Happy bounce dance
 		var dance = create_tween().set_loops(4)
 		dance.tween_property(_character, "scale", Vector2(1.2, 0.7), 0.07)
-		dance.tween_property(_character, "position:y", rest_pos.y - 25, 0.1).set_ease(Tween.EASE_OUT)
+		dance.tween_property(
+			_character, "position:y",
+			rest_pos.y - 25, 0.1
+		).set_ease(Tween.EASE_OUT)
 		dance.tween_property(_character, "scale", Vector2(0.8, 1.3), 0.07)
 		dance.tween_property(_character, "position:y", rest_pos.y, 0.1).set_ease(Tween.EASE_IN)
 		dance.tween_property(_character, "scale", Vector2(1.4, 0.5), 0.06)
@@ -449,7 +457,10 @@ func _animate_droplet(is_win: bool) -> void:
 		var dizzy_stars = _character.get_node_or_null("DizzyStars")
 		if dizzy_stars:
 			var star_spin = create_tween().set_loops(6)
-			star_spin.tween_property(dizzy_stars, "rotation", dizzy_stars.rotation + TAU, 0.55).set_trans(Tween.TRANS_LINEAR)
+			star_spin.tween_property(
+				dizzy_stars, "rotation",
+				dizzy_stars.rotation + TAU, 0.55
+			).set_trans(Tween.TRANS_LINEAR)
 
 		# Limp arms swinging
 		var left_arm = _character.get_node_or_null("LeftArm")

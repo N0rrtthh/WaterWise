@@ -118,7 +118,10 @@ func _spawn_bg_particles() -> void:
 		var drift_y = randf_range(-60, -20)
 		var dur = randf_range(3.0, 6.0)
 		var pt = create_tween().set_loops()
-		pt.tween_property(p, "position", p.position + Vector2(drift_x, drift_y), dur).set_trans(Tween.TRANS_SINE)
+		pt.tween_property(
+			p, "position",
+			p.position + Vector2(drift_x, drift_y), dur
+		).set_trans(Tween.TRANS_SINE)
 		pt.tween_property(p, "position", p.position, dur).set_trans(Tween.TRANS_SINE)
 		# Twinkle
 		var at = create_tween().set_loops()
@@ -135,7 +138,10 @@ func _animate_staggered_entrance(total_score: int, is_new_record: bool) -> void:
 	var enter = create_tween()
 	enter.set_parallel(true)
 	enter.tween_property(vbox, "modulate:a", 1.0, 0.5)
-	enter.tween_property(vbox, "position:y", vbox.position.y - 60, 0.6).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_BACK)
+	enter.tween_property(
+		vbox, "position:y",
+		vbox.position.y - 60, 0.6
+	).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_BACK)
 
 	# Score label starts at 0 then counts up
 	var score_label_text = Localization.get_text("total_score") if Localization else "TOTAL SCORE"
@@ -188,15 +194,23 @@ func _spawn_confetti(count: int) -> void:
 		var ct = create_tween()
 		ct.tween_interval(delay)
 		ct.set_parallel(true)
-		ct.tween_property(c, "position", Vector2(end_x, end_y), fall_dur).set_ease(Tween.EASE_IN).set_trans(Tween.TRANS_SINE)
+		ct.tween_property(
+			c, "position", Vector2(end_x, end_y), fall_dur
+		).set_ease(Tween.EASE_IN).set_trans(Tween.TRANS_SINE)
 		ct.tween_property(c, "rotation", c.rotation + randf_range(-4, 4), fall_dur)
 		ct.tween_property(c, "modulate:a", 0.0, fall_dur * 0.3).set_delay(fall_dur * 0.7)
 
 		# Wobble side-to-side like real confetti
 		var wobble = create_tween().set_loops(int(fall_dur / 0.6))
 		wobble.tween_interval(delay)
-		wobble.tween_property(c, "position:x", c.position.x + randf_range(-25, 25), 0.3).set_trans(Tween.TRANS_SINE)
-		wobble.tween_property(c, "position:x", c.position.x + randf_range(-25, 25), 0.3).set_trans(Tween.TRANS_SINE)
+		wobble.tween_property(
+			c, "position:x",
+			c.position.x + randf_range(-25, 25), 0.3
+		).set_trans(Tween.TRANS_SINE)
+		wobble.tween_property(
+			c, "position:x",
+			c.position.x + randf_range(-25, 25), 0.3
+		).set_trans(Tween.TRANS_SINE)
 
 func _spawn_score_mascot(total_score: int, rounds: Array) -> void:
 	var vp = get_viewport_rect().size
@@ -323,9 +337,15 @@ func _spawn_score_mascot(total_score: int, rounds: Array) -> void:
 	if is_happy:
 		var idle = create_tween().set_loops()
 		idle.tween_interval(0.4)
-		idle.tween_property(_droplet, "position:y", _droplet.position.y - 8, 0.5).set_trans(Tween.TRANS_SINE)
+		idle.tween_property(
+			_droplet, "position:y",
+			_droplet.position.y - 8, 0.5
+		).set_trans(Tween.TRANS_SINE)
 		idle.tween_property(_droplet, "scale", Vector2(1.05, 0.95), 0.2)
-		idle.tween_property(_droplet, "position:y", _droplet.position.y, 0.5).set_trans(Tween.TRANS_SINE)
+		idle.tween_property(
+			_droplet, "position:y",
+			_droplet.position.y, 0.5
+		).set_trans(Tween.TRANS_SINE)
 		idle.tween_property(_droplet, "scale", Vector2(0.95, 1.05), 0.2)
 		idle.tween_property(_droplet, "scale", Vector2(1.0, 1.0), 0.15)
 
