@@ -14,16 +14,16 @@ var last_scrub_pos: Vector2 = Vector2.ZERO
 func _apply_difficulty_settings() -> void:
 	match current_difficulty:
 		"Easy":
+			target_dishes = 2
+			scrub_power = 25.0
+			game_duration = 20.0
+		"Medium":
 			target_dishes = 3
 			scrub_power = 20.0
-			game_duration = 30.0
-		"Medium":
-			target_dishes = 5
-			scrub_power = 15.0
-			game_duration = 25.0
+			game_duration = 20.0
 		"Hard":
-			target_dishes = 7
-			scrub_power = 10.0
+			target_dishes = 4
+			scrub_power = 15.0
 			game_duration = 20.0
 
 func _ready():

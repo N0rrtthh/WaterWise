@@ -28,6 +28,11 @@ TutorialManager="*res://autoload/TutorialManager.gd"
 AccessibilityManager="*res://autoload/AccessibilityManager.gd"
 AudioManager="*res://autoload/AudioManager.gd"
 LevelSets="*res://scripts/multiplayer/LevelSets.gd"
+TouchInputManager="*res://autoload/TouchInputManager.gd"
+AlgorithmOverlay="*res://autoload/AlgorithmOverlay.gd"
+GCounter="*res://autoload/GCounter.gd"
+PerformanceProfiler="*res://autoload/PerformanceProfiler.gd"
+NetworkFaultSimulator="*res://autoload/NetworkFaultSimulator.gd"
 
 [display]
 
@@ -35,8 +40,18 @@ window/size/viewport_width=1920
 window/size/viewport_height=1080
 window/size/mode=2
 window/stretch/mode="canvas_items"
+window/stretch/aspect="expand"
+
+[dotnet]
+
+project/assembly_name="Waterwise"
+
+[input_devices]
+
+pointing/emulate_touch_from_mouse=true
 
 [rendering]
 
 renderer/rendering_method="gl_compatibility"
 renderer/rendering_method.mobile="gl_compatibility"
+textures/vram_compression/import_etc2_astc=true

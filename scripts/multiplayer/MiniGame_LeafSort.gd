@@ -70,6 +70,13 @@ var leaf_scene: PackedScene = null
 
 func _ready() -> void:
 	screen_size = get_viewport_rect().size
+	
+	# Verify multiplayer is active
+	if not multiplayer or not multiplayer.has_multiplayer_peer():
+		push_error("❌ Multiplayer not active! Returning to lobby...")
+		get_tree().change_scene_to_file("res://scenes/ui/MultiplayerLobby.tscn")
+		return
+	
 	is_player_one = (multiplayer.get_unique_id() == 1)
 	
 	_load_difficulty()
@@ -86,6 +93,10 @@ func _ready() -> void:
 		GameManager.team_won.connect(_on_team_won)
 		GameManager.team_lost.connect(_on_team_lost)
 		GameManager.team_life_lost.connect(_on_life_lost)
+	
+	# Connect NetworkManager resource transfer signal for interconnected gameplay
+	if NetworkManager and NetworkManager.has_signal("resource_sent"):
+		NetworkManager.resource_sent.connect(_on_resource_received)
 	
 	_create_pause_ui()
 	_start_game()
@@ -160,6 +171,7 @@ func _setup_role_ui() -> void:
 	await get_tree().create_timer(5.0).timeout
 	if instruction_panel:
 		var fade_tween = create_tween()
+		fade_tween.set_loops(1)
 		fade_tween.tween_property(instruction_panel, "modulate:a", 0.0, 1.0)
 		fade_tween.tween_callback(instruction_panel.queue_free)
 	
@@ -309,6 +321,11 @@ func _on_leaf_caught(leaf: Area2D, _is_special: bool) -> void:
 		# Also update display immediately
 		_update_score_display()
 	
+	# RESOURCE TRANSFER: P1 sends clean leaves to P2 as a "dirty leaf task"
+	if NetworkManager and NetworkManager.has_method("send_resource"):
+		NetworkManager.send_resource("clean_leaf", 1, 1.0)
+		print("📤 Sent clean leaf signal to partner")
+	
 	# Sync to other players
 	if is_player_one:
 		rpc("_sync_score_update")
@@ -344,6 +361,14 @@ func _on_dirty_leaf_missed(leaf: Area2D, _is_special: bool) -> void:
 		GameManager.rpc("report_damage")
 	leaf.queue_free()
 
+func _on_resource_received(from_player: int, resource_type: String, amount: int, _quality: float) -> void:
+	"""Receive resources from partner - creates interconnected gameplay"""
+	if resource_type == "clean_leaf" and not is_player_one:
+		# P2 receives clean leaf signal from P1 and spawns a dirty leaf to clean
+		print("📥 Received %d clean leaf from P%d - spawning dirty leaves to clean" % [amount, from_player])
+		for i in range(amount):
+			_spawn_dirty_leaf()
+
 func _process(delta: float) -> void:
 	if not game_active or is_paused:
 		return
@@ -373,6 +398,14 @@ func _update_score_display() -> void:
 	score_label.text = "🍃 Score: %d / %d" % [global_score, current_settings["quota"]]
 	quota_bar.value = global_score
 	score_updated.emit(global_score)
+	
+	# Check if quota reached (host only)
+	if is_player_one and game_active and global_score >= current_settings["quota"]:
+		print("🎯 Quota reached! Score: %d >= %d" % [global_score, current_settings["quota"]])
+		game_active = false
+		spawn_timer.stop()
+		if GameManager:
+			GameManager.rpc("_announce_team_won")
 
 @rpc("any_peer", "call_local", "reliable")
 func _sync_score_update() -> void:

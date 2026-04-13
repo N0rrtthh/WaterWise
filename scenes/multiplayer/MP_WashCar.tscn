@@ -1,0 +1,9 @@
+[gd_scene load_steps=2 format=3 uid="uid://c7vq2oaxb4kmp"]
+
+[ext_resource type="Script" path="res://scripts/multiplayer/MP_WashCar.gd" id="1_car"]
+
+[node name="MP_WashCar" type="Node2D"]
+script = ExtResource("1_car")
+
+[node name="Camera2D" type="Camera2D" parent="."]
+position = Vector2(576, 324)

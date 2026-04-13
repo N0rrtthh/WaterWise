@@ -110,6 +110,12 @@ var dirt_scene: PackedScene = null
 func _ready() -> void:
 	screen_size = get_viewport_rect().size
 	
+	# Verify multiplayer is active
+	if not multiplayer or not multiplayer.has_multiplayer_peer():
+		push_error("❌ Multiplayer not active! Returning to lobby...")
+		get_tree().change_scene_to_file("res://scenes/ui/MultiplayerLobby.tscn")
+		return
+	
 	# Get random mode assignment from GameManager
 	if GameManager and GameManager.has_method("get_my_player_mode"):
 		var mode_num = GameManager.get_my_player_mode()
@@ -143,6 +149,10 @@ func _ready() -> void:
 		GameManager.team_won.connect(_on_team_won)
 		GameManager.team_lost.connect(_on_team_lost)
 		GameManager.team_life_lost.connect(_on_life_lost)
+	
+	# Connect NetworkManager resource transfer signal for interconnected gameplay
+	if NetworkManager and NetworkManager.has_signal("resource_sent"):
+		NetworkManager.resource_sent.connect(_on_resource_received)
 	
 	# Create pause menu and button
 	_create_pause_ui()
@@ -265,6 +275,7 @@ func _setup_role_ui() -> void:
 	await get_tree().create_timer(5.0).timeout
 	if instruction_panel:
 		var fade_tween = create_tween()
+		fade_tween.set_loops(1)
 		fade_tween.tween_property(instruction_panel, "modulate:a", 0.0, 1.0)
 		fade_tween.tween_callback(instruction_panel.queue_free)
 	
@@ -430,6 +441,12 @@ func _on_drop_caught(drop: Area2D, is_acid: bool) -> void:
 			GameManager.rpc("submit_score", 1)
 		# Also update display immediately
 		_update_score_display()
+		
+		# RESOURCE TRANSFER: Send water to partner (Mode 2)
+		# This creates interconnected gameplay where Mode 1's catches feed Mode 2's filtering
+		if NetworkManager and NetworkManager.has_method("send_resource"):
+			NetworkManager.send_resource("clean_water", 1, 1.0)
+			print("📤 Sent clean water to partner")
 	
 	# Sync to other players
 	if _is_mode_1():
@@ -574,6 +591,16 @@ func _on_leaf_destroyed(leaf: Area2D) -> void:
 	
 	leaf.queue_free()
 
+func _on_resource_received(from_player: int, resource_type: String, amount: int, _quality: float) -> void:
+	"""Receive resources from partner - creates interconnected gameplay"""
+	if resource_type == "clean_water" and not _is_mode_1():
+		# Mode 2 receives water from Mode 1
+		print("📥 Received %d clean water from P%d - spawning dirt particles" % [amount, from_player])
+		# Spawn dirt particles based on water received
+		# This creates the interconnection: P1's catches feed P2's filtering work
+		for i in range(amount * 2):  # Spawn 2 dirt particles per water drop caught
+			_spawn_dirt()
+
 func _on_leaf_missed(leaf: Area2D, _is_special: bool) -> void:
 	"""Called when P2 misses a leaf (exits screen)"""
 	print("💔 Missed leaf!")
@@ -647,6 +674,17 @@ func _update_score_display() -> void:
 	score_label.text = "Score: %d / %d" % [global_score, current_settings["quota"]]
 	quota_bar.value = global_score
 	score_updated.emit(global_score)
+	
+	# Check if quota reached (host only, prevents duplicate checks)
+	if _is_host() and game_active and global_score >= current_settings["quota"]:
+		print("🎯 Quota reached! Score: %d >= %d" % [global_score, current_settings["quota"]])
+		game_active = false
+		spawn_timer.stop()
+		if timer_sync_timer:
+			timer_sync_timer.stop()
+		# Trigger win through GameManager
+		if GameManager:
+			GameManager.rpc("_announce_team_won")
 
 @rpc("any_peer", "call_local", "reliable")
 func _sync_score_update() -> void:
@@ -710,6 +748,7 @@ func _on_life_lost(_remaining: int) -> void:
 	
 	# Screen shake effect
 	var tween: Tween = create_tween()
+	tween.set_loops(1)
 	tween.tween_property(self, "position", Vector2(10, 0), 0.05)
 	tween.tween_property(self, "position", Vector2(-10, 0), 0.05)
 	tween.tween_property(self, "position", Vector2.ZERO, 0.05)

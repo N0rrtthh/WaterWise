@@ -16,22 +16,22 @@ func _apply_difficulty_settings() -> void:
 	match current_difficulty:
 		"Easy":
 			num_pipes = 2
-			leak_rate = 5.0
+			leak_rate = 6.0
 			plug_rate = 20.0
 			max_water_waste = 120.0
-			game_duration = 20.0
+			game_duration = 10.0
 		"Medium":
 			num_pipes = 3
-			leak_rate = 8.0
+			leak_rate = 10.0
 			plug_rate = 15.0
 			max_water_waste = 100.0
-			game_duration = 25.0
+			game_duration = 12.0
 		"Hard":
 			num_pipes = 4
-			leak_rate = 12.0
+			leak_rate = 18.0
 			plug_rate = 12.0
-			max_water_waste = 80.0
-			game_duration = 30.0
+			max_water_waste = 70.0
+			game_duration = 15.0
 
 func _ready():
 	game_name = "Plug The Leak"

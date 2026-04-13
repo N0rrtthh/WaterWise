@@ -16,20 +16,20 @@ func _apply_difficulty_settings() -> void:
 	
 	match current_difficulty:
 		"Easy":
-			drop_speed = 220.0
-			spawn_interval = 0.6
-			target_score = 8
-			game_duration = 25.0
-		"Medium":
-			drop_speed = 300.0
-			spawn_interval = 0.4
-			target_score = 10
-			game_duration = 20.0
-		"Hard":
-			drop_speed = 400.0 * speed_mult
-			spawn_interval = 0.25
-			target_score = 12 + item_count
+			drop_speed = 250.0
+			spawn_interval = 0.5
+			target_score = 6
 			game_duration = 15.0
+		"Medium":
+			drop_speed = 350.0
+			spawn_interval = 0.35
+			target_score = 8
+			game_duration = 10.0
+		"Hard":
+			drop_speed = 500.0 * speed_mult
+			spawn_interval = 0.2
+			target_score = 10 + item_count
+			game_duration = 8.0
 
 func _ready():
 	game_name = "Catch The Rain"

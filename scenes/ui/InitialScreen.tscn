@@ -250,6 +250,17 @@ theme_override_styles/pressed = SubResource("StyleBoxFlat_play_pressed")
 theme_override_styles/hover = SubResource("StyleBoxFlat_play_hover")
 text = "MULTIPLAYER"
 
+[node name="DemoButton" type="Button" parent="UI/ButtonContainer"]
+custom_minimum_size = Vector2(360, 50)
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_fonts/font = ExtResource("4_brick")
+theme_override_font_sizes/font_size = 24
+theme_override_styles/normal = SubResource("StyleBoxFlat_play_normal")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_play_pressed")
+theme_override_styles/hover = SubResource("StyleBoxFlat_play_hover")
+text = "DEMO"
+
 [node name="WelcomePopup" type="Control" parent="."]
 visible = false
 z_index = 100

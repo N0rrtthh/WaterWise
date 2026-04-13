@@ -85,23 +85,29 @@ func _load_difficulty_settings() -> void:
 		difficulty_settings = CoopAdaptation.get_difficulty_params(my_player_num)
 		chaos_effects_active = difficulty_settings.get("chaos_effects", [])
 		
-		print("═══════════════════════════════════════════════════════════")
-		print("🎮 [MULTIPLAYER] %s - Player %d Difficulty: %s" % [game_name, my_player_num, current_difficulty])
-		print("   Speed Multiplier: %.2f" % difficulty_settings.get("speed_multiplier", 1.0))
-		print("   Chaos Effects: %s" % str(chaos_effects_active))
-		print("═══════════════════════════════════════════════════════════")
+		print("🎮 [MP] %s | P%d: %s" % [game_name, my_player_num, current_difficulty])
 	elif AdaptiveDifficulty:
+		# ────────────────────────────────────────────────────────────────────────
 		# Single-player: Use AdaptiveDifficulty (Φ = WMA - CP algorithm)
+		# ────────────────────────────────────────────────────────────────────────
+		# ELI5: When a minigame starts, it asks AdaptiveDifficulty:
+		#       "What difficulty should I use for this player?"
+		#
+		# AdaptiveDifficulty looks at the current_difficulty (Easy/Medium/Hard)
+		# which was calculated by the Rolling Window Algorithm, and returns
+		# the appropriate settings:
+		#
+		# Easy:   speed_multiplier = 0.7,  time_limit = 20s, chaos_effects = []
+		# Medium: speed_multiplier = 1.0,  time_limit = 15s, chaos_effects = [shake]
+		# Hard:   speed_multiplier = 1.5,  time_limit = 10s, chaos_effects = [shake, mud, fly]
+		#
+		# The minigame then uses these settings to adjust gameplay!
+		# ────────────────────────────────────────────────────────────────────────
 		difficulty_settings = AdaptiveDifficulty.get_difficulty_settings()
 		current_difficulty = AdaptiveDifficulty.get_current_difficulty()
 		chaos_effects_active = difficulty_settings.get("chaos_effects", [])
 		
-		print("═══════════════════════════════════════════════════════════")
-		print("🎮 [SINGLE-PLAYER] %s - Difficulty: %s" % [game_name, current_difficulty])
-		print("   Speed Multiplier: %.2f" % difficulty_settings.get("speed_multiplier", 1.0))
-		print("   Time Limit: %s" % str(difficulty_settings.get("time_limit", "N/A")))
-		print("   Chaos Effects: %s" % str(chaos_effects_active))
-		print("═══════════════════════════════════════════════════════════")
+		print("🎮 %s | Difficulty: %s" % [game_name, current_difficulty])
 
 func _apply_difficulty_settings() -> void:
 	# Override this in child classes to apply specific settings
@@ -481,6 +487,47 @@ func _setup_ui() -> void:
 	score_hbox.add_child(score_label)
 	
 	top_hbox.add_child(score_panel)
+	
+	# Progressive Level Indicator (NO CEILING!) - Only show when actually progressing
+	if AdaptiveDifficulty:
+		var settings = AdaptiveDifficulty.get_difficulty_settings()
+		var progressive_level = settings.get("progressive_level", 0)
+		# Only display if progressive_level is greater than 0 (player has exceeded base Hard difficulty)
+		if progressive_level > 0:
+			var prog_panel = PanelContainer.new()
+			var prog_style = StyleBoxFlat.new()
+			prog_style.bg_color = Color(1.0, 0.3, 0.1, 0.9)  # Fiery red-orange
+			prog_style.corner_radius_top_left = 15
+			prog_style.corner_radius_top_right = 15
+			prog_style.corner_radius_bottom_right = 15
+			prog_style.corner_radius_bottom_left = 15
+			prog_style.border_width_left = 2
+			prog_style.border_width_right = 2
+			prog_style.border_width_top = 2
+			prog_style.border_width_bottom = 2
+			prog_style.border_color = Color(1, 1, 0, 1)  # Yellow border
+			prog_panel.add_theme_stylebox_override("panel", prog_style)
+			
+			var prog_hbox = HBoxContainer.new()
+			prog_hbox.add_theme_constant_override("separation", 5)
+			var prog_margin = MarginContainer.new()
+			prog_margin.add_theme_constant_override("margin_left", 10)
+			prog_margin.add_theme_constant_override("margin_right", 10)
+			prog_margin.add_child(prog_hbox)
+			prog_panel.add_child(prog_margin)
+			
+			var prog_icon = Label.new()
+			prog_icon.add_theme_font_size_override("font_size", 28)
+			prog_icon.text = "🔥"
+			prog_hbox.add_child(prog_icon)
+			
+			var prog_label = Label.new()
+			prog_label.add_theme_font_size_override("font_size", 28)
+			prog_label.add_theme_color_override("font_color", Color(1, 1, 0.2))
+			prog_label.text = "LVL " + str(progressive_level)
+			prog_hbox.add_child(prog_label)
+			
+			top_hbox.add_child(prog_panel)
 	
 	# Pause Button (Styled)
 	var pause_btn = Button.new()
