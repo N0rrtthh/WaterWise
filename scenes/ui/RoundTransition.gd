@@ -26,7 +26,7 @@ func _ready() -> void:
 	visible = false
 
 func show_results(p1_score: int, p2_score: int, team_total: int, lives: int, rounds: int, next_roles: Dictionary) -> void:
-	"""Display round results and countdown to next round"""
+	# Display round results and countdown to next round
 	visible = true
 	if AudioManager:
 		AudioManager.play_fanfare()
@@ -63,7 +63,7 @@ func _process(delta: float) -> void:
 		_transition_to_next_round()
 
 func _transition_to_next_round() -> void:
-	"""Fade out and emit signal"""
+	# Fade out and emit signal
 	var tween = create_tween()
 	tween.tween_property(self, "modulate:a", 0.0, 0.5)
 	await tween.finished

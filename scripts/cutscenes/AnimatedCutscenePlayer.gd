@@ -801,9 +801,9 @@ func _start_background_transition(target_color: Color, duration: float) -> void:
 ## Implements Requirement 12.5: Ensure game progression never blocks on cutscene errors
 ## @param duration: How long to display the static character
 func _fallback_static_display(duration: float) -> void:
-	"""Display character statically for the specified duration when animation fails.
-	This ensures the cutscene completes and game progression continues even if
-	the animation engine fails."""
+	# Display character statically for the specified duration when animation fails.
+	# This ensures the cutscene completes and game progression continues even if
+	# the animation engine fails.
 	print("[AnimatedCutscenePlayer] Using fallback static display for %.1f seconds" % duration)
 	
 	# Simply wait for the duration - character is already visible
@@ -822,62 +822,60 @@ func _fallback_static_display(duration: float) -> void:
 
 
 func _apply_screen_shake(camera: Camera2D, intensity: float, duration: float) -> void:
-	"""Apply screen shake effect to the camera using viewport offset
-	Implements Requirement 12.5: Runtime error handling for animation failures
-	"""
-	if not camera:
-		return
-	
-	var original_offset = camera.offset
-	var shake_tween = camera.create_tween()
-	
-	# Handle tween creation failure gracefully (Requirement 12.5)
-	if not shake_tween:
-		push_warning("[AnimatedCutscenePlayer] Failed to create screen shake tween, skipping effect")
-		return
-	
-	# Calculate number of shake iterations based on duration
-	var num_shakes = int(duration / 0.05)
-	
-	# Apply random offsets for shake effect
-	for i in range(num_shakes):
-		shake_tween.tween_property(camera, "offset", original_offset + Vector2(
-			randf_range(-intensity * 10, intensity * 10),
-			randf_range(-intensity * 10, intensity * 10)
-		), 0.05)
-	
-	# Return to original position
-	shake_tween.tween_property(camera, "offset", original_offset, 0.05)
-
-
-func _schedule_text_overlay(overlay: CutsceneDataModels.TextOverlay) -> void:
-	# Wait for the specified time with error recovery (Requirement 12.5)
-	var timer = get_tree().create_timer(overlay.time)
-	if not timer:
-		push_warning("[AnimatedCutscenePlayer] Failed to create timer for text overlay, skipping")
-		return
-	_scheduled_timers.append(timer)
-	await timer.timeout
-	
-	# Create and add text overlay with memory allocation error handling (Requirement 12.5)
-	var text_overlay = AnimatedTextOverlay.new()
-	if not text_overlay:
-		push_warning("[AnimatedCutscenePlayer] Failed to allocate text overlay node, skipping text display")
-		return
-	
-	add_child(text_overlay)
-	_active_text_overlays.append(text_overlay)
-	
-	# Play animation
-	text_overlay.play_animation(overlay, size)
-
-
-# ============================================================================
-# PRIVATE METHODS - Cleanup
-# ============================================================================
-
-func _cleanup_cutscene() -> void:
-	"""Comprehensive cleanup of all cutscene resources
+	# Apply screen shake effect to the camera using viewport offset
+	# Implements Requirement 12.5: Runtime error handling for animation failures
+	# # if not camera:
+	# return
+	#
+	# var original_offset = camera.offset
+	# var shake_tween = camera.create_tween()
+	#
+	# # Handle tween creation failure gracefully (Requirement 12.5)
+	# if not shake_tween:
+	# push_warning("[AnimatedCutscenePlayer] Failed to create screen shake tween, skipping effect")
+	# return
+	#
+	# # Calculate number of shake iterations based on duration
+	# var num_shakes = int(duration / 0.05)
+	#
+	# # Apply random offsets for shake effect
+	# for i in range(num_shakes):
+	# shake_tween.tween_property(camera, "offset", original_offset + Vector2(
+	# randf_range(-intensity * 10, intensity * 10),
+	# randf_range(-intensity * 10, intensity * 10)
+	# ), 0.05)
+	#
+	# # Return to original position
+	# shake_tween.tween_property(camera, "offset", original_offset, 0.05)
+	#
+	#
+	# func _schedule_text_overlay(overlay: CutsceneDataModels.TextOverlay) -> void:
+	# # Wait for the specified time with error recovery (Requirement 12.5)
+	# var timer = get_tree().create_timer(overlay.time)
+	# if not timer:
+	# push_warning("[AnimatedCutscenePlayer] Failed to create timer for text overlay, skipping")
+	# return
+	# _scheduled_timers.append(timer)
+	# await timer.timeout
+	#
+	# # Create and add text overlay with memory allocation error handling (Requirement 12.5)
+	# var text_overlay = AnimatedTextOverlay.new()
+	# if not text_overlay:
+	# push_warning("[AnimatedCutscenePlayer] Failed to allocate text overlay node, skipping text display")
+	# return
+	#
+	# add_child(text_overlay)
+	# _active_text_overlays.append(text_overlay)
+	#
+	# # Play animation
+	# text_overlay.play_animation(overlay, size)
+	#
+	#
+	# # ============================================================================
+	# # PRIVATE METHODS - Cleanup
+	# # ============================================================================
+	#
+	# func _cleanup_cutscene() -> void:Comprehensive cleanup of all cutscene resources
 	
 	This method implements Requirements 9.6 (resource cleanup) by:
 	- Killing and freeing all active tweens
@@ -888,88 +886,85 @@ func _cleanup_cutscene() -> void:
 	
 	Memory monitoring (Requirement 9.5) is handled by checking memory
 	usage and clearing caches if needed.
-	"""
-	
-	# Kill tweens
-	if _current_tween and _current_tween.is_valid():
-		_current_tween.kill()
-	_current_tween = null
-	
-	if _background_tween and _background_tween.is_valid():
-		_background_tween.kill()
-	_background_tween = null
-	
-	# Clean up active particles - return to pool for reuse (object pooling)
-	for particle in _active_particles:
-		if is_instance_valid(particle):
-			particle.emitting = false
-			# Determine particle type for pooling
-			var particle_type = _identify_particle_type(particle)
-			if particle_type != null:
-				_return_pooled_particle(particle, particle_type)
-			else:
-				# Unknown type, just free it
-				particle.queue_free()
-	_active_particles.clear()
-	
-	# Clean up text overlays
-	for overlay in _active_text_overlays:
-		if is_instance_valid(overlay):
-			overlay.queue_free()
-	_active_text_overlays.clear()
-	
-	# Clear timer references (they auto-cleanup, but we clear our references)
-	_scheduled_timers.clear()
-	
-	# Remove character
-	if _current_character:
-		_current_character.queue_free()
-		_current_character = null
-	
-	# Check memory usage and clear caches if needed (adaptive quality reduction)
-	var memory_ratio = ParticleEffectManager._get_memory_usage_ratio()
-	if memory_ratio > 0.8:  # 80% memory usage threshold
-		push_warning("[AnimatedCutscenePlayer] High memory usage detected (%.1f%%), clearing caches" % (memory_ratio * 100))
-		clear_caches()
-
-
-## Identify the particle type from a particle node
-## This is used for returning particles to the correct pool
-## @param particle: The particle node to identify
-## @return: The particle type, or null if unknown
-func _identify_particle_type(particle: GPUParticles2D) -> CutsceneTypes.ParticleType:
-	# Check the scene file path to determine type
-	var scene_file = particle.scene_file_path
-	if scene_file:
-		for particle_type in WaterDropletCharacter.PARTICLE_SCENES.keys():
-			if WaterDropletCharacter.PARTICLE_SCENES[particle_type] == scene_file:
-				return particle_type
-	
-	# Fallback: check node name patterns
-	var node_name = particle.name.to_lower()
-	if "sparkle" in node_name:
-		return CutsceneTypes.ParticleType.SPARKLES
-	elif "water" in node_name or "drop" in node_name:
-		return CutsceneTypes.ParticleType.WATER_DROPS
-	elif "star" in node_name:
-		return CutsceneTypes.ParticleType.STARS
-	elif "smoke" in node_name:
-		return CutsceneTypes.ParticleType.SMOKE
-	elif "splash" in node_name:
-		return CutsceneTypes.ParticleType.SPLASH
-	
-	# Default fallback
-	return CutsceneTypes.ParticleType.SPARKLES
-
-
-# ============================================================================
-# HELPER METHODS
-# ============================================================================
-
-func _play_audio_by_name(sound_name: String) -> void:
-	"""Map sound name to AudioManager method and play it
+	#
+	# # Kill tweens
+	# if _current_tween and _current_tween.is_valid():
+	# _current_tween.kill()
+	# _current_tween = null
+	#
+	# if _background_tween and _background_tween.is_valid():
+	# _background_tween.kill()
+	# _background_tween = null
+	#
+	# # Clean up active particles - return to pool for reuse (object pooling)
+	# for particle in _active_particles:
+	# if is_instance_valid(particle):
+	# particle.emitting = false
+	# # Determine particle type for pooling
+	# var particle_type = _identify_particle_type(particle)
+	# if particle_type != null:
+	# _return_pooled_particle(particle, particle_type)
+	# else:
+	# # Unknown type, just free it
+	# particle.queue_free()
+	# _active_particles.clear()
+	#
+	# # Clean up text overlays
+	# for overlay in _active_text_overlays:
+	# if is_instance_valid(overlay):
+	# overlay.queue_free()
+	# _active_text_overlays.clear()
+	#
+	# # Clear timer references (they auto-cleanup, but we clear our references)
+	# _scheduled_timers.clear()
+	#
+	# # Remove character
+	# if _current_character:
+	# _current_character.queue_free()
+	# _current_character = null
+	#
+	# # Check memory usage and clear caches if needed (adaptive quality reduction)
+	# var memory_ratio = ParticleEffectManager._get_memory_usage_ratio()
+	# if memory_ratio > 0.8:  # 80% memory usage threshold
+	# push_warning("[AnimatedCutscenePlayer] High memory usage detected (%.1f%%), clearing caches" % (memory_ratio * 100))
+	# clear_caches()
+	#
+	#
+	# ## Identify the particle type from a particle node
+	# ## This is used for returning particles to the correct pool
+	# ## @param particle: The particle node to identify
+	# ## @return: The particle type, or null if unknown
+	# func _identify_particle_type(particle: GPUParticles2D) -> CutsceneTypes.ParticleType:
+	# # Check the scene file path to determine type
+	# var scene_file = particle.scene_file_path
+	# if scene_file:
+	# for particle_type in WaterDropletCharacter.PARTICLE_SCENES.keys():
+	# if WaterDropletCharacter.PARTICLE_SCENES[particle_type] == scene_file:
+	# return particle_type
+	#
+	# # Fallback: check node name patterns
+	# var node_name = particle.name.to_lower()
+	# if "sparkle" in node_name:
+	# return CutsceneTypes.ParticleType.SPARKLES
+	# elif "water" in node_name or "drop" in node_name:
+	# return CutsceneTypes.ParticleType.WATER_DROPS
+	# elif "star" in node_name:
+	# return CutsceneTypes.ParticleType.STARS
+	# elif "smoke" in node_name:
+	# return CutsceneTypes.ParticleType.SMOKE
+	# elif "splash" in node_name:
+	# return CutsceneTypes.ParticleType.SPLASH
+	#
+	# # Default fallback
+	# return CutsceneTypes.ParticleType.SPARKLES
+	#
+	#
+	# # ============================================================================
+	# # HELPER METHODS
+	# # ============================================================================
+	#
+	# func _play_audio_by_name(sound_name: String) -> void:Map sound name to AudioManager method and play it
 	Implements Requirement 12.4: Audio file failure handling (play without audio)
-	"""
 	# Wrap audio playback in error handling to prevent cutscene blocking
 	# If audio fails, log warning but continue cutscene
 	match sound_name.to_lower():

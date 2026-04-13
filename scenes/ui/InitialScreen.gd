@@ -328,7 +328,7 @@ func _on_play_pressed() -> void:
 	# Transition after last character exits
 	await get_tree().create_timer(0.6).timeout
 	if GameManager:
-		GameManager.start_session()
+		GameManager.start_new_session()
 	else:
 		get_tree().change_scene_to_file("res://scenes/minigames/MiniGame_Rain.tscn")
 

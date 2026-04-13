@@ -82,14 +82,12 @@ func _ready() -> void:
 	input_event.connect(_on_input_event)
 
 func setup(direction: Vector2, speed: float, special_or_spin: Variant = false) -> void:
-	"""
-	Setup the object's movement properties.
-	
-	Parameters:
-	- direction: Movement direction (normalized)
-	- speed: Movement speed in pixels/second
-	- special_or_spin: bool for is_special OR spin enabled
-	"""
+	# Setup the object's movement properties.
+	#
+	# Parameters:
+	# - direction: Movement direction (normalized)
+	# - speed: Movement speed in pixels/second
+	# - special_or_spin: bool for is_special OR spin enabled
 	move_direction = direction.normalized()
 	move_speed = speed
 	
@@ -121,7 +119,7 @@ func _process(delta: float) -> void:
 		_on_missed()
 
 func _is_off_screen() -> bool:
-	"""Check if object has exited the playable screen area"""
+	# Check if object has exited the playable screen area
 	var margin: float = 100.0  # Buffer zone
 	
 	return (
@@ -136,7 +134,7 @@ func _is_off_screen() -> bool:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func _on_area_entered(other: Area2D) -> void:
-	"""Called when this object collides with another Area2D (bucket)"""
+	# Called when this object collides with another Area2D (bucket)
 	if not is_active:
 		return
 	
@@ -147,7 +145,7 @@ func _on_area_entered(other: Area2D) -> void:
 		_play_catch_effect()
 
 func _play_catch_effect() -> void:
-	"""Visual feedback when caught"""
+	# Visual feedback when caught
 	var tween: Tween = create_tween()
 	tween.set_loops(1)
 	tween.tween_property(self, "scale", Vector2(1.5, 1.5), 0.1)
@@ -159,7 +157,7 @@ func _play_catch_effect() -> void:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func _on_input_event(_viewport: Node, event: InputEvent, _shape_idx: int) -> void:
-	"""Called when this object receives input (click/tap)"""
+	# Called when this object receives input (click/tap)
 	if not is_active:
 		return
 	
@@ -170,7 +168,7 @@ func _on_input_event(_viewport: Node, event: InputEvent, _shape_idx: int) -> voi
 			_play_destroy_effect()
 
 func _play_destroy_effect() -> void:
-	"""Visual feedback when destroyed by click"""
+	# Visual feedback when destroyed by click
 	# Burst effect
 	var tween: Tween = create_tween()
 	tween.set_loops(1)
@@ -186,7 +184,7 @@ func _play_destroy_effect() -> void:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func _on_missed() -> void:
-	"""Called when object exits screen without interaction"""
+	# Called when object exits screen without interaction
 	if not is_active:
 		return
 	
@@ -209,7 +207,7 @@ signal swiped_right(obj: Area2D)
 signal swipe_traced(obj: Area2D, accuracy: float)
 
 func _unhandled_input(event: InputEvent) -> void:
-	"""Handle swipe gestures for sorting/repair games"""
+	# Handle swipe gestures for sorting/repair games
 	if not is_active:
 		return
 	
@@ -243,13 +241,13 @@ func _unhandled_input(event: InputEvent) -> void:
 				is_swiping = false
 
 func _is_point_inside(point: Vector2) -> bool:
-	"""Check if a point is inside this object's collision area"""
+	# Check if a point is inside this object's collision area
 	var local_point: Vector2 = to_local(point)
 	# Simple radius check (adjust based on your collision shape)
 	return local_point.length() < 50.0
 
 func _process_swipe(end_pos: Vector2) -> void:
-	"""Determine swipe direction and emit appropriate signal"""
+	# Determine swipe direction and emit appropriate signal
 	var swipe_vector: Vector2 = end_pos - swipe_start
 	var distance: float = swipe_vector.length()
 	
@@ -300,12 +298,12 @@ var target_path: Array[Vector2] = []  # Set this for crack repair games
 var is_tracing: bool = false
 
 func setup_trace_path(path: Array[Vector2]) -> void:
-	"""Setup the target path for tracing (crack repair)"""
+	# Setup the target path for tracing (crack repair)
 	target_path = path
 	object_type = ObjectType.CRACK
 
 func _handle_trace_input(event: InputEvent) -> void:
-	"""Handle continuous tracing for crack repair"""
+	# Handle continuous tracing for crack repair
 	if object_type != ObjectType.CRACK:
 		return
 	
@@ -323,7 +321,7 @@ func _handle_trace_input(event: InputEvent) -> void:
 		trace_points.append(event.position)
 
 func _calculate_trace_accuracy() -> float:
-	"""Calculate how accurately the player traced the target path"""
+	# Calculate how accurately the player traced the target path
 	if target_path.is_empty() or trace_points.is_empty():
 		return 0.0
 	
@@ -349,7 +347,7 @@ func _calculate_trace_accuracy() -> float:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func set_color(color: Color) -> void:
-	"""Set the visual color of the object"""
+	# Set the visual color of the object
 	for child in get_children():
 		if child is Polygon2D:
 			child.color = color
@@ -357,7 +355,7 @@ func set_color(color: Color) -> void:
 			child.modulate = color
 
 func flash(color: Color = Color.WHITE, duration: float = 0.1) -> void:
-	"""Flash the object with a color"""
+	# Flash the object with a color
 	var original_modulate: Color = modulate
 	var tween: Tween = create_tween()
 	tween.set_loops(1)

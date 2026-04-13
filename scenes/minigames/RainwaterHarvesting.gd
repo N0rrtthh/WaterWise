@@ -88,7 +88,7 @@ func _ready() -> void:
 	_start_countdown()
 
 func _apply_difficulty_parameters() -> void:
-	"""Apply difficulty parameters from CoopAdaptation"""
+	# Apply difficulty parameters from CoopAdaptation
 	time_remaining = difficulty_params.get("time_limit", 15)
 	total_tasks = difficulty_params.get("task_count", 5)
 	
@@ -105,7 +105,7 @@ func _apply_difficulty_parameters() -> void:
 		water_usage_scenarios = total_tasks
 
 func _show_role_instructions() -> void:
-	"""Show instructions based on player role"""
+	# Show instructions based on player role
 	if player_role == "Collector":
 		task_label.text = "YOUR TASK: Place rainwater containers under roof gutters\nKung saan dumadaloy ang tubig-ulan mula sa bubong"
 	elif player_role == "User":
@@ -116,7 +116,7 @@ func _show_role_instructions() -> void:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func _start_countdown() -> void:
-	"""3-second countdown before game starts"""
+	# 3-second countdown before game starts
 	countdown_label.visible = true
 	
 	for i in range(COUNTDOWN_TIME, 0, -1):
@@ -130,7 +130,7 @@ func _start_countdown() -> void:
 	_start_game()
 
 func _start_game() -> void:
-	"""Start the actual game"""
+	# Start the actual game
 	game_started = true
 	start_time = Time.get_ticks_msec() / 1000.0
 	
@@ -168,7 +168,7 @@ func _process(delta: float) -> void:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func _generate_collector_game() -> void:
-	"""Generate container placement game for Player 1"""
+	# Generate container placement game for Player 1
 	# TODO: Create visual house with gutters
 	# TODO: Generate placement spots (some correct, some incorrect)
 	# TODO: Allow drag-and-drop of containers
@@ -176,7 +176,7 @@ func _generate_collector_game() -> void:
 	print("🪣 Collector game generated: Place %d containers" % containers_to_place)
 
 func _on_container_placed(_position: Vector2, is_correct: bool) -> void:
-	"""Called when Player 1 places a container"""
+	# Called when Player 1 places a container
 	completed_tasks += 1
 	
 	if is_correct:
@@ -189,7 +189,7 @@ func _on_container_placed(_position: Vector2, is_correct: bool) -> void:
 		_complete_collector_task()
 
 func _complete_collector_task() -> void:
-	"""Player 1 completed their task"""
+	# Player 1 completed their task
 	completion_time = (Time.get_ticks_msec() / 1000.0) - start_time
 	accuracy = float(containers_placed_correctly) / float(containers_to_place)
 	
@@ -204,7 +204,7 @@ func _complete_collector_task() -> void:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func _generate_user_game() -> void:
-	"""Generate water usage game for Player 2"""
+	# Generate water usage game for Player 2
 	# TODO: Show water usage scenarios (toilet, plants, drinking?, cooking?)
 	# TODO: Player must select correct uses (not drinking/cooking)
 	# For now, simplified version
@@ -214,7 +214,7 @@ func _generate_user_game() -> void:
 	partner_status_label.text = "Waiting for collector to gather water..."
 
 func _on_water_usage_selected(_scenario: String, is_correct: bool) -> void:
-	"""Called when Player 2 selects a water usage"""
+	# Called when Player 2 selects a water usage
 	completed_tasks += 1
 	
 	if is_correct:
@@ -227,7 +227,7 @@ func _on_water_usage_selected(_scenario: String, is_correct: bool) -> void:
 		_complete_user_task()
 
 func _complete_user_task() -> void:
-	"""Player 2 completed their task"""
+	# Player 2 completed their task
 	completion_time = (Time.get_ticks_msec() / 1000.0) - start_time
 	accuracy = float(correct_usages) / float(water_usage_scenarios)
 	
@@ -239,7 +239,7 @@ func _complete_user_task() -> void:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func _send_performance() -> void:
-	"""Send performance data to partner via network"""
+	# Send performance data to partner via network
 	var performance = {
 		"accuracy": accuracy,
 		"time": completion_time,
@@ -256,7 +256,7 @@ func _send_performance() -> void:
 	print("📊 Performance sent - Accuracy: %.2f, Time: %.2fs, Errors: %d" % [accuracy, completion_time, errors])
 
 func _on_partner_performance_received(player_id: int, performance: Dictionary) -> void:
-	"""Receive partner's performance"""
+	# Receive partner's performance
 	if player_id == local_player_num:
 		return  # Ignore own performance
 	
@@ -277,7 +277,7 @@ func _on_partner_performance_received(player_id: int, performance: Dictionary) -
 		_show_team_results()
 
 func _wait_for_partner() -> void:
-	"""Wait for partner to complete"""
+	# Wait for partner to complete
 	game_ended = true
 	partner_status_label.text = "Waiting for partner..."
 	
@@ -289,7 +289,7 @@ func _wait_for_partner() -> void:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func _end_game_timeout() -> void:
-	"""Game ended due to time out"""
+	# Game ended due to time out
 	if game_ended:
 		return
 	
@@ -304,7 +304,7 @@ func _end_game_timeout() -> void:
 	_wait_for_partner()
 
 func _show_team_results() -> void:
-	"""Show results for both players"""
+	# Show results for both players
 	# Determine team success
 	var team_success = (accuracy > 0.5 and partner_accuracy > 0.5)
 	
@@ -326,7 +326,7 @@ func _show_team_results() -> void:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func _input(event: InputEvent) -> void:
-	"""Simplified input for testing (replace with proper UI)"""
+	# Simplified input for testing (replace with proper UI)
 	if not game_started or game_ended:
 		return
 	
