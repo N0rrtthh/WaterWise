@@ -145,7 +145,11 @@ func _notification(what: int) -> void:
 func save_all_data() -> void:
 	_update_play_time()
 	
+	# Always stamp current version before writing
+	player_data["save_version"] = SAVE_VERSION
+	
 	var save_data: Dictionary = {
+		"save_version": SAVE_VERSION,
 		"player": player_data,
 		"high_scores": high_scores,
 		"unlocked": unlocked_content,
@@ -185,6 +189,18 @@ func load_all_data() -> void:
 	data_loaded.emit()
 
 func _merge_data(data: Dictionary) -> void:
+	# Version check — reject incompatible save formats
+	var file_version = data.get("save_version", data.get("player", {}).get("save_version", 0))
+	if file_version > SAVE_VERSION:
+		push_warning(
+			"💾 Save file version %d is newer than supported %d — ignoring save"
+			% [file_version, SAVE_VERSION]
+		)
+		return
+	if file_version < SAVE_VERSION:
+		print("💾 Migrating save from v%d to v%d" % [file_version, SAVE_VERSION])
+		# Future migration logic goes here
+	
 	# Merge loaded data with defaults (handles missing keys from older saves).
 	if data.has("player"):
 		for key in data.player:
