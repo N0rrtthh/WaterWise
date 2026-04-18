@@ -30,8 +30,8 @@ signal case_study_exported(file_path: String)
 @export_category("Algorithm Settings")
 @export var window_size: int = 5  # Rolling window keeps last 5 games (as per outline)
 @export var adaptation_frequency: int = 1  # Every N games (Paper: evaluate each new game)
-# Need full window before adapting (Paper: window_size = 5)
-@export var min_games_before_adaptation: int = 5
+# Warmup games before adaptation starts (configured to 3-5 games)
+@export_range(3, 5, 1) var min_games_before_adaptation: int = 3
 @export var target_latency_ms: float = 100.0
 
 ## Behavioral Thresholds
@@ -223,6 +223,19 @@ func _generate_session_id() -> String:
 	var random_suffix = randi() % 10000
 	return "WW_%d_%04d" % [timestamp, random_suffix]
 
+func _get_effective_min_games() -> int:
+	# Keep adaptation warmup in the 3-5 range while respecting window size.
+	var max_allowed = max(1, min(window_size, 5))
+	if max_allowed < 3:
+		return max_allowed
+	return clamp(min_games_before_adaptation, 3, max_allowed)
+
+func _get_lifetime_games_played() -> int:
+	var save_mgr = get_node_or_null("/root/SaveManager")
+	if save_mgr and save_mgr.has_method("get_total_games_played"):
+		return int(save_mgr.get_total_games_played())
+	return performance_history.size()
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # FORMATIVE ASSESSMENT - PERFORMANCE TRACKING
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -310,20 +323,21 @@ func add_performance(
 	# Example: Games 1-4: collecting data, no adaptation yet.
 	#          Game 5: FIRST adaptation! Full window available.
 	#          Games 6, 7, 8...: re-evaluate each game (window slides).
+	var required_games = _get_effective_min_games()
 	games_since_adaptation += 1
 	var ready_to_adapt = (
 		games_since_adaptation >= adaptation_frequency
-		and performance_window.size() >= min_games_before_adaptation)
+		and performance_window.size() >= required_games)
 	if ready_to_adapt:
-		print("\n🔬 ALGORITHM TRIGGERED: Window full (%d/%d games). Evaluating Φ..." % [
-			performance_window.size(), window_size])
+		print("\n🔬 ALGORITHM TRIGGERED: Warmup met (%d/%d games). Evaluating Φ..." % [
+			performance_window.size(), required_games])
 		_adapt_difficulty()  # 🎯 THIS IS WHERE THE ALGORITHM RUNS!
 		games_since_adaptation = 0
 	else:
-		if performance_window.size() < min_games_before_adaptation:
+		if performance_window.size() < required_games:
 			print("⏳ Rolling Window: %d/%d games. Need %d more before algorithm activates." % [
-				performance_window.size(), window_size,
-				min_games_before_adaptation - performance_window.size()])
+				performance_window.size(), required_games,
+				required_games - performance_window.size()])
 	
 	# ────────────────────────────────────────────────────────────────────────
 	# STEP 6: Track consecutive successes for PROGRESSIVE DIFFICULTY
@@ -373,10 +387,10 @@ func _adapt_difficulty() -> void:
 	# ────────────────────────────────────────────────────────────────────────
 	# SAFETY CHECK: Do we have enough data to make a decision?
 	# ────────────────────────────────────────────────────────────────────────
-	# ELI5: We need a full rolling window (5 games) before we can adapt
-	#       (min_games_before_adaptation = 5 = window_size, per paper).
+	# ELI5: We need enough warmup games before we can adapt (3-5 configurable).
 	#       This gives us enough data to calculate reliable trends!
-	if performance_window.size() < min_games_before_adaptation:
+	var required_games = _get_effective_min_games()
+	if performance_window.size() < required_games:
 		return  # Not enough data yet, wait for more games
 	
 	# ────────────────────────────────────────────────────────────────────────
@@ -461,8 +475,9 @@ func _print_algorithm_debug(
 			change_icon = "⬇️"  # Difficulty decreased
 	
 	# Simplified output - just difficulty and calculation
-	print("🎮 Game #%d | Φ=%.3f | %s %s %s" % [
+	print("🎮 Session Game #%d (Lifetime: %d) | Φ=%.3f | %s %s %s" % [
 		performance_history.size(),
+		_get_lifetime_games_played(),
 		phi,
 		old_difficulty.to_upper(),
 		change_icon,
@@ -1076,13 +1091,20 @@ func get_algorithm_status() -> Dictionary:
 	# Returns comprehensive algorithm state for research/demo purposes.
 	# Use this to display the algorithm's work to panelists or in debug UI.
 	var metrics = _get_window_metrics() if performance_window.size() > 0 else {}
+	var required_games = _get_effective_min_games()
+	var session_games = performance_history.size()
+	var lifetime_games = _get_lifetime_games_played()
 	
 	var status = {
 		# Current State
 		"current_difficulty": current_difficulty,
 		"games_in_window": performance_window.size(),
 		"games_until_next_adaptation": max(0, adaptation_frequency - games_since_adaptation),
-		"total_games_played": performance_history.size(),
+		"total_games_played": session_games,
+		"session_games_played": session_games,
+		"lifetime_games_played": lifetime_games,
+		"min_games_before_adaptation": required_games,
+		"games_until_algorithm_activation": max(0, required_games - performance_window.size()),
 		
 		# Algorithm Metrics (if available)
 		"proficiency_index": metrics.get("proficiency_index", 0.0),
@@ -1096,7 +1118,7 @@ func get_algorithm_status() -> Dictionary:
 		
 		# Status Messages (human-readable)
 		"status_message": "",
-		"algorithm_active": performance_window.size() >= min_games_before_adaptation
+		"algorithm_active": performance_window.size() >= required_games
 	}
 	
 	# Populate window data for visualization
@@ -1110,14 +1132,12 @@ func get_algorithm_status() -> Dictionary:
 		status["window_times"].append(perf["reaction_time"])
 	
 	# Generate status message
-	if performance_window.size() < min_games_before_adaptation:
-		var games_left = (
-			min_games_before_adaptation
-			- performance_window.size())
+	if performance_window.size() < required_games:
+		var games_left = required_games - performance_window.size()
 		status["status_message"] = (
-			"Rolling Window: %d/5 games collected."
+			"Rolling Window: %d/%d games collected."
 			+ " Play %d more to fill window and activate algorithm."
-		) % [performance_window.size(), games_left]
+		) % [performance_window.size(), required_games, games_left]
 	else:
 		var phi = status["proficiency_index"]
 		if phi < 0.5:
@@ -1263,6 +1283,8 @@ func _log_system_start() -> void:
 	if not enable_research_logging:
 		return
 	
+	var required_games = _get_effective_min_games()
+
 	print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 	print("🎮 WATERWISE ADAPTIVE DIFFICULTY SYSTEM")
 	print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
@@ -1270,6 +1292,7 @@ func _log_system_start() -> void:
 	print("🕐 Started: %s" % Time.get_datetime_string_from_unix_time(session_start_time))
 	print("🔬 Algorithm: Rule-Based Rolling Window")
 	print("📏 Window Size: %d games" % window_size)
+	print("🚀 Warmup Start: %d games" % required_games)
 	print("⚡ Adaptation: Every %d games" % adaptation_frequency)
 	print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 

@@ -12,6 +12,11 @@ extends Node
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 const UIScalerUtil = preload("res://scripts/mobile/UIScaler.gd")
+const LayoutManagerUtil = preload("res://scripts/mobile/LayoutManager.gd")
+
+# Godot 4 DisplayServer screen orientation int values
+const SCREEN_LANDSCAPE_VALUE: int = 0       # SCREEN_LANDSCAPE
+const SCREEN_SENSOR_LANDSCAPE_VALUE: int = 6 # SCREEN_SENSOR_LANDSCAPE
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # SIGNALS
@@ -41,9 +46,15 @@ signal safe_area_changed(margins: Dictionary)
 @export var mobile_safe_area_margin: float = 20.0
 @export var mobile_edge_dead_zone: float = 15.0
 
+## Orientation
+@export var enforce_landscape_only: bool = true
+@export var allow_reverse_landscape: bool = true
+
 ## Performance
 @export var mobile_particle_reduction: float = 0.4
 @export var mobile_max_tweens: int = 10
+
+var _last_scene: Node = null
 @export var mobile_target_fps: int = 30
 
 ## Gameplay adjustments
@@ -81,6 +92,7 @@ var _is_in_background: bool = false
 
 # Debug visualization
 var _debug_overlay: CanvasLayer = null
+var _last_adapted_scene_id: int = -1
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # INITIALIZATION
@@ -88,7 +100,10 @@ var _debug_overlay: CanvasLayer = null
 
 func _ready() -> void:
 	_detect_platform()
+	_enforce_landscape_orientation()
 	_detect_orientation()
+	if _should_force_landscape():
+		is_portrait = false
 	_calculate_safe_area()
 	_load_config_if_exists()
 	
@@ -98,10 +113,19 @@ func _ready() -> void:
 	# Connect to app focus changes for background CPU reduction
 	get_tree().root.focus_entered.connect(_on_app_focus_gained)
 	get_tree().root.focus_exited.connect(_on_app_focus_lost)
+
+	# Adapt newly loaded scenes automatically for mobile safe-area and touch targets.
+	if get_tree().has_signal("current_scene_changed"):
+		if not get_tree().is_connected("current_scene_changed", _on_current_scene_changed):
+			get_tree().connect("current_scene_changed", _on_current_scene_changed)
+	else:
+		get_tree().tree_changed.connect(_on_tree_changed)
 	
 	# Create debug overlay if enabled
 	if debug_visualization_enabled:
 		_create_debug_overlay()
+
+	call_deferred("_adapt_current_scene")
 	
 	print("📱 MobileUIManager initialized")
 	print("   - Platform: %s" % ("Mobile" if is_mobile else "Desktop"))
@@ -127,6 +151,9 @@ func _process(delta: float) -> void:
 		
 		# Detect new orientation
 		var new_is_portrait = viewport_height > viewport_width
+		if _should_force_landscape() and new_is_portrait:
+			_enforce_landscape_orientation()
+			new_is_portrait = false
 		
 		# Check if orientation changed
 		if new_is_portrait != is_portrait:
@@ -178,6 +205,31 @@ func _detect_platform() -> void:
 func _detect_orientation() -> void:
 	# Detect if viewport is in portrait or landscape orientation
 	is_portrait = viewport_height > viewport_width
+	if _should_force_landscape():
+		is_portrait = false
+
+
+func _should_force_landscape() -> bool:
+	if not enforce_landscape_only:
+		return false
+	if not is_mobile:
+		return false
+	return OS.get_name() in ["Android", "iOS"]
+
+
+func _landscape_orientation_value() -> int:
+	if allow_reverse_landscape:
+		return SCREEN_SENSOR_LANDSCAPE_VALUE
+	return SCREEN_LANDSCAPE_VALUE
+
+
+func _enforce_landscape_orientation() -> void:
+	if not _should_force_landscape():
+		return
+	if not DisplayServer.has_method("screen_set_orientation"):
+		return
+
+	DisplayServer.screen_set_orientation(_landscape_orientation_value())
 
 func _calculate_safe_area() -> void:
 	# Calculate safe area margins for devices with notches
@@ -208,6 +260,103 @@ func _load_config_if_exists() -> void:
 	var config_path = "user://mobile_ui_config.cfg"
 	if FileAccess.file_exists(config_path):
 		load_config_file(config_path)
+
+
+func _adapt_current_scene() -> void:
+	if not is_mobile:
+		return
+
+	var scene_root = get_tree().current_scene
+	if scene_root:
+		adapt_scene_for_mobile(scene_root)
+
+
+func _on_current_scene_changed(scene_root: Node) -> void:
+	if not is_mobile:
+		return
+	call_deferred("adapt_scene_for_mobile", scene_root)
+
+
+func _on_tree_changed() -> void:
+	var tree = get_tree()
+	if not tree:
+		return
+	var current = tree.current_scene
+	if current != _last_scene:
+		_last_scene = current
+		if is_mobile and current != null:
+			call_deferred("adapt_scene_for_mobile", current)
+
+
+func adapt_scene_for_mobile(scene_root: Node) -> void:
+	if not is_mobile or not scene_root:
+		return
+
+	var safe_target := _find_safe_area_target(scene_root)
+	if safe_target and not safe_area_margins.is_empty():
+		LayoutManagerUtil.apply_safe_area_margins(safe_target, safe_area_margins)
+
+	_apply_mobile_layout_hints(scene_root, _resolve_button_min_size())
+
+	if TouchInputManager and TouchInputManager.has_method("enable_haptics_for_scene"):
+		TouchInputManager.enable_haptics_for_scene(scene_root)
+
+	_last_adapted_scene_id = scene_root.get_instance_id()
+	_log_debug("Adapted scene for mobile: %s" % scene_root.name)
+
+
+func _find_safe_area_target(scene_root: Node) -> Control:
+	if scene_root is Control:
+		var ui_child = scene_root.get_node_or_null("UI")
+		if ui_child and ui_child is Control:
+			return ui_child as Control
+		return scene_root as Control
+
+	var direct_ui = scene_root.get_node_or_null("UI")
+	if direct_ui and direct_ui is Control:
+		return direct_ui as Control
+
+	for child in scene_root.get_children():
+		if child is Control:
+			return child as Control
+
+	return null
+
+
+func _resolve_button_min_size() -> Vector2:
+	var target_size = mobile_button_min_size
+	var save_mgr = get_node_or_null("/root/SaveManager")
+	if save_mgr and save_mgr.has_method("get_setting"):
+		var wants_large_targets = bool(save_mgr.get_setting("large_touch_targets", false))
+		if wants_large_targets:
+			target_size = Vector2(max(target_size.x, 120.0), max(target_size.y, 80.0))
+	return target_size
+
+
+func _apply_mobile_layout_hints(node: Node, button_minimum_size: Vector2) -> void:
+	if node is BaseButton:
+		var button = node as BaseButton
+		button.custom_minimum_size = Vector2(
+			max(button.custom_minimum_size.x, button_minimum_size.x),
+			max(button.custom_minimum_size.y, button_minimum_size.y)
+		)
+
+	if node is BoxContainer:
+		var box = node as BoxContainer
+		var desired_sep = (
+			mobile_button_spacing_vertical if box.vertical else mobile_button_spacing_horizontal
+		)
+		if box.get_theme_constant("separation") < int(desired_sep):
+			box.add_theme_constant_override("separation", int(desired_sep))
+	elif node is GridContainer:
+		var grid = node as GridContainer
+		if grid.get_theme_constant("h_separation") < int(mobile_button_spacing_horizontal):
+			grid.add_theme_constant_override("h_separation", int(mobile_button_spacing_horizontal))
+		if grid.get_theme_constant("v_separation") < int(mobile_button_spacing_vertical):
+			grid.add_theme_constant_override("v_separation", int(mobile_button_spacing_vertical))
+
+	for child in node.get_children():
+		_apply_mobile_layout_hints(child, button_minimum_size)
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # PUBLIC INTERFACE - PLATFORM DETECTION
@@ -327,35 +476,82 @@ func apply_mobile_scaling(node: Control) -> void:
 		return
 	
 	_log_debug("Scaling Control node: %s (original size: %s)" % [node.name, node.size])
+
+	var base_scale = _get_or_store_base_scale(node)
+	var base_minimum_size = _get_or_store_base_minimum_size(node)
 	
 	# Apply UI scale factor
-	UIScalerUtil.scale_control_node(node, mobile_ui_scale)
+	node.scale = base_scale * mobile_ui_scale
 	
 	# Apply button-specific handling
 	if node is Button:
+		var button_node = node as Button
 		# Ensure minimum button size (100x60 pixels)
-		UIScalerUtil.ensure_minimum_size(node, mobile_button_min_size)
+		UIScalerUtil.ensure_minimum_size(button_node, _resolve_button_min_size())
 		
-		# Add expanded hit detection area (10 pixels beyond visual boundaries)
-		# This is done by increasing the custom_minimum_size slightly
-		var expanded_size = node.custom_minimum_size + Vector2(20, 20)  # 10px on each side
-		node.custom_minimum_size = expanded_size
+		# Add expanded hit detection area (10 pixels beyond visual boundaries) once.
+		var expanded_size = Vector2(
+			max(base_minimum_size.x, _resolve_button_min_size().x),
+			max(base_minimum_size.y, _resolve_button_min_size().y)
+		) + Vector2(20, 20)
+		button_node.custom_minimum_size = Vector2(
+			max(button_node.custom_minimum_size.x, expanded_size.x),
+			max(button_node.custom_minimum_size.y, expanded_size.y)
+		)
 		
 		# Apply font scaling to button label
 		# Buttons in Godot have their text rendered internally, but we can scale the font
-		if node.get_theme_font_size("font_size") > 0:
-			var current_font_size = node.get_theme_font_size("font_size")
-			var scaled_font_size = int(current_font_size * mobile_font_scale)
-			node.add_theme_font_size_override("font_size", scaled_font_size)
+		var button_base_font = _get_or_store_base_font_size(button_node, 18)
+		button_node.add_theme_font_size_override(
+			"font_size",
+			max(16, int(round(button_base_font * mobile_font_scale)))
+		)
 	
 	# Apply font scaling to labels
 	if node is Label:
-		UIScalerUtil.scale_font(node, mobile_font_scale)
+		var label_node = node as Label
+		var label_base_font = _get_or_store_base_font_size(label_node, 16)
+		label_node.add_theme_font_size_override(
+			"font_size",
+			max(14, int(round(label_base_font * mobile_font_scale)))
+		)
 	
 	# Ensure all touch targets meet minimum size
 	UIScalerUtil.ensure_minimum_size(node, mobile_touch_target_min_size)
 	
 	_log_debug("Scaled Control node: %s (final size: %s)" % [node.name, node.size])
+
+
+func _get_or_store_base_scale(node: Control) -> Vector2:
+	if node.has_meta("_mobile_base_scale"):
+		var stored_scale = node.get_meta("_mobile_base_scale")
+		if stored_scale is Vector2:
+			return stored_scale
+
+	node.set_meta("_mobile_base_scale", node.scale)
+	return node.scale
+
+
+func _get_or_store_base_minimum_size(node: Control) -> Vector2:
+	if node.has_meta("_mobile_base_min_size"):
+		var stored_min_size = node.get_meta("_mobile_base_min_size")
+		if stored_min_size is Vector2:
+			return stored_min_size
+
+	node.set_meta("_mobile_base_min_size", node.custom_minimum_size)
+	return node.custom_minimum_size
+
+
+func _get_or_store_base_font_size(node: Control, fallback_size: int) -> int:
+	if node.has_meta("_mobile_base_font_size"):
+		return int(node.get_meta("_mobile_base_font_size"))
+
+	var font_size = node.get_theme_font_size("font_size")
+	if font_size <= 0:
+		font_size = fallback_size
+
+	node.set_meta("_mobile_base_font_size", font_size)
+	return font_size
 
 func apply_game_object_scaling(node: Node2D) -> void:
 	# Apply mobile-specific scaling to game objects (Node2D)
@@ -439,8 +635,12 @@ func apply_game_object_scaling(node: Node2D) -> void:
 		if effective_size != Vector2.ZERO:
 			if effective_size.x < min_draggable_size.x or effective_size.y < min_draggable_size.y:
 				# Calculate additional scaling needed
-				var additional_scale_x = min_draggable_size.x / effective_size.x if effective_size.x > 0 else 1.0
-				var additional_scale_y = min_draggable_size.y / effective_size.y if effective_size.y > 0 else 1.0
+				var additional_scale_x = (
+					min_draggable_size.x / effective_size.x if effective_size.x > 0 else 1.0
+				)
+				var additional_scale_y = (
+					min_draggable_size.y / effective_size.y if effective_size.y > 0 else 1.0
+				)
 				var additional_scale = max(additional_scale_x, additional_scale_y)
 				
 				# Apply additional scaling to meet minimum size
@@ -449,7 +649,13 @@ func apply_game_object_scaling(node: Node2D) -> void:
 	# Collision shapes are automatically scaled with the parent node in Godot
 	# No additional work needed to preserve collision detection accuracy
 	
-	_log_debug("Scaled game object: %s (final scale: %s, type: %s)" % [node.name, node.scale, "collectible" if is_collectible else ("draggable" if is_draggable else "interactive")])
+	var object_type = "collectible" if is_collectible else (
+		"draggable" if is_draggable else "interactive"
+	)
+	_log_debug(
+		"Scaled game object: %s (final scale: %s, type: %s)"
+		% [node.name, node.scale, object_type]
+	)
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # PUBLIC INTERFACE - DEMO BUTTONS
@@ -501,29 +707,51 @@ func load_config_file(path: String) -> bool:
 	# Load scaling factors
 	mobile_ui_scale = config.get_value("scaling", "ui_scale", mobile_ui_scale)
 	mobile_font_scale = config.get_value("scaling", "font_scale", mobile_font_scale)
-	mobile_game_object_scale = config.get_value("scaling", "game_object_scale", mobile_game_object_scale)
-	mobile_collectible_scale = config.get_value("scaling", "collectible_scale", mobile_collectible_scale)
+	mobile_game_object_scale = config.get_value(
+		"scaling", "game_object_scale", mobile_game_object_scale
+	)
+	mobile_collectible_scale = config.get_value(
+		"scaling", "collectible_scale", mobile_collectible_scale
+	)
 	
 	# Load minimum sizes
 	mobile_button_min_size = config.get_value("sizes", "button_min_size", mobile_button_min_size)
-	mobile_touch_target_min_size = config.get_value("sizes", "touch_target_min_size", mobile_touch_target_min_size)
+	mobile_touch_target_min_size = config.get_value(
+		"sizes", "touch_target_min_size", mobile_touch_target_min_size
+	)
 	
 	# Load spacing
-	mobile_button_spacing_vertical = config.get_value("spacing", "button_vertical", mobile_button_spacing_vertical)
-	mobile_button_spacing_horizontal = config.get_value("spacing", "button_horizontal", mobile_button_spacing_horizontal)
-	mobile_safe_area_margin = config.get_value("spacing", "safe_area_margin", mobile_safe_area_margin)
+	mobile_button_spacing_vertical = config.get_value(
+		"spacing", "button_vertical", mobile_button_spacing_vertical
+	)
+	mobile_button_spacing_horizontal = config.get_value(
+		"spacing", "button_horizontal", mobile_button_spacing_horizontal
+	)
+	mobile_safe_area_margin = config.get_value(
+		"spacing", "safe_area_margin", mobile_safe_area_margin
+	)
 	mobile_edge_dead_zone = config.get_value("spacing", "edge_dead_zone", mobile_edge_dead_zone)
 	
 	# Load performance settings
-	mobile_particle_reduction = config.get_value("performance", "particle_reduction", mobile_particle_reduction)
+	mobile_particle_reduction = config.get_value(
+		"performance", "particle_reduction", mobile_particle_reduction
+	)
 	mobile_max_tweens = config.get_value("performance", "max_tweens", mobile_max_tweens)
 	mobile_target_fps = config.get_value("performance", "target_fps", mobile_target_fps)
 	
 	# Load gameplay adjustments
-	mobile_game_speed_reduction = config.get_value("gameplay", "speed_reduction", mobile_game_speed_reduction)
-	mobile_timing_window_increase = config.get_value("gameplay", "timing_window_increase", mobile_timing_window_increase)
-	mobile_spawn_rate_reduction = config.get_value("gameplay", "spawn_rate_reduction", mobile_spawn_rate_reduction)
-	mobile_drag_smoothing_increase = config.get_value("gameplay", "drag_smoothing_increase", mobile_drag_smoothing_increase)
+	mobile_game_speed_reduction = config.get_value(
+		"gameplay", "speed_reduction", mobile_game_speed_reduction
+	)
+	mobile_timing_window_increase = config.get_value(
+		"gameplay", "timing_window_increase", mobile_timing_window_increase
+	)
+	mobile_spawn_rate_reduction = config.get_value(
+		"gameplay", "spawn_rate_reduction", mobile_spawn_rate_reduction
+	)
+	mobile_drag_smoothing_increase = config.get_value(
+		"gameplay", "drag_smoothing_increase", mobile_drag_smoothing_increase
+	)
 	
 	print("📱 Loaded mobile UI config from %s" % path)
 	return true
@@ -577,7 +805,10 @@ func _on_viewport_size_changed() -> void:
 	var old_is_portrait = is_portrait
 	
 	_detect_platform()
+	_enforce_landscape_orientation()
 	_detect_orientation()
+	if _should_force_landscape():
+		is_portrait = false
 	_calculate_safe_area()  # This now emits safe_area_changed signal
 	
 	# Emit signals if state changed
@@ -592,8 +823,17 @@ func _on_viewport_size_changed() -> void:
 	if _debug_overlay:
 		_destroy_debug_overlay()
 		_create_debug_overlay()
+
+	call_deferred("_adapt_current_scene")
 	
-	print("📱 Viewport size changed: %dx%d (%s)" % [viewport_width, viewport_height, "Portrait" if is_portrait else "Landscape"])
+	print(
+		"📱 Viewport size changed: %dx%d (%s)"
+		% [
+			viewport_width,
+			viewport_height,
+			"Portrait" if is_portrait else "Landscape",
+		]
+	)
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # FRAME RATE MONITORING

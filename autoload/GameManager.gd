@@ -50,6 +50,7 @@ var first_launch: bool = true  # For welcome popup (only show on FIRST EVER laun
 var dark_mode_enabled: bool = false
 var session_lives: int = 3
 var session_score: int = 0
+var session_droplets_earned: int = 0
 var high_score: int = 0
 var round_scores: Array = []
 
@@ -156,9 +157,11 @@ const UNLOCK_ID_TO_MINIGAMES: Dictionary = {
 var session_active: bool = false
 var minigames_played_this_session: int = 0
 var local_player_num: int = 0
+var _session_finalized: bool = false
 
 # Story chapter thresholds (show story at these game counts)
 var _story_shown_at: Array[int] = []
+var _story_transition_active: bool = false
 const STORY_THRESHOLDS: Array = [0, 3, 6, 9, 12, 15]
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -229,6 +232,11 @@ func _load_saved_data() -> void:
 	else:
 		# First time launching - will show welcome popup
 		first_launch = true
+
+	# Keep wallet synced with SaveManager (source of truth for currency/shop).
+	var save_mgr = get_node_or_null("/root/SaveManager")
+	if save_mgr and save_mgr.has_method("get_droplets"):
+		water_droplets = int(save_mgr.get_droplets())
 
 func _save_data() -> void:
 	var config := ConfigFile.new()
@@ -764,22 +772,30 @@ func start_session(mode: GameMode = GameMode.SINGLE_PLAYER) -> void:
 func start_new_session(mode: GameMode = GameMode.SINGLE_PLAYER) -> void:
 	current_game_mode = mode
 	session_active = true
+	_session_finalized = false
 	completed_minigames.clear()
 	current_minigame_index = 0
 	minigames_played_this_session = 0
 	session_lives = 3
 	session_score = 0
+	session_droplets_earned = 0
 	round_scores.clear()
 	pending_next_minigame_name = ""
 	_story_shown_at.clear()
+	_story_transition_active = false
+	var save_mgr = get_node_or_null("/root/SaveManager")
 	
 	if mode == GameMode.SINGLE_PLAYER:
 		# Hard reset any multiplayer remnants so single-player never hijacks flow.
 		if is_multiplayer_connected or multiplayer.multiplayer_peer:
 			disconnect_multiplayer()
+		if save_mgr and save_mgr.has_method("reset_session_stats"):
+			save_mgr.reset_session_stats()
 		_refresh_available_minigames()
 		_rebuild_minigame_random_bag()
 		_load_saved_data()
+		if save_mgr and save_mgr.has_method("get_droplets"):
+			water_droplets = int(save_mgr.get_droplets())
 		if has_node("/root/AdaptiveDifficulty"):
 			AdaptiveDifficulty.reset()
 		if PerformanceProfiler:
@@ -794,6 +810,9 @@ func start_new_session(mode: GameMode = GameMode.SINGLE_PLAYER) -> void:
 		print("🎯 New MULTIPLAYER CO-OP session started")
 
 func start_next_minigame() -> void:
+	if _story_transition_active:
+		return
+
 	if current_game_mode != GameMode.SINGLE_PLAYER:
 		push_warning(
 			"start_next_minigame called outside single-player mode; forcing single-player."
@@ -819,19 +838,35 @@ func _should_show_story() -> bool:
 	return false
 
 func _show_story_then_continue() -> void:
+	if _story_transition_active:
+		return
+	_story_transition_active = true
 	_story_shown_at.append(minigames_played_this_session)
 	var story_path := "res://scenes/ui/StoryScreen.tscn"
 	if not ResourceLoader.exists(story_path):
+		_story_transition_active = false
 		_launch_next_minigame_internal()
 		return
 	var story_scene = load(story_path).instantiate()
-	get_tree().current_scene.add_child(story_scene)
-	story_scene.story_finished.connect(func():
-		story_scene.queue_free()
+	var scene_root := get_tree().current_scene
+	if scene_root == null:
+		_story_transition_active = false
 		_launch_next_minigame_internal()
-	)
+		return
+	scene_root.add_child(story_scene)
+	story_scene.story_finished.connect(func():
+		if is_instance_valid(story_scene):
+			story_scene.queue_free()
+		_story_transition_active = false
+		_launch_next_minigame_internal()
+	, CONNECT_ONE_SHOT)
+	story_scene.tree_exited.connect(func():
+		_story_transition_active = false
+	, CONNECT_ONE_SHOT)
 
 func _launch_next_minigame_internal() -> void:
+	_cleanup_stale_story_overlays()
+
 	if available_minigames.is_empty():
 		_refresh_available_minigames()
 		_rebuild_minigame_random_bag()
@@ -855,6 +890,18 @@ func _launch_next_minigame_internal() -> void:
 	change_state(GameState.PLAYING_MINIGAME)
 	minigame_started.emit(game_name)
 	_start_intro_cutscene_for_game(game_name)
+
+func _cleanup_stale_story_overlays() -> void:
+	var root := get_tree().root
+	if root == null:
+		return
+	_cleanup_story_nodes_recursive(root)
+
+func _cleanup_story_nodes_recursive(node: Node) -> void:
+	for child in node.get_children():
+		_cleanup_story_nodes_recursive(child)
+		if child.scene_file_path == "res://scenes/ui/StoryScreen.tscn":
+			child.queue_free()
 
 func _start_intro_cutscene_for_game(game_name: String) -> void:
 	pending_next_minigame_name = game_name
@@ -935,6 +982,7 @@ func complete_minigame(
 	if round_score_override >= 0:
 		round_score = round_score_override
 	session_score += round_score
+	var round_time_seconds: float = float(reaction_time) / 1000.0
 	round_scores.append({
 		"game": game_name,
 		"score": round_score,
@@ -943,9 +991,14 @@ func complete_minigame(
 		"mistakes": mistakes,
 		"reaction_time": reaction_time
 	})
+
+	var save_mgr = get_node_or_null("/root/SaveManager")
+	if save_mgr and save_mgr.has_method("record_game_result"):
+		save_mgr.record_game_result(game_name, round_score, accuracy, round_time_seconds)
+		if save_mgr.has_method("get_droplets"):
+			water_droplets = int(save_mgr.get_droplets())
 	
 	# Add to rolling window for difficulty adjustment
-	var round_time_seconds: float = float(reaction_time) / 1000.0
 	add_round_time(round_time_seconds)
 	
 	# ═══════════════════════════════════════════════════════════════════════
@@ -1003,6 +1056,12 @@ func complete_minigame(
 	change_state(GameState.MINIGAME_RESULTS)
 	current_minigame_index += 1
 
+
+func add_session_droplets(amount: int) -> void:
+	if amount <= 0:
+		return
+	session_droplets_earned += amount
+
 func _get_current_difficulty() -> String:
 	# Dynamic difficulty classification that works with uncapped values
 	if difficulty_multiplier >= 2.0:
@@ -1014,6 +1073,7 @@ func _get_current_difficulty() -> String:
 	return "Easy"
 
 func return_to_main_menu() -> void:
+	_finalize_session_for_logging()
 	change_state(GameState.MAIN_MENU)
 	get_tree().paused = false
 	
@@ -1031,21 +1091,51 @@ func _show_final_score() -> void:
 	if session_score > high_score:
 		high_score = session_score
 	_save_data()
+
+	_finalize_session_for_logging()
 	
-	# Export dev-mode performance log
+	if ResourceLoader.exists("res://scenes/ui/FinalScore.tscn"):
+		transition_to_scene("res://scenes/ui/FinalScore.tscn")
+	else:
+		transition_to_scene("res://scenes/ui/InitialScreen.tscn")
+
+func _finalize_session_for_logging() -> void:
+	if not session_active or _session_finalized:
+		return
+
+	_session_finalized = true
+	session_active = false
+
+	var adaptive_summary: Dictionary = {}
+	if AdaptiveDifficulty and AdaptiveDifficulty.has_method("get_algorithm_status"):
+		adaptive_summary = AdaptiveDifficulty.get_algorithm_status()
+
+	# Export dev/thesis logs before resetting session counters.
 	if PerformanceProfiler:
 		PerformanceProfiler.log_event("session_end", {
 			"total_score": session_score,
 			"high_score": high_score,
 			"games_played": minigames_played_this_session,
 			"lives_remaining": session_lives,
+			"session_droplets_earned": session_droplets_earned,
+			"adaptive_session_games": int(adaptive_summary.get("session_games_played", 0)),
+			"adaptive_lifetime_games": int(adaptive_summary.get("lifetime_games_played", 0)),
+			"adaptive_phi": float(adaptive_summary.get("proficiency_index", 0.0)),
+			"adaptive_difficulty": str(adaptive_summary.get("current_difficulty", "Easy")),
+			"adaptive_window_size": int(adaptive_summary.get("games_in_window", 0)),
+			"adaptive_min_games": int(adaptive_summary.get("min_games_before_adaptation", 0)),
 		})
 		PerformanceProfiler.export_session_log_to_file()
-	
-	if ResourceLoader.exists("res://scenes/ui/FinalScore.tscn"):
-		transition_to_scene("res://scenes/ui/FinalScore.tscn")
-	else:
-		transition_to_scene("res://scenes/ui/InitialScreen.tscn")
+
+	if AdaptiveDifficulty:
+		if AdaptiveDifficulty.has_method("export_to_json_file"):
+			AdaptiveDifficulty.export_to_json_file()
+		if AdaptiveDifficulty.has_method("reset"):
+			AdaptiveDifficulty.reset()
+
+	var save_mgr = get_node_or_null("/root/SaveManager")
+	if save_mgr and save_mgr.has_method("reset_session_stats"):
+		save_mgr.reset_session_stats()
 
 func pause_game() -> void:
 	get_tree().paused = true

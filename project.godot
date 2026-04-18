@@ -34,6 +34,7 @@ AlgorithmOverlay="*res://autoload/AlgorithmOverlay.gd"
 GCounter="*res://autoload/GCounter.gd"
 PerformanceProfiler="*res://autoload/PerformanceProfiler.gd"
 NetworkFaultSimulator="*res://autoload/NetworkFaultSimulator.gd"
+ButtonAnimator="*res://autoload/ButtonAnimator.gd"
 
 [display]
 
@@ -42,10 +43,15 @@ window/size/viewport_height=1080
 window/size/mode=2
 window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
+window/handheld/orientation="sensor_landscape"
 
 [dotnet]
 
 project/assembly_name="Waterwise"
+
+[editor_plugins]
+
+enabled=PackedStringArray("res://addons/script-ide/plugin.cfg")
 
 [input_devices]
 

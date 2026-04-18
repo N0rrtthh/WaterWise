@@ -1,16 +1,22 @@
 extends Control
 
-@onready var language_label = $CenterContainer/PanelCard/MarginContainer/VBoxContainer/GridContainer/LanguageLabel
-@onready var language_button = $CenterContainer/PanelCard/MarginContainer/VBoxContainer/GridContainer/LanguageButton
-@onready var volume_label = $CenterContainer/PanelCard/MarginContainer/VBoxContainer/GridContainer/VolumeLabel
-@onready var fullscreen_check = $CenterContainer/PanelCard/MarginContainer/VBoxContainer/GridContainer/FullscreenCheck
-@onready var theme_button = $CenterContainer/PanelCard/MarginContainer/VBoxContainer/GridContainer/ThemeButton
-@onready var back_button = $CenterContainer/PanelCard/MarginContainer/VBoxContainer/BackButton
-@onready var exit_button = $CenterContainer/PanelCard/MarginContainer/VBoxContainer/ExitButton
-@onready var title_label = $CenterContainer/PanelCard/MarginContainer/VBoxContainer/Title
+const SETTINGS_VBOX_PATH := (
+	"CenterContainer/PanelCard/MarginContainer/ScrollContainer/VBoxContainer"
+)
+const GRID_PATH := SETTINGS_VBOX_PATH + "/GridContainer"
+
+@onready var language_label = get_node(GRID_PATH + "/LanguageLabel")
+@onready var language_button = get_node(GRID_PATH + "/LanguageButton")
+@onready var volume_label = get_node(GRID_PATH + "/VolumeLabel")
+@onready var fullscreen_check = get_node(GRID_PATH + "/FullscreenCheck")
+@onready var theme_button = get_node(GRID_PATH + "/ThemeButton")
+@onready var back_button = get_node(SETTINGS_VBOX_PATH + "/BackButton")
+@onready var exit_button = get_node(SETTINGS_VBOX_PATH + "/ExitButton")
+@onready var title_label = get_node(SETTINGS_VBOX_PATH + "/Title")
 @onready var panel_card = $CenterContainer/PanelCard
 @onready var background_rect = $Background
-@onready var fullscreen_label = $CenterContainer/PanelCard/MarginContainer/VBoxContainer/GridContainer/FullscreenLabel
+@onready var fullscreen_label = get_node(GRID_PATH + "/FullscreenLabel")
+@onready var settings_scroll = $CenterContainer/PanelCard/MarginContainer/ScrollContainer
 
 const ProceduralBackground = preload("res://scripts/ProceduralBackground.gd")
 
@@ -19,8 +25,14 @@ var accessibility_section: VBoxContainer
 var colorblind_check: CheckBox
 var large_targets_check: CheckBox
 var audio_cues_check: CheckBox
+var haptics_check: CheckBox
 var screen_shake_check: CheckBox
 var particles_check: CheckBox
+
+# Dev-mode controls (for thesis monitoring)
+var dev_mode_check: CheckBox
+var dev_profiler_check: CheckBox
+var dev_algorithm_check: CheckBox
 
 func _ready() -> void:
 	# Add procedural background
@@ -32,8 +44,13 @@ func _ready() -> void:
 	if background_rect:
 		background_rect.visible = false
 
+	_configure_scroll_bounds()
+	if not resized.is_connected(_on_viewport_resized):
+		resized.connect(_on_viewport_resized)
+
 	await get_tree().process_frame
 	_setup_accessibility_section()
+	_setup_dev_mode_section()
 	_update_translations()
 	_update_language_button()
 	_update_theme_button()
@@ -47,9 +64,105 @@ func _ready() -> void:
 	if theme_mgr:
 		theme_mgr.theme_changed.connect(_on_theme_changed)
 
+	_sync_dev_overlay_state()
+	_reparent_action_buttons()
+
+	# Entrance popup animation for the whole center column
+	var center_cont = get_node_or_null("CenterContainer")
+	if center_cont:
+		center_cont.pivot_offset = center_cont.size * 0.5
+		center_cont.modulate.a = 0.0
+		center_cont.scale = Vector2(0.85, 0.85)
+		var entrance_tw = create_tween()
+		entrance_tw.tween_property(
+			center_cont, "modulate:a", 1.0, 0.25
+		)
+		entrance_tw.parallel().tween_property(
+			center_cont, "scale", Vector2(1.0, 1.0), 0.3
+		).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+
+
+func _reparent_action_buttons() -> void:
+	# Move Back/Exit buttons outside the scroll area
+	# so they stay fixed below the settings card.
+	var settings_vbox = get_node_or_null(SETTINGS_VBOX_PATH)
+	if not settings_vbox or not back_button or not exit_button:
+		return
+
+	# Remove HSeparator2 above buttons
+	var sep2 = settings_vbox.get_node_or_null("HSeparator2")
+	if sep2:
+		sep2.queue_free()
+
+	# Reparent buttons to a new row under PanelCard
+	var center_cont = get_node_or_null("CenterContainer")
+	if not center_cont:
+		return
+
+	# Wrap PanelCard + button row in a VBox
+	var outer_vbox = VBoxContainer.new()
+	outer_vbox.name = "OuterVBox"
+	outer_vbox.alignment = BoxContainer.ALIGNMENT_CENTER
+	outer_vbox.add_theme_constant_override("separation", 16)
+	outer_vbox.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	outer_vbox.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+
+	# Move PanelCard into the outer VBox
+	var panel = panel_card
+	panel.get_parent().remove_child(panel)
+	outer_vbox.add_child(panel)
+
+	# Create horizontal button row
+	var btn_row = HBoxContainer.new()
+	btn_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	btn_row.add_theme_constant_override("separation", 20)
+	outer_vbox.add_child(btn_row)
+
+	# Move buttons out of scroll and into the row
+	back_button.get_parent().remove_child(back_button)
+	exit_button.get_parent().remove_child(exit_button)
+	btn_row.add_child(back_button)
+	btn_row.add_child(exit_button)
+
+	center_cont.add_child(outer_vbox)
+
+
+func _on_viewport_resized() -> void:
+	_configure_scroll_bounds()
+
+
+func _configure_scroll_bounds() -> void:
+	if not settings_scroll:
+		return
+
+	var viewport_size = get_viewport_rect().size
+	if viewport_size == Vector2.ZERO:
+		return
+
+	var target_width = clamp(viewport_size.x - 120.0, 340.0, 980.0)
+	var target_height = clamp(viewport_size.y - 120.0, 320.0, 760.0)
+	settings_scroll.custom_minimum_size = Vector2(target_width, target_height)
+	settings_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	settings_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+
+
+func _get_settings_vbox() -> VBoxContainer:
+	var direct_vbox = get_node_or_null(SETTINGS_VBOX_PATH)
+	if direct_vbox and direct_vbox is VBoxContainer:
+		return direct_vbox as VBoxContainer
+
+	# Legacy fallback for older scene snapshots.
+	var legacy_vbox = get_node_or_null(
+		"CenterContainer/PanelCard/MarginContainer/VBoxContainer"
+	)
+	if legacy_vbox and legacy_vbox is VBoxContainer:
+		return legacy_vbox as VBoxContainer
+
+	return null
+
 func _setup_accessibility_section() -> void:
-	"""Add accessibility options to settings"""
-	var vbox = $CenterContainer/PanelCard/MarginContainer/VBoxContainer
+	# Add accessibility options to settings
+	var vbox = _get_settings_vbox()
 	if not vbox:
 		return
 	
@@ -115,6 +228,18 @@ func _setup_accessibility_section() -> void:
 	audio_cues_check.button_pressed = _get_accessibility_setting("audio_cues", true)
 	audio_cues_check.toggled.connect(_on_audio_cues_toggled)
 	acc_grid.add_child(audio_cues_check)
+
+	# Haptics
+	var hp_label = Label.new()
+	hp_label.text = "📳 Haptic Feedback"
+	hp_label.add_theme_font_size_override("font_size", 18)
+	acc_grid.add_child(hp_label)
+
+	haptics_check = CheckBox.new()
+	haptics_check.text = "Enable"
+	haptics_check.button_pressed = _get_accessibility_setting("haptics_enabled", true)
+	haptics_check.toggled.connect(_on_haptics_toggled)
+	acc_grid.add_child(haptics_check)
 	
 	# Screen shake
 	var ss_label = Label.new()
@@ -139,6 +264,75 @@ func _setup_accessibility_section() -> void:
 	particles_check.button_pressed = _get_accessibility_setting("particles", true)
 	particles_check.toggled.connect(_on_particles_toggled)
 	acc_grid.add_child(particles_check)
+
+func _setup_dev_mode_section() -> void:
+	var vbox = _get_settings_vbox()
+	if not vbox:
+		return
+
+	var sep = HSeparator.new()
+	sep.add_theme_constant_override("separation", 15)
+	vbox.add_child(sep)
+
+	var header = Label.new()
+	header.text = "🛠 Dev Mode / Thesis Monitoring"
+	header.add_theme_font_size_override("font_size", 24)
+	header.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	vbox.add_child(header)
+
+	var dev_grid = GridContainer.new()
+	dev_grid.columns = 2
+	dev_grid.add_theme_constant_override("h_separation", 20)
+	dev_grid.add_theme_constant_override("v_separation", 10)
+	vbox.add_child(dev_grid)
+
+	var dev_mode_enabled = bool(_get_dev_setting("dev_mode", false))
+
+	var dm_label = Label.new()
+	dm_label.text = "Enable Dev Mode"
+	dm_label.add_theme_font_size_override("font_size", 18)
+	dev_grid.add_child(dm_label)
+
+	dev_mode_check = CheckBox.new()
+	dev_mode_check.text = "Enable"
+	dev_mode_check.button_pressed = dev_mode_enabled
+	dev_mode_check.toggled.connect(_on_dev_mode_toggled)
+	dev_grid.add_child(dev_mode_check)
+
+	var profiler_label = Label.new()
+	profiler_label.text = "Show ISO Profiler (F11)"
+	profiler_label.add_theme_font_size_override("font_size", 18)
+	dev_grid.add_child(profiler_label)
+
+	dev_profiler_check = CheckBox.new()
+	dev_profiler_check.text = "Show"
+	dev_profiler_check.button_pressed = bool(
+		_get_dev_setting("dev_show_profiler", false)
+	)
+	dev_profiler_check.toggled.connect(_on_dev_profiler_toggled)
+	dev_grid.add_child(dev_profiler_check)
+
+	var algo_label = Label.new()
+	algo_label.text = "Show Algorithm Overlay (F12)"
+	algo_label.add_theme_font_size_override("font_size", 18)
+	dev_grid.add_child(algo_label)
+
+	dev_algorithm_check = CheckBox.new()
+	dev_algorithm_check.text = "Show"
+	dev_algorithm_check.button_pressed = bool(
+		_get_dev_setting("dev_show_algorithm_overlay", false)
+	)
+	dev_algorithm_check.toggled.connect(_on_dev_algorithm_toggled)
+	dev_grid.add_child(dev_algorithm_check)
+
+	var note = Label.new()
+	note.text = "Use toggles on mobile (same as F11/F12 on PC)."
+	note.add_theme_font_size_override("font_size", 14)
+	note.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	note.modulate = Color(0.7, 0.7, 0.7)
+	vbox.add_child(note)
+
+	_apply_dev_mode_visibility(dev_mode_enabled)
 
 func _get_accessibility_setting(key: String, default_val: bool = false) -> bool:
 	var acc_mgr = get_node_or_null("/root/AccessibilityManager")
@@ -182,6 +376,13 @@ func _on_audio_cues_toggled(pressed: bool) -> void:
 		if save_mgr:
 			save_mgr.set_setting("audio_cues", pressed)
 
+func _on_haptics_toggled(pressed: bool) -> void:
+	if AudioManager:
+		AudioManager.play_click()
+	var save_mgr = get_node_or_null("/root/SaveManager")
+	if save_mgr:
+		save_mgr.set_setting("haptics_enabled", pressed)
+
 func _on_screen_shake_toggled(pressed: bool) -> void:
 	if AudioManager:
 		AudioManager.play_click()
@@ -195,6 +396,75 @@ func _on_particles_toggled(pressed: bool) -> void:
 	var save_mgr = get_node_or_null("/root/SaveManager")
 	if save_mgr:
 		save_mgr.set_setting("particles", pressed)
+
+func _get_dev_setting(key: String, default_val: bool = false) -> bool:
+	var save_mgr = get_node_or_null("/root/SaveManager")
+	if save_mgr:
+		return bool(save_mgr.get_setting(key, default_val))
+	return default_val
+
+func _set_dev_setting(key: String, value: bool) -> void:
+	var save_mgr = get_node_or_null("/root/SaveManager")
+	if save_mgr:
+		save_mgr.set_setting(key, value)
+
+func _apply_dev_mode_visibility(enabled: bool) -> void:
+	if dev_profiler_check:
+		dev_profiler_check.disabled = not enabled
+	if dev_algorithm_check:
+		dev_algorithm_check.disabled = not enabled
+
+func _sync_dev_overlay_state() -> void:
+	var dev_mode_enabled = _get_dev_setting("dev_mode", false)
+	var show_profiler = dev_mode_enabled and _get_dev_setting("dev_show_profiler", false)
+	var show_overlay = dev_mode_enabled and _get_dev_setting("dev_show_algorithm_overlay", false)
+
+	if PerformanceProfiler and PerformanceProfiler.has_method("set_overlay_visible"):
+		PerformanceProfiler.set_overlay_visible(show_profiler)
+
+	if AlgorithmOverlay and AlgorithmOverlay.has_method("set_overlay_visible"):
+		AlgorithmOverlay.set_overlay_visible(show_overlay)
+
+func _on_dev_mode_toggled(pressed: bool) -> void:
+	if AudioManager:
+		AudioManager.play_click()
+
+	_set_dev_setting("dev_mode", pressed)
+	_apply_dev_mode_visibility(pressed)
+
+	if not pressed:
+		_set_dev_setting("dev_show_profiler", false)
+		_set_dev_setting("dev_show_algorithm_overlay", false)
+		if dev_profiler_check:
+			dev_profiler_check.set_pressed_no_signal(false)
+		if dev_algorithm_check:
+			dev_algorithm_check.set_pressed_no_signal(false)
+
+	_sync_dev_overlay_state()
+
+func _on_dev_profiler_toggled(pressed: bool) -> void:
+	if AudioManager:
+		AudioManager.play_click()
+
+	if not _get_dev_setting("dev_mode", false):
+		if dev_profiler_check:
+			dev_profiler_check.set_pressed_no_signal(false)
+		return
+
+	_set_dev_setting("dev_show_profiler", pressed)
+	_sync_dev_overlay_state()
+
+func _on_dev_algorithm_toggled(pressed: bool) -> void:
+	if AudioManager:
+		AudioManager.play_click()
+
+	if not _get_dev_setting("dev_mode", false):
+		if dev_algorithm_check:
+			dev_algorithm_check.set_pressed_no_signal(false)
+		return
+
+	_set_dev_setting("dev_show_algorithm_overlay", pressed)
+	_sync_dev_overlay_state()
 
 func _update_translations() -> void:
 	if not Localization:
@@ -278,10 +548,15 @@ func _apply_theme() -> void:
 func _on_back_pressed() -> void:
 	if AudioManager:
 		AudioManager.play_click()
-	# No need to modify welcome popup - it only shows on first_launch
-	get_tree().change_scene_to_file("res://scenes/ui/InitialScreen.tscn")
+	if GameManager and GameManager.has_method("transition_to_scene"):
+		GameManager.transition_to_scene("res://scenes/ui/InitialScreen.tscn")
+	else:
+		get_tree().change_scene_to_file("res://scenes/ui/InitialScreen.tscn")
 
 func _on_exit_pressed() -> void:
 	if AudioManager:
 		AudioManager.play_click()
-	get_tree().change_scene_to_file("res://scenes/ui/MainMenu.tscn")
+	if GameManager and GameManager.has_method("transition_to_scene"):
+		GameManager.transition_to_scene("res://scenes/ui/MainMenu.tscn")
+	else:
+		get_tree().change_scene_to_file("res://scenes/ui/MainMenu.tscn")
