@@ -28,7 +28,10 @@ static func apply_transform(
 	
 	# Validate duration to prevent negative or zero values (Requirement 12.5)
 	if duration <= 0.0:
-		push_warning("[AnimationEngine] Invalid duration (%.2f), clamping to minimum 0.01s" % duration)
+		push_warning(
+			"[AnimationEngine] Invalid duration (%.2f), " +
+			"clamping to minimum 0.01s" % duration
+		)
 		duration = 0.01
 	
 	var tween = target.create_tween()
@@ -37,9 +40,9 @@ static func apply_transform(
 		return null
 	
 	# Get the easing function
-	var easing_func = _get_easing_function(easing)
-	tween.set_ease(easing_func[0])
-	tween.set_trans(easing_func[1])
+	var easing_pair = _get_easing_function(easing)
+	tween.set_ease(easing_pair[0])
+	tween.set_trans(easing_pair[1])
 	
 	# Apply the transformation based on type with error recovery
 	match transform.type:
@@ -87,7 +90,10 @@ static func compose_transforms(
 	
 	# Validate duration to prevent negative or zero values (Requirement 12.5)
 	if duration <= 0.0:
-		push_warning("[AnimationEngine] Invalid duration (%.2f), clamping to minimum 0.01s" % duration)
+		push_warning(
+			"[AnimationEngine] Invalid duration (%.2f), " +
+			"clamping to minimum 0.01s" % duration
+		)
 		duration = 0.01
 	
 	var tween = target.create_tween()
@@ -100,8 +106,6 @@ static func compose_transforms(
 	
 	# Apply each transform with error recovery
 	for transform in transforms:
-		var easing_func = _get_easing_function(CutsceneTypes.Easing.LINEAR)
-		
 		match transform.type:
 			CutsceneTypes.TransformType.POSITION:
 				var target_pos = transform.value as Vector2
@@ -147,7 +151,10 @@ static func animate(
 	
 	# Validate duration to prevent negative or zero values (Requirement 12.5)
 	if total_duration <= 0.0:
-		push_warning("[AnimationEngine] Invalid total duration (%.2f), clamping to minimum 0.01s" % total_duration)
+		push_warning(
+			"[AnimationEngine] Invalid total duration (%.2f), " +
+			"clamping to minimum 0.01s" % total_duration
+		)
 		total_duration = 0.01
 	
 	var tween = target.create_tween()
@@ -174,7 +181,7 @@ static func animate(
 		segment_duration = max(segment_duration, 0.01)
 		
 		# Get easing function for this keyframe
-		var easing_func = _get_easing_function(keyframe.easing)
+		var easing_pair = _get_easing_function(keyframe.easing)
 		
 		# If this is not the first keyframe, set sequential mode
 		if i > 0:
@@ -190,19 +197,29 @@ static func animate(
 						var target_pos = transform.value as Vector2
 						if transform.relative:
 							target_pos = target.position + target_pos
-						var prop_tween = tween.tween_property(target, "position", target_pos, segment_duration)
+						var prop_tween = tween.tween_property(
+							target,
+							"position",
+							target_pos,
+							segment_duration
+						)
 						if prop_tween:
-							prop_tween.set_ease(easing_func[0])
-							prop_tween.set_trans(easing_func[1])
+							prop_tween.set_ease(easing_pair[0])
+							prop_tween.set_trans(easing_pair[1])
 					
 					CutsceneTypes.TransformType.ROTATION:
 						var target_rot = transform.value as float
 						if transform.relative:
 							target_rot = target.rotation + target_rot
-						var prop_tween = tween.tween_property(target, "rotation", target_rot, segment_duration)
+						var prop_tween = tween.tween_property(
+							target,
+							"rotation",
+							target_rot,
+							segment_duration
+						)
 						if prop_tween:
-							prop_tween.set_ease(easing_func[0])
-							prop_tween.set_trans(easing_func[1])
+							prop_tween.set_ease(easing_pair[0])
+							prop_tween.set_trans(easing_pair[1])
 					
 					CutsceneTypes.TransformType.SCALE:
 						var target_scale = transform.value as Vector2
@@ -211,10 +228,15 @@ static func animate(
 						# Clamp scale to prevent extreme values that could cause rendering issues
 						target_scale.x = clamp(target_scale.x, 0.01, 10.0)
 						target_scale.y = clamp(target_scale.y, 0.01, 10.0)
-						var prop_tween = tween.tween_property(target, "scale", target_scale, segment_duration)
+						var prop_tween = tween.tween_property(
+							target,
+							"scale",
+							target_scale,
+							segment_duration
+						)
 						if prop_tween:
-							prop_tween.set_ease(easing_func[0])
-							prop_tween.set_trans(easing_func[1])
+							prop_tween.set_ease(easing_pair[0])
+							prop_tween.set_trans(easing_pair[1])
 		
 		prev_time = keyframe.time
 	
@@ -276,8 +298,7 @@ static func apply_easing(t: float, easing: CutsceneTypes.Easing) -> float:
 		CutsceneTypes.Easing.BOUNCE:
 			if t < 0.5:
 				return 2.0 * t * t
-			else:
-				return 1.0 - pow(-2.0 * t + 2.0, 2.0) / 2.0
+			return 1.0 - pow(-2.0 * t + 2.0, 2.0) / 2.0
 		
 		CutsceneTypes.Easing.ELASTIC:
 			var c4 = (2.0 * PI) / 3.0

@@ -10,8 +10,12 @@ extends Control
 @onready var droplet_icon = $UI/TopLeft/CoinBG/HBox/DropletIcon
 @onready var play_button = $UI/ButtonContainer/PlayButton
 @onready var multiplayer_button = $UI/ButtonContainer/MultiplayerButton
+@onready var customize_button = $UI/TopRight/CustomizeButton
+@onready var store_button = $UI/TopRight/StoreButton
+@onready var settings_button = $UI/TopRight/SettingsButton
 @onready var welcome_popup = $WelcomePopup
 @onready var welcome_panel = $WelcomePopup/Panel
+@onready var close_button = $WelcomePopup/Panel/CloseButton
 @onready var highscore_label = $UI/HighscorePanel/HighscoreLabel
 @onready var next_unlock_panel = $UI/BottomLeft
 
@@ -46,18 +50,49 @@ func _ready() -> void:
 	# UI data
 	if SaveManager:
 		droplet_label.text = str(SaveManager.get_droplets())
-		var hs = SaveManager.get_high_score()
+		var hs: Dictionary = {"score": 0}
+		if SaveManager.has_method("get_high_score"):
+			var high_score_result = SaveManager.call("get_high_score", "catch_rain")
+			if high_score_result is Dictionary:
+				hs = high_score_result
 		highscore_label.text = "%s: %d" % [
 			Localization.get_text("high_score") if Localization else "HIGH SCORE",
-			hs,
+			hs.get("score", 0),
 		]
 	if ThemeManager:
-		ThemeManager.apply_theme(self)
+		if ThemeManager.has_method("apply_theme"):
+			ThemeManager.apply_theme(self)
+		elif ThemeManager.has_method("apply_to_tree"):
+			ThemeManager.apply_to_tree(self)
 	_setup_welcome_popup()
 
-	# Button connections
-	play_button.pressed.connect(_on_play_pressed)
-	multiplayer_button.pressed.connect(_on_multiplayer_pressed)
+	# Ensure button callbacks stay wired even if .tscn signal names drift.
+	_connect_button_if_needed(play_button, "_on_play_button_pressed")
+	_connect_button_if_needed(multiplayer_button, "_on_multiplayer_button_pressed")
+	_connect_button_if_needed(customize_button, "_on_customize_button_pressed")
+	_connect_button_if_needed(store_button, "_on_store_button_pressed")
+	_connect_button_if_needed(settings_button, "_on_settings_button_pressed")
+	_connect_button_if_needed(close_button, "_on_close_popup_pressed")
+
+
+func _connect_button_if_needed(button: BaseButton, method_name: String) -> void:
+	if not button:
+		return
+	var cb := Callable(self, method_name)
+	if not button.pressed.is_connected(cb):
+		button.pressed.connect(cb)
+
+
+func _go_to_scene(scene_candidates: Array[String]) -> void:
+	for scene_path in scene_candidates:
+		if ResourceLoader.exists(scene_path):
+			if GameManager and GameManager.has_method("transition_to_scene"):
+				GameManager.transition_to_scene(scene_path)
+			else:
+				get_tree().change_scene_to_file(scene_path)
+			return
+
+	push_warning("No valid scene found in candidates: %s" % [scene_candidates])
 
 
 # ── Background ──────────────────────────────────────────────────────
@@ -328,37 +363,44 @@ func _on_play_pressed() -> void:
 	# Transition after last character exits
 	await get_tree().create_timer(0.6).timeout
 	if GameManager:
-		GameManager.start_session()
+		if GameManager.has_method("start_session"):
+			GameManager.start_session()
+		elif GameManager.has_method("start_new_session"):
+			GameManager.start_new_session()
+			if GameManager.has_method("start_next_minigame"):
+				GameManager.start_next_minigame()
 	else:
-		get_tree().change_scene_to_file("res://scenes/minigames/MiniGame_Rain.tscn")
+		get_tree().change_scene_to_file("res://scenes/minigames/CatchTheRain.tscn")
 
 
 func _on_multiplayer_pressed() -> void:
 	if AudioManager:
 		AudioManager.play_click()
-	if GameManager:
-		GameManager.transition_to_scene("res://scenes/multiplayer/Lobby.tscn")
+	_go_to_scene([
+		"res://scenes/ui/MultiplayerLobby.tscn",
+		"res://scenes/ui/MultiplayerMenu.tscn"
+	])
 
 
 func _on_customize_pressed() -> void:
 	if AudioManager:
 		AudioManager.play_click()
-	if GameManager:
-		GameManager.transition_to_scene("res://scenes/ui/Customize.tscn")
+	_go_to_scene(["res://scenes/ui/CharacterCustomization.tscn"])
 
 
 func _on_store_pressed() -> void:
 	if AudioManager:
 		AudioManager.play_click()
-	if GameManager:
-		GameManager.transition_to_scene("res://scenes/ui/Store.tscn")
+	_go_to_scene([
+		"res://scenes/ui/RoadmapScreen.tscn",
+		"res://scenes/ui/UnlockablesScreen.tscn"
+	])
 
 
 func _on_settings_pressed() -> void:
 	if AudioManager:
 		AudioManager.play_click()
-	if GameManager:
-		GameManager.transition_to_scene("res://scenes/ui/Settings.tscn")
+	_go_to_scene(["res://scenes/ui/Settings.tscn"])
 
 
 func _on_accessibility_pressed() -> void:
@@ -371,10 +413,9 @@ func _on_accessibility_pressed() -> void:
 # ── Welcome popup ───────────────────────────────────────────────────
 
 func _setup_welcome_popup() -> void:
-	if not SaveManager:
-		welcome_popup.visible = false
-		return
-	var first = SaveManager.is_first_launch()
+	var first := false
+	if GameManager and GameManager.has_method("should_show_welcome_popup"):
+		first = GameManager.should_show_welcome_popup()
 	welcome_popup.visible = first
 	if first:
 		welcome_panel.modulate.a = 0.0
@@ -389,9 +430,36 @@ func _setup_welcome_popup() -> void:
 func _on_welcome_ok_pressed() -> void:
 	if AudioManager:
 		AudioManager.play_click()
+	if GameManager and GameManager.has_method("mark_welcome_shown"):
+		GameManager.mark_welcome_shown()
 	var tw = create_tween()
 	tw.tween_property(welcome_panel, "modulate:a", 0.0, 0.2)
 	tw.tween_callback(func(): welcome_popup.visible = false)
+
+
+# Compatibility wrappers for signal names stored in InitialScreen.tscn.
+func _on_play_button_pressed() -> void:
+	_on_play_pressed()
+
+
+func _on_multiplayer_button_pressed() -> void:
+	_on_multiplayer_pressed()
+
+
+func _on_customize_button_pressed() -> void:
+	_on_customize_pressed()
+
+
+func _on_store_button_pressed() -> void:
+	_on_store_pressed()
+
+
+func _on_settings_button_pressed() -> void:
+	_on_settings_pressed()
+
+
+func _on_close_popup_pressed() -> void:
+	_on_welcome_ok_pressed()
 
 
 # ── Helpers ─────────────────────────────────────────────────────────

@@ -196,6 +196,9 @@ func _setup_transition_overlay() -> void:
 func transition_to_scene(scene_path: String, duration: float = 0.4) -> void:
 	if _is_transitioning:
 		return
+	if not ResourceLoader.exists(scene_path):
+		push_error("Cannot transition. Scene does not exist: %s" % scene_path)
+		return
 	_is_transitioning = true
 	_transition_rect.mouse_filter = Control.MOUSE_FILTER_STOP
 	# Fade to black
@@ -751,6 +754,12 @@ func change_state(new_state: GameState) -> void:
 func set_game_mode(mode: GameMode) -> void:
 	current_game_mode = mode
 	print("🎮 Game mode set to: ", GameMode.keys()[mode])
+
+func start_session(mode: GameMode = GameMode.SINGLE_PLAYER) -> void:
+	# Backward-compatible API used by older menu scripts.
+	start_new_session(mode)
+	if mode == GameMode.SINGLE_PLAYER:
+		start_next_minigame()
 
 func start_new_session(mode: GameMode = GameMode.SINGLE_PLAYER) -> void:
 	current_game_mode = mode
