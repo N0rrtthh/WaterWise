@@ -86,7 +86,12 @@ func _ready() -> void:
 	
 	# Get random mode assignment from GameManager
 	my_mode = _get_assigned_mode()
-	print("🎮 Assigned Mode: ", "MODE 1 (Collector)" if my_mode == PlayerMode.MODE_1_COLLECTOR else "MODE 2 (Filter)")
+	var mode_text := (
+		"MODE 1 (Collector)"
+		if my_mode == PlayerMode.MODE_1_COLLECTOR
+		else "MODE 2 (Filter)"
+	)
+	print("🎮 Assigned Mode: ", mode_text)
 	
 	# Load difficulty
 	_load_difficulty()
@@ -124,13 +129,12 @@ func _ready() -> void:
 	_start_game()
 
 func _get_assigned_mode() -> PlayerMode:
-	"""Get the randomly assigned mode for this player"""
+	# Get the randomly assigned mode for this player.
 	if GameManager and GameManager.has_method("get_my_player_mode"):
 		var mode_num = GameManager.get_my_player_mode()
 		return PlayerMode.MODE_1_COLLECTOR if mode_num == 1 else PlayerMode.MODE_2_FILTER
-	else:
-		# Fallback: host gets mode 1
-		return PlayerMode.MODE_1_COLLECTOR if _is_host() else PlayerMode.MODE_2_FILTER
+	# Fallback: host gets mode 1.
+	return PlayerMode.MODE_1_COLLECTOR if _is_host() else PlayerMode.MODE_2_FILTER
 
 func _is_host() -> bool:
 	return multiplayer.get_unique_id() == 1
@@ -241,8 +245,9 @@ func _start_game() -> void:
 	
 	spawn_timer.start()
 	_update_score_display()
-	
-	print("🎮 Water Harvest started! Mode: ", "Collector" if my_mode == PlayerMode.MODE_1_COLLECTOR else "Filter")
+
+	var runtime_mode := "Collector" if my_mode == PlayerMode.MODE_1_COLLECTOR else "Filter"
+	print("🎮 Water Harvest started! Mode: ", runtime_mode)
 
 func _process(delta: float) -> void:
 	if not game_active or is_paused:
@@ -300,7 +305,7 @@ func _on_spawn_timer_timeout() -> void:
 	_spawn_dirt_particle_synced()
 
 func _spawn_water_drop_synced() -> void:
-	"""HOST: Spawn water drop and sync"""
+	# HOST: Spawn water drop and sync.
 	if not _is_host():
 		return
 	
@@ -311,7 +316,7 @@ func _spawn_water_drop_synced() -> void:
 
 @rpc("authority", "call_local", "reliable")
 func _create_water_drop_at(spawn_x: float, spawn_id: int) -> void:
-	"""Create water drop (Mode 1 only)"""
+	# Create water drop (Mode 1 only).
 	if my_mode != PlayerMode.MODE_1_COLLECTOR:
 		return
 	
@@ -338,7 +343,7 @@ func _create_water_drop_at(spawn_x: float, spawn_id: int) -> void:
 		add_child(drop)
 
 func _spawn_dirt_particle_synced() -> void:
-	"""HOST: Spawn dirt particle and sync"""
+	# HOST: Spawn dirt particle and sync.
 	if not _is_host():
 		return
 	
@@ -349,7 +354,7 @@ func _spawn_dirt_particle_synced() -> void:
 
 @rpc("authority", "call_local", "reliable")
 func _create_dirt_particle_at(spawn_y: float, spawn_id: int) -> void:
-	"""Create dirt particle (Mode 2 only)"""
+	# Create dirt particle (Mode 2 only).
 	if my_mode != PlayerMode.MODE_2_FILTER:
 		return
 	
@@ -424,14 +429,18 @@ func _create_dynamic_dirt() -> Area2D:
 	
 	# Enable click detection
 	dirt.input_event.connect(func(_viewport, event, _shape_idx):
-		if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+		if (
+			event is InputEventMouseButton
+			and event.pressed
+			and event.button_index == MOUSE_BUTTON_LEFT
+		):
 			_on_dirt_removed(dirt)
 	)
 	
 	return dirt
 
 func _on_object_caught(obj: Area2D) -> void:
-	"""Called when bucket catches a water drop"""
+	# Called when bucket catches a water drop.
 	_on_water_caught(obj)
 
 func _on_water_caught(drop: Area2D) -> void:
@@ -466,8 +475,13 @@ func _on_dirt_missed(dirt: Area2D) -> void:
 		GameManager.rpc("report_damage")
 	dirt.queue_free()
 
-func _on_resource_received(from_player: int, resource_type: String, amount: int, _quality: float) -> void:
-	"""Receive resources from partner - creates interconnected gameplay"""
+func _on_resource_received(
+	from_player: int,
+	resource_type: String,
+	amount: int,
+	_quality: float
+) -> void:
+	# Receive resources from partner to support interconnected gameplay.
 	if resource_type == "harvested_water":
 		print("📥 Received %d harvested water from P%d" % [amount, from_player])
 		# Partner's harvested water could trigger special effects or bonuses
@@ -498,11 +512,15 @@ func _on_team_won() -> void:
 	if timer_sync_timer:
 		timer_sync_timer.stop()
 	
-	# Record round time (only host)
+	# Record round result once on host, then sync via GameManager RPC.
 	if _is_host() and GameManager:
 		var round_time_sec = float(Time.get_ticks_msec() - round_start_time) / 1000.0
-		GameManager.add_round_time(round_time_sec)
-		GameManager.minigames_played_this_session += 1
+		if GameManager.has_method("record_multiplayer_round_result"):
+			GameManager.record_multiplayer_round_result(
+				"MiniGame_WaterHarvest",
+				round_time_sec,
+				true
+			)
 	
 	_show_result_screen(true)
 	await get_tree().create_timer(2.0).timeout
@@ -515,6 +533,13 @@ func _on_team_lost() -> void:
 	spawn_timer.stop()
 	if timer_sync_timer:
 		timer_sync_timer.stop()
+	if _is_host() and GameManager and GameManager.has_method("record_multiplayer_round_result"):
+		var round_time_sec = float(Time.get_ticks_msec() - round_start_time) / 1000.0
+		GameManager.record_multiplayer_round_result(
+			"MiniGame_WaterHarvest",
+			round_time_sec,
+			false
+		)
 	
 	_show_result_screen(false)
 	await get_tree().create_timer(2.0).timeout

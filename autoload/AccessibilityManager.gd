@@ -18,6 +18,8 @@ extends Node
 signal colorblind_mode_changed(enabled: bool)
 signal large_targets_changed(enabled: bool)
 signal audio_cues_changed(enabled: bool)
+signal particles_changed(enabled: bool)
+signal screen_shake_changed(enabled: bool)
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # COLORBLIND PALETTES
@@ -58,6 +60,9 @@ var large_touch_targets: bool = false
 var audio_cues_enabled: bool = true
 var reduced_motion: bool = false
 var high_contrast: bool = false
+var particles_enabled: bool = true
+var screen_shake_enabled: bool = true
+var _last_scene: Node = null
 
 # Touch target sizes
 const NORMAL_TARGET_SIZE: float = 50.0
@@ -89,6 +94,8 @@ func _get_save_manager() -> Node:
 func _ready() -> void:
 	_load_settings()
 	_setup_audio_player()
+	_connect_scene_events()
+	call_deferred("_apply_particles_to_current_scene")
 
 func _load_settings() -> void:
 	var save_mgr = _get_save_manager()
@@ -98,6 +105,8 @@ func _load_settings() -> void:
 		audio_cues_enabled = save_mgr.get_setting("audio_cues", true)
 		reduced_motion = save_mgr.get_setting("reduced_motion", false)
 		high_contrast = save_mgr.get_setting("high_contrast", false)
+		particles_enabled = save_mgr.get_setting("particles", true)
+		screen_shake_enabled = save_mgr.get_setting("screen_shake", true)
 
 func _setup_audio_player() -> void:
 	audio_player = AudioStreamPlayer.new()
@@ -277,6 +286,7 @@ func set_reduced_motion(enabled: bool) -> void:
 	var save_mgr = _get_save_manager()
 	if save_mgr:
 		save_mgr.set_setting("reduced_motion", enabled)
+	_apply_particles_to_current_scene()
 
 func get_animation_speed() -> float:
 	"""Get animation speed multiplier (faster for reduced motion)"""
@@ -284,10 +294,38 @@ func get_animation_speed() -> float:
 
 func should_show_particles() -> bool:
 	"""Check if particles should be shown"""
+	return is_particles_enabled() and not reduced_motion
+
+
+func is_particles_enabled() -> bool:
 	var save_mgr = _get_save_manager()
 	if save_mgr:
-		return save_mgr.get_setting("particles", true) and not reduced_motion
-	return not reduced_motion
+		return bool(save_mgr.get_setting("particles", true))
+	return particles_enabled
+
+
+func set_particles_enabled(enabled: bool) -> void:
+	particles_enabled = enabled
+	var save_mgr = _get_save_manager()
+	if save_mgr:
+		save_mgr.set_setting("particles", enabled)
+	_apply_particles_to_current_scene()
+	particles_changed.emit(enabled)
+
+
+func is_screen_shake_enabled() -> bool:
+	var save_mgr = _get_save_manager()
+	if save_mgr:
+		return bool(save_mgr.get_setting("screen_shake", true)) and not reduced_motion
+	return screen_shake_enabled and not reduced_motion
+
+
+func set_screen_shake_enabled(enabled: bool) -> void:
+	screen_shake_enabled = enabled
+	var save_mgr = _get_save_manager()
+	if save_mgr:
+		save_mgr.set_setting("screen_shake", enabled)
+	screen_shake_changed.emit(enabled)
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # HIGH CONTRAST
@@ -346,3 +384,67 @@ func create_accessible_button(text: String, icon: String = "") -> Button:
 	btn.pressed.connect(play_click_cue)
 	
 	return btn
+
+
+func _connect_scene_events() -> void:
+	if get_tree().has_signal("current_scene_changed"):
+		if not get_tree().is_connected("current_scene_changed", _on_current_scene_changed):
+			get_tree().connect("current_scene_changed", _on_current_scene_changed)
+	else:
+		get_tree().tree_changed.connect(_on_tree_changed)
+
+
+func _on_current_scene_changed(_scene_root: Node) -> void:
+	call_deferred("_apply_particles_to_current_scene")
+
+
+func _on_tree_changed() -> void:
+	var tree = get_tree()
+	if not tree:
+		return
+	var current = tree.current_scene
+	if current != _last_scene:
+		_last_scene = current
+		if current != null:
+			call_deferred("_apply_particles_to_current_scene")
+
+
+func _apply_particles_to_current_scene() -> void:
+	var current_scene = get_tree().current_scene
+	if not current_scene:
+		return
+	apply_particles_to_tree(current_scene, should_show_particles())
+
+
+func apply_particles_to_tree(root: Node, allow_particles: bool) -> void:
+	if not root:
+		return
+	_apply_particles_recursive(root, allow_particles)
+
+
+func _apply_particles_recursive(node: Node, allow_particles: bool) -> void:
+	if node is GPUParticles2D or node is CPUParticles2D:
+		_apply_particle_node_state(node, allow_particles)
+
+	for child in node.get_children():
+		_apply_particles_recursive(child, allow_particles)
+
+
+func _apply_particle_node_state(particle_node: Node, allow_particles: bool) -> void:
+	if not (particle_node is CanvasItem):
+		return
+
+	var item = particle_node as CanvasItem
+
+	if not allow_particles:
+		if not particle_node.has_meta("_acc_prev_emitting"):
+			particle_node.set_meta("_acc_prev_emitting", bool(particle_node.get("emitting")))
+		if not particle_node.has_meta("_acc_prev_visible"):
+			particle_node.set_meta("_acc_prev_visible", item.visible)
+		particle_node.set("emitting", false)
+		item.visible = false
+		return
+
+	item.visible = bool(particle_node.get_meta("_acc_prev_visible", true))
+	if particle_node.has_meta("_acc_prev_emitting"):
+		particle_node.set("emitting", bool(particle_node.get_meta("_acc_prev_emitting")))

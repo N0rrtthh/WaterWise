@@ -132,6 +132,11 @@ var scroll_start: int = 0
 var touch_velocity: float = 0.0
 var last_touch_y: float = 0.0
 var touch_time: float = 0.0
+var back_button: Button
+var header_panel: PanelContainer
+var scroll_hint_label: Label
+var _feedback_tweens: Dictionary = {}
+var _ambient_tweens: Array[Tween] = []
 
 func _ready():
 	_sync_stages_from_progress()
@@ -146,6 +151,12 @@ func _ready():
 	_create_header()
 	_create_back_button()
 	_create_scroll_hint()
+	_start_roadmap_ambient_motion()
+
+	if Localization and Localization.has_signal("language_changed"):
+		var cb := Callable(self, "_on_language_changed")
+		if not Localization.is_connected("language_changed", cb):
+			Localization.language_changed.connect(_on_language_changed)
 	
 	# Start at top
 	scroll_container.scroll_vertical = 0
@@ -423,11 +434,15 @@ func _create_stage_button(stage: Dictionary, index: int, pos: Vector2) -> Contro
 	btn.pressed.connect(func(): _on_stage_pressed(index))
 	btn.mouse_entered.connect(func(): _on_stage_hover(container, true))
 	btn.mouse_exited.connect(func(): _on_stage_hover(container, false))
+	btn.focus_entered.connect(func(): _on_stage_hover(container, true))
+	btn.focus_exited.connect(func(): _on_stage_hover(container, false))
+	btn.button_down.connect(func(): _on_stage_press(container, true))
+	btn.button_up.connect(func(): _on_stage_press(container, false))
 	container.add_child(btn)
 	
 	return container
 
-func _create_name_panel(stage: Dictionary, _index: int) -> PanelContainer:
+func _create_name_panel(stage: Dictionary, index: int) -> PanelContainer:
 	var panel = PanelContainer.new()
 	panel.custom_minimum_size = Vector2(160, 60)
 	
@@ -456,13 +471,13 @@ func _create_name_panel(stage: Dictionary, _index: int) -> PanelContainer:
 	margin.add_child(inner_vbox)
 	
 	var title = Label.new()
-	title.text = stage.name
+	title.text = _get_stage_title(stage, index)
 	title.add_theme_font_size_override("font_size", 14)
 	title.add_theme_color_override("font_color", Color(0.2, 0.3, 0.4))
 	inner_vbox.add_child(title)
 	
 	var desc = Label.new()
-	desc.text = stage.desc
+	desc.text = _get_stage_desc(stage, index)
 	desc.add_theme_font_size_override("font_size", 10)
 	desc.add_theme_color_override("font_color", Color(0.5, 0.5, 0.55))
 	desc.autowrap_mode = TextServer.AUTOWRAP_WORD
@@ -473,12 +488,12 @@ func _create_name_panel(stage: Dictionary, _index: int) -> PanelContainer:
 func _on_stage_pressed(index: int):
 	var stage = stages[index]
 	
-	print("Stage %d pressed: %s" % [index + 1, stage.name])
+	print("Stage %d pressed: %s" % [index + 1, _get_stage_title(stage, index)])
 
 	# Show stage info + tutorial preview popup.
 	_show_stage_popup(stage, index)
 
-func _show_stage_popup(stage: Dictionary, _index: int):
+func _show_stage_popup(stage: Dictionary, index: int):
 	# Full-screen dim overlay
 	var overlay = ColorRect.new()
 	overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -517,14 +532,14 @@ func _show_stage_popup(stage: Dictionary, _index: int):
 	popup.add_child(content)
 
 	var title = Label.new()
-	title.text = stage.name
+	title.text = _get_stage_title(stage, index)
 	title.add_theme_font_size_override("font_size", 24)
 	title.add_theme_color_override("font_color", Color(0.2, 0.4, 0.6))
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	content.add_child(title)
 
 	var desc = Label.new()
-	desc.text = stage.desc
+	desc.text = _get_stage_desc(stage, index)
 	desc.add_theme_font_size_override("font_size", 16)
 	desc.add_theme_color_override("font_color", Color(0.4, 0.4, 0.45))
 	desc.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -533,14 +548,14 @@ func _show_stage_popup(stage: Dictionary, _index: int):
 
 	if not stage.unlocked:
 		var lock_note = Label.new()
-		lock_note.text = "🔒 This stage is still locked."
+		lock_note.text = _loc("roadmap_stage_locked", "🔒 This stage is still locked.")
 		lock_note.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		lock_note.add_theme_font_size_override("font_size", 16)
 		lock_note.add_theme_color_override("font_color", Color(0.65, 0.45, 0.25))
 		content.add_child(lock_note)
 
 	var games_header = Label.new()
-	games_header.text = "Included mini-games"
+	games_header.text = _loc("roadmap_included_minigames", "Included mini-games")
 	games_header.add_theme_font_size_override("font_size", 18)
 	games_header.add_theme_color_override("font_color", Color(0.18, 0.32, 0.5))
 	content.add_child(games_header)
@@ -557,7 +572,10 @@ func _show_stage_popup(stage: Dictionary, _index: int):
 	content.add_child(games_list)
 
 	var tutorial_header = Label.new()
-	tutorial_header.text = "How to play (animated preview)"
+	tutorial_header.text = _loc(
+		"roadmap_how_to_play_preview",
+		"How to play (animated preview)"
+	)
 	tutorial_header.add_theme_font_size_override("font_size", 18)
 	tutorial_header.add_theme_color_override("font_color", Color(0.18, 0.32, 0.5))
 	content.add_child(tutorial_header)
@@ -581,9 +599,31 @@ func _show_stage_popup(stage: Dictionary, _index: int):
 	_build_how_to_play_preview(preview, stage, preview_width)
 
 	var close_btn = Button.new()
-	close_btn.text = "✕ CLOSE"
+	close_btn.text = "✕ " + _loc("roadmap_close", "CLOSE")
 	close_btn.custom_minimum_size = Vector2(170, 44)
 	close_btn.add_theme_font_size_override("font_size", 18)
+	close_btn.add_theme_color_override("font_color", Color.WHITE)
+	var close_style = StyleBoxFlat.new()
+	close_style.bg_color = Color(0.22, 0.62, 0.92)
+	close_style.corner_radius_top_left = 12
+	close_style.corner_radius_top_right = 12
+	close_style.corner_radius_bottom_left = 12
+	close_style.corner_radius_bottom_right = 12
+	close_style.border_width_bottom = 5
+	close_style.border_color = Color(0.10, 0.42, 0.72)
+	var close_hover = close_style.duplicate()
+	if close_hover is StyleBoxFlat:
+		(close_hover as StyleBoxFlat).bg_color = close_style.bg_color.lightened(0.08)
+	var close_pressed = close_style.duplicate()
+	if close_pressed is StyleBoxFlat:
+		(close_pressed as StyleBoxFlat).bg_color = close_style.bg_color.darkened(0.12)
+	close_btn.add_theme_stylebox_override("normal", close_style)
+	close_btn.add_theme_stylebox_override("hover", close_hover)
+	close_btn.add_theme_stylebox_override("pressed", close_pressed)
+	close_btn.mouse_entered.connect(func(): _animate_control_scale(close_btn, 1.035, 0.11))
+	close_btn.mouse_exited.connect(func(): _animate_control_scale(close_btn, 1.0, 0.11))
+	close_btn.button_down.connect(func(): _animate_control_scale(close_btn, 0.97, 0.06))
+	close_btn.button_up.connect(func(): _animate_control_scale(close_btn, 1.035, 0.10))
 	close_btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	close_btn.pressed.connect(func():
 		if AudioManager:
@@ -591,6 +631,12 @@ func _show_stage_popup(stage: Dictionary, _index: int):
 		overlay.queue_free()
 	)
 	content.add_child(close_btn)
+
+	popup.scale = Vector2(0.9, 0.9)
+	popup.modulate.a = 0.0
+	var popup_tw = create_tween().set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	popup_tw.tween_property(popup, "scale", Vector2.ONE, 0.2)
+	popup_tw.parallel().tween_property(popup, "modulate:a", 1.0, 0.18)
 
 	# Click outside popup to close.
 	overlay.gui_input.connect(func(event):
@@ -652,8 +698,11 @@ func _build_how_to_play_preview(preview: Control, stage: Dictionary, preview_wid
 			games.append(str(game_name))
 
 	if games.is_empty():
-		game_title.text = "No mini-game data"
-		hint.text = "No tutorial information available yet."
+		game_title.text = _loc("roadmap_no_minigame_data", "No mini-game data")
+		hint.text = _loc(
+			"roadmap_no_tutorial_info",
+			"No tutorial information available yet."
+		)
 		return
 
 	var state = {
@@ -821,7 +870,10 @@ func _get_localized_instruction_hint(game_name: String) -> String:
 		if not text.is_empty():
 			return text.replace("\n", " ")
 
-	return "Follow on-screen controls to conserve water effectively."
+	return _loc(
+		"roadmap_default_instruction_hint",
+		"Follow on-screen controls to conserve water effectively."
+	)
 
 
 func _get_localized_game_name(game_name: String) -> String:
@@ -872,10 +924,47 @@ func _format_game_name(game_name: String) -> String:
 		out += ch
 	return out.strip_edges()
 
+
+func _loc(key: String, fallback: String) -> String:
+	var translated = _try_translate(key)
+	if translated.is_empty():
+		return fallback
+	return translated
+
+
+func _get_stage_title(stage: Dictionary, index: int) -> String:
+	var key = "stage_%d_title" % [index + 1]
+	return _loc(key, str(stage.get("name", "")))
+
+
+func _get_stage_desc(stage: Dictionary, index: int) -> String:
+	var key = "stage_%d_desc" % [index + 1]
+	return _loc(key, str(stage.get("desc", "")))
+
 func _on_stage_hover(container: Control, hovering: bool):
-	var target_scale = Vector2(1.1, 1.1) if hovering else Vector2.ONE
-	var tween = create_tween()
-	tween.tween_property(container, "scale", target_scale, 0.15)
+	_animate_control_scale(container, 1.1 if hovering else 1.0, 0.15)
+
+
+func _on_stage_press(container: Control, pressed: bool) -> void:
+	if pressed:
+		_animate_control_scale(container, 0.96, 0.06)
+	else:
+		_animate_control_scale(container, 1.1, 0.09)
+
+
+func _animate_control_scale(control: Control, target_scale: float, duration: float) -> void:
+	if not control or not is_instance_valid(control):
+		return
+
+	var key = control.get_instance_id()
+	if _feedback_tweens.has(key):
+		var prev = _feedback_tweens[key] as Tween
+		if prev and prev.is_valid():
+			prev.kill()
+
+	var tw = create_tween().set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	tw.tween_property(control, "scale", Vector2(target_scale, target_scale), duration)
+	_feedback_tweens[key] = tw
 
 func _create_decorations():
 	# Trees along the sides
@@ -904,31 +993,34 @@ func _create_decorations():
 
 func _create_header():
 	# Fixed header (not scrolling)
-	var header = PanelContainer.new()
-	header.z_index = 50
+	header_panel = PanelContainer.new()
+	header_panel.z_index = 50
 	
 	var style = StyleBoxFlat.new()
 	style.bg_color = Color(0.2, 0.55, 0.85, 0.95)
 	style.corner_radius_bottom_left = 15
 	style.corner_radius_bottom_right = 15
-	header.add_theme_stylebox_override("panel", style)
-	header.position = Vector2(screen_size.x / 2 - 150, 0)
-	header.custom_minimum_size = Vector2(300, 60)
-	add_child(header)
+	header_panel.add_theme_stylebox_override("panel", style)
+	header_panel.position = Vector2(screen_size.x / 2 - 150, 0)
+	header_panel.custom_minimum_size = Vector2(300, 60)
+	add_child(header_panel)
 	
 	var title = Label.new()
-	title.text = "🗺️ WATER JOURNEY"
+	title.text = _loc("roadmap_title", "🗺️ WATER JOURNEY")
 	title.add_theme_font_size_override("font_size", 28)
 	title.add_theme_color_override("font_color", Color.WHITE)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	title.set_anchors_preset(Control.PRESET_FULL_RECT)
-	header.add_child(title)
+	header_panel.add_child(title)
 	
 	# Progress indicator
 	var completed = stages.filter(func(s): return s.completed).size()
 	var progress_label = Label.new()
-	progress_label.text = "%d/%d Completed" % [completed, stages.size()]
+	progress_label.text = _loc("roadmap_progress_completed", "%d/%d Completed") % [
+		completed,
+		stages.size()
+	]
 	progress_label.add_theme_font_size_override("font_size", 14)
 	progress_label.add_theme_color_override("font_color", Color(0.85, 0.9, 1.0))
 	progress_label.position = Vector2(screen_size.x / 2 - 50, 65)
@@ -936,11 +1028,11 @@ func _create_header():
 	add_child(progress_label)
 
 func _create_back_button():
-	var btn = Button.new()
-	btn.text = "← Back"
-	btn.custom_minimum_size = Vector2(100, 45)
-	btn.position = Vector2(15, 10)
-	btn.z_index = 100
+	back_button = Button.new()
+	back_button.text = _loc("back", "← Back")
+	back_button.custom_minimum_size = Vector2(100, 45)
+	back_button.position = Vector2(15, 10)
+	back_button.z_index = 100
 	
 	var style = StyleBoxFlat.new()
 	style.bg_color = Color(0.85, 0.4, 0.35)
@@ -948,11 +1040,25 @@ func _create_back_button():
 	style.corner_radius_top_right = 12
 	style.corner_radius_bottom_left = 12
 	style.corner_radius_bottom_right = 12
-	btn.add_theme_stylebox_override("normal", style)
-	btn.add_theme_color_override("font_color", Color.WHITE)
-	btn.add_theme_font_size_override("font_size", 18)
+	style.border_width_bottom = 4
+	style.border_color = Color(0.65, 0.28, 0.22)
+	var hover = style.duplicate()
+	if hover is StyleBoxFlat:
+		(hover as StyleBoxFlat).bg_color = style.bg_color.lightened(0.08)
+	var pressed = style.duplicate()
+	if pressed is StyleBoxFlat:
+		(pressed as StyleBoxFlat).bg_color = style.bg_color.darkened(0.12)
+	back_button.add_theme_stylebox_override("normal", style)
+	back_button.add_theme_stylebox_override("hover", hover)
+	back_button.add_theme_stylebox_override("pressed", pressed)
+	back_button.add_theme_color_override("font_color", Color.WHITE)
+	back_button.add_theme_font_size_override("font_size", 18)
+	back_button.mouse_entered.connect(func(): _animate_control_scale(back_button, 1.04, 0.11))
+	back_button.mouse_exited.connect(func(): _animate_control_scale(back_button, 1.0, 0.11))
+	back_button.button_down.connect(func(): _animate_control_scale(back_button, 0.97, 0.06))
+	back_button.button_up.connect(func(): _animate_control_scale(back_button, 1.04, 0.10))
 	
-	btn.pressed.connect(func():
+	back_button.pressed.connect(func():
 		if AudioManager:
 			AudioManager.play_click()
 		if GameManager and GameManager.has_method("transition_to_scene"):
@@ -960,24 +1066,49 @@ func _create_back_button():
 		else:
 			get_tree().change_scene_to_file("res://scenes/ui/InitialScreen.tscn")
 	)
-	add_child(btn)
+	add_child(back_button)
 
 func _create_scroll_hint():
 	# Scroll hint at bottom
-	var hint = Label.new()
-	hint.text = "↕️ Scroll to explore"
-	hint.add_theme_font_size_override("font_size", 16)
-	hint.add_theme_color_override("font_color", Color(1, 1, 1, 0.7))
-	hint.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.5))
-	hint.add_theme_constant_override("outline_size", 2)
-	hint.position = Vector2(screen_size.x / 2 - 80, screen_size.y - 35)
-	hint.z_index = 50
-	add_child(hint)
-	
-	# Fade hint after a few seconds
-	var tween = create_tween()
-	tween.tween_interval(3.0)
-	tween.tween_property(hint, "modulate:a", 0.0, 1.0)
+	scroll_hint_label = Label.new()
+	scroll_hint_label.text = _loc("roadmap_scroll_to_explore", "↕️ Scroll to explore")
+	scroll_hint_label.add_theme_font_size_override("font_size", 16)
+	scroll_hint_label.add_theme_color_override("font_color", Color(1, 1, 1, 0.75))
+	scroll_hint_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.5))
+	scroll_hint_label.add_theme_constant_override("outline_size", 2)
+	scroll_hint_label.position = Vector2(screen_size.x / 2 - 80, screen_size.y - 35)
+	scroll_hint_label.z_index = 50
+	add_child(scroll_hint_label)
+
+
+func _start_roadmap_ambient_motion() -> void:
+	for tw in _ambient_tweens:
+		if tw and tw.is_valid():
+			tw.kill()
+	_ambient_tweens.clear()
+
+	if header_panel:
+		var base_y = header_panel.position.y
+		var head_tw = create_tween().set_loops()
+		head_tw.tween_property(
+			header_panel,
+			"position:y",
+			base_y + 2.0,
+			1.8
+		).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+		head_tw.tween_property(
+			header_panel,
+			"position:y",
+			base_y,
+			1.8
+		).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+		_ambient_tweens.append(head_tw)
+
+	if scroll_hint_label:
+		var hint_tw = create_tween().set_loops()
+		hint_tw.tween_property(scroll_hint_label, "modulate:a", 0.45, 1.1)
+		hint_tw.tween_property(scroll_hint_label, "modulate:a", 0.82, 1.1)
+		_ambient_tweens.append(hint_tw)
 
 
 func _get_first_existing_stage_scene(stage: Dictionary) -> String:
@@ -1027,6 +1158,11 @@ func _process(delta):
 	if not is_dragging and abs(touch_velocity) > 10:
 		scroll_container.scroll_vertical += int(touch_velocity * delta)
 		touch_velocity *= 0.92  # Friction
+
+
+func _on_language_changed(_new_lang: String) -> void:
+	# Rebuild this dynamic screen so all generated labels and popups switch language.
+	get_tree().reload_current_scene()
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # HELPER FUNCTIONS

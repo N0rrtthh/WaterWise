@@ -22,6 +22,13 @@ var _flash_rect: ColorRect = null
 var _vignette: ColorRect = null
 var _outcome_banner: Label = null
 
+func _loc(key: String, fallback: String) -> String:
+	if Localization:
+		var translated = Localization.get_text(key)
+		if translated != key:
+			return translated
+	return fallback
+
 func _ready() -> void:
 	_setup_animation_player()
 
@@ -103,7 +110,11 @@ func _build_cinematic_layers() -> void:
 
 	# Outcome banner (big text behind character)
 	_outcome_banner = Label.new()
-	_outcome_banner.text = "NICE!" if success else "OOPS!"
+	_outcome_banner.text = (
+		_loc("outcome_nice", "NICE!")
+		if success
+		else _loc("outcome_oops", "OOPS!")
+	)
 	_outcome_banner.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_outcome_banner.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_outcome_banner.set_anchors_preset(Control.PRESET_CENTER)
@@ -655,13 +666,27 @@ func _get_narrative_for_key(key: String, is_success: bool) -> Dictionary:
 
 	var key_narrative = narratives.get(key, {})
 	var outcome_key = "win" if is_success else "lose"
+	var key_slug = key.to_snake_case().to_lower()
 	if key_narrative.has(outcome_key):
-		return key_narrative[outcome_key]
+		var localized_narrative = key_narrative[outcome_key].duplicate(true)
+		localized_narrative["character"] = _loc(
+			"narrative_%s_%s_character" % [key_slug, outcome_key],
+			str(localized_narrative.get("character", ""))
+		)
+		localized_narrative["context"] = _loc(
+			"narrative_%s_%s_context" % [key_slug, outcome_key],
+			str(localized_narrative.get("context", ""))
+		)
+		return localized_narrative
 
 	# Fallback
 	return {
-		"character": "😎" if is_success else "😵",
-		"context": (
+		"character": _loc(
+			"narrative_default_%s_character" % outcome_key,
+			"😎" if is_success else "😵"
+		),
+		"context": _loc(
+			"narrative_default_%s_context" % outcome_key,
 			"Mission complete!\n✨ Water saved! ✨"
 			if is_success
 			else "Mission failed...\n💧 Retry! 💧"

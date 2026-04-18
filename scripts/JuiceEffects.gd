@@ -14,9 +14,39 @@ static func _get_accessibility_manager() -> Node:
 		return tree.root.get_node_or_null("AccessibilityManager")
 	return null
 
+static func _get_save_manager() -> Node:
+	var tree = Engine.get_main_loop()
+	if tree and tree is SceneTree:
+		return tree.root.get_node_or_null("SaveManager")
+	return null
+
+static func _is_screen_shake_allowed() -> bool:
+	var acc_mgr = _get_accessibility_manager()
+	if acc_mgr and acc_mgr.has_method("is_screen_shake_enabled"):
+		return acc_mgr.is_screen_shake_enabled()
+
+	var save_mgr = _get_save_manager()
+	if save_mgr and save_mgr.has_method("is_screen_shake_enabled"):
+		return save_mgr.is_screen_shake_enabled()
+
+	return true
+
+static func _should_show_particles() -> bool:
+	var acc_mgr = _get_accessibility_manager()
+	if acc_mgr and acc_mgr.has_method("should_show_particles"):
+		return acc_mgr.should_show_particles()
+
+	var save_mgr = _get_save_manager()
+	if save_mgr and save_mgr.has_method("is_particles_enabled"):
+		return save_mgr.is_particles_enabled()
+
+	return true
+
 ## Screen shake effect
 static func screen_shake(camera: Camera2D, intensity: float, duration: float = 0.5) -> void:
 	if not camera:
+		return
+	if not _is_screen_shake_allowed():
 		return
 	
 	var original_offset = camera.offset
@@ -67,6 +97,9 @@ static func wobble(node: Node2D, angle: float = 15.0, duration: float = 0.5) -> 
 
 ## Spawn particle burst
 static func particle_burst(node: Node, pos: Vector2, color: Color, count: int = 20) -> void:
+	if not _should_show_particles():
+		return
+
 	for i in range(count):
 		var particle = ColorRect.new()
 		particle.color = color
@@ -258,6 +291,9 @@ static func create_drip_emitter(parent: Node, pos: Vector2, rate: float = 1.0) -
 	return emitter
 
 static func _spawn_drip(parent: Node, pos: Vector2) -> void:
+	if not _should_show_particles():
+		return
+
 	var drip = Polygon2D.new()
 	drip.polygon = PackedVector2Array([
 		Vector2(0, -6), Vector2(-3, 0), Vector2(-2, 4),

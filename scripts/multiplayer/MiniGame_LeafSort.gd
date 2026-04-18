@@ -459,13 +459,17 @@ func _on_team_won() -> void:
 	spawn_timer.stop()
 	game_won.emit()
 	
-	# Record round time for rolling window (only host)
+	# Record round result once on host, then sync via GameManager RPC.
 	if GameManager and is_player_one:
 		var round_time_ms: int = Time.get_ticks_msec() - round_start_time
 		var round_time_sec: float = float(round_time_ms) / 1000.0
-		GameManager.add_round_time(round_time_sec)
-		GameManager.minigames_played_this_session += 1
-		print(" [Rolling Window] Round completed in %.2fs" % round_time_sec)
+		if GameManager.has_method("record_multiplayer_round_result"):
+			GameManager.record_multiplayer_round_result(
+				"MiniGame_LeafSort",
+				round_time_sec,
+				true
+			)
+			print(" [Round] Recorded multiplayer result in %.2fs" % round_time_sec)
 	
 	_show_result_screen(true)
 	await get_tree().create_timer(2.0).timeout
@@ -477,6 +481,14 @@ func _on_team_lost() -> void:
 	game_active = false
 	spawn_timer.stop()
 	game_lost.emit()
+	if GameManager and is_player_one and GameManager.has_method("record_multiplayer_round_result"):
+		var round_time_ms: int = Time.get_ticks_msec() - round_start_time
+		var round_time_sec: float = float(round_time_ms) / 1000.0
+		GameManager.record_multiplayer_round_result(
+			"MiniGame_LeafSort",
+			round_time_sec,
+			false
+		)
 	
 	_show_result_screen(false)
 	await get_tree().create_timer(2.0).timeout
@@ -508,14 +520,6 @@ func _show_result_screen(victory: bool) -> void:
 	result.add_child(label)
 	
 	hud.add_child(result)
-	
-	await get_tree().create_timer(3.0).timeout
-	if not is_instance_valid(self) or not is_inside_tree():
-		return
-	if NetworkManager:
-		NetworkManager.return_to_lobby()
-	else:
-		get_tree().change_scene_to_file("res://scenes/ui/MultiplayerLobby.tscn")
 
 func _create_pause_ui() -> void:
 	pause_button = Button.new()
@@ -606,6 +610,9 @@ func _on_exit_pressed() -> void:
 	game_active = false
 	if spawn_timer:
 		spawn_timer.stop()
+	if GameManager and GameManager.has_method("return_to_multiplayer_lobby"):
+		GameManager.return_to_multiplayer_lobby()
+		return
 	if NetworkManager:
 		NetworkManager.return_to_lobby()
 	else:

@@ -23,6 +23,43 @@ const TEXT_DARK := Color(0.22, 0.22, 0.2)
 const TEXT_MID := Color(0.38, 0.38, 0.34)
 const STEAM_COL := Color(0.78, 0.9, 1.0, 0.5)
 
+
+func _loc(key: String, fallback: String) -> String:
+	if Localization:
+		var translated = Localization.get_text(key)
+		if translated != key:
+			return translated
+	return fallback
+
+
+func _fmt_loc(key: String, fallback: String, values: Array) -> String:
+	var pattern = _loc(key, fallback)
+	if values.is_empty():
+		return pattern
+	if values.size() == 1:
+		return pattern % values[0]
+	return pattern % values
+
+
+func _localize_difficulty_value(value: String) -> String:
+	match value.to_lower():
+		"easy":
+			return _loc("easy", "Easy")
+		"medium":
+			return _loc("medium", "Medium")
+		"hard":
+			return _loc("hard", "Hard")
+		_:
+			return value
+
+
+func _should_show_particles() -> bool:
+	if AccessibilityManager and AccessibilityManager.has_method("should_show_particles"):
+		return AccessibilityManager.should_show_particles()
+	if SaveManager and SaveManager.has_method("is_particles_enabled"):
+		return SaveManager.is_particles_enabled()
+	return true
+
 func _ready() -> void:
 	await get_tree().process_frame
 	_fetch_data()
@@ -44,11 +81,27 @@ func _fetch_data() -> void:
 		current_accuracy = last_perf["accuracy"]
 		var time_ms = last_perf["reaction_time"]
 		var mistakes = last_perf["mistakes"]
-		var difficulty = last_perf["difficulty"]
-		accuracy_label.text = "Accuracy: %.0f%%" % (current_accuracy * 100)
-		time_label.text = "Time: %.1fs" % (time_ms / 1000.0)
-		mistakes_label.text = "Mistakes: %d" % mistakes
-		difficulty_label.text = "Difficulty: %s" % difficulty
+		var difficulty = _localize_difficulty_value(str(last_perf["difficulty"]))
+		accuracy_label.text = _fmt_loc(
+			"mini_results_accuracy_line",
+			"%s: %.0f%%",
+			[_loc("accuracy", "Accuracy"), current_accuracy * 100.0]
+		)
+		time_label.text = _fmt_loc(
+			"mini_results_time_line",
+			"%s: %.1fs",
+			[_loc("time", "Time"), time_ms / 1000.0]
+		)
+		mistakes_label.text = _fmt_loc(
+			"mini_results_mistakes_line",
+			"%s: %d",
+			[_loc("mistakes", "Mistakes"), mistakes]
+		)
+		difficulty_label.text = _fmt_loc(
+			"mini_results_difficulty_line",
+			"%s: %s",
+			[_loc("difficulty_level", "Difficulty"), difficulty]
+		)
 	if GameManager.round_scores.size() > 0:
 		_round_score = int(GameManager.round_scores[-1].get("score", 0))
 
@@ -255,6 +308,8 @@ func _spawn_water_drop(pos: Vector2, idx: int) -> void:
 
 # ── Lost life: water drop evaporation animation ──
 func _spawn_evaporating_drop(pos: Vector2, idx: int) -> void:
+	var allow_particles = _should_show_particles()
+
 	var character = Node2D.new()
 	character.position = pos
 	character.scale = Vector2.ZERO
@@ -306,23 +361,25 @@ func _spawn_evaporating_drop(pos: Vector2, idx: int) -> void:
 	character.add_child(mouth)
 
 	# ── Steam/vapor particles rising from ghost ──
-	var steam_container = Node2D.new()
-	steam_container.name = "Steam"
-	character.add_child(steam_container)
+	var steam_container: Node2D = null
+	if allow_particles:
+		steam_container = Node2D.new()
+		steam_container.name = "Steam"
+		character.add_child(steam_container)
 
-	for i in range(5):
-		var steam = Polygon2D.new()
-		steam.name = "SteamPuff_%d" % i
-		var sp = PackedVector2Array()
-		var sz = randf_range(4, 8)
-		for j in range(8):
-			var a = j * TAU / 8
-			sp.append(Vector2(cos(a) * sz, sin(a) * sz * 0.65))
-		steam.polygon = sp
-		steam.color = STEAM_COL
-		steam.position = Vector2(randf_range(-20, 20), randf_range(-30, 10))
-		steam.modulate.a = 0.0
-		steam_container.add_child(steam)
+		for i in range(5):
+			var steam = Polygon2D.new()
+			steam.name = "SteamPuff_%d" % i
+			var sp = PackedVector2Array()
+			var sz = randf_range(4, 8)
+			for j in range(8):
+				var a = j * TAU / 8
+				sp.append(Vector2(cos(a) * sz, sin(a) * sz * 0.65))
+			steam.polygon = sp
+			steam.color = STEAM_COL
+			steam.position = Vector2(randf_range(-20, 20), randf_range(-30, 10))
+			steam.modulate.a = 0.0
+			steam_container.add_child(steam)
 
 	# ── Small puddle below (residue) ──
 	var puddle = Polygon2D.new()
@@ -352,17 +409,18 @@ func _spawn_evaporating_drop(pos: Vector2, idx: int) -> void:
 	evap.tween_property(ghost_body, "modulate:a", 0.15, 0.4)
 
 	# Steam puffs rise upward in sequence
-	for i in range(5):
-		var puff = steam_container.get_node("SteamPuff_%d" % i)
-		var st = create_tween()
-		st.tween_interval(delay + 0.6 + i * 0.18)
-		st.tween_property(puff, "modulate:a", 0.6, 0.2)
-		st.tween_property(
-			puff, "position:y", puff.position.y - 40 - randf_range(10, 30), 1.2
-		).set_ease(Tween.EASE_OUT)
-		var sf = create_tween()
-		sf.tween_interval(delay + 1.2 + i * 0.18)
-		sf.tween_property(puff, "modulate:a", 0.0, 0.5)
+	if allow_particles and steam_container:
+		for i in range(5):
+			var puff = steam_container.get_node("SteamPuff_%d" % i)
+			var st = create_tween()
+			st.tween_interval(delay + 0.6 + i * 0.18)
+			st.tween_property(puff, "modulate:a", 0.6, 0.2)
+			st.tween_property(
+				puff, "position:y", puff.position.y - 40 - randf_range(10, 30), 1.2
+			).set_ease(Tween.EASE_OUT)
+			var sf = create_tween()
+			sf.tween_interval(delay + 1.2 + i * 0.18)
+			sf.tween_property(puff, "modulate:a", 0.0, 0.5)
 
 # ═════════════════════════════════════════════════════════════
 # SCORE DISPLAY — "YOU EARNED" + big number
@@ -372,7 +430,7 @@ func _build_score_display() -> void:
 	var vp = get_viewport_rect().size
 
 	var earned_label = Label.new()
-	earned_label.text = "YOU EARNED"
+	earned_label.text = _loc("mini_results_you_earned", "YOU EARNED")
 	earned_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	earned_label.add_theme_font_size_override("font_size", 32)
 	earned_label.add_theme_color_override("font_color", TEXT_MID)
@@ -430,8 +488,16 @@ func _display_stat_lines() -> void:
 	var stat_texts: Array[String] = []
 	if AdaptiveDifficulty and AdaptiveDifficulty.performance_history.size() > 0:
 		var last_perf = AdaptiveDifficulty.performance_history[-1]
-		stat_texts.append("ACCURACY  %.0f%%" % (last_perf["accuracy"] * 100))
-		stat_texts.append("MISTAKES  %d" % last_perf["mistakes"])
+		stat_texts.append(_fmt_loc(
+			"mini_results_accuracy_caps",
+			"%s  %.0f%%",
+			[_loc("accuracy", "Accuracy").to_upper(), last_perf["accuracy"] * 100.0]
+		))
+		stat_texts.append(_fmt_loc(
+			"mini_results_mistakes_caps",
+			"%s  %d",
+			[_loc("mistakes", "Mistakes").to_upper(), int(last_perf["mistakes"])]
+		))
 
 	for i in stat_texts.size():
 		var lbl = Label.new()
@@ -480,10 +546,10 @@ func _setup_buttons() -> void:
 		var style = StyleBoxFlat.new()
 		if btn.name == "ContinueButton":
 			style.bg_color = YELLOW_BTN
-			btn.text = "CONTINUE"
+			btn.text = _loc("continue", "CONTINUE")
 		else:
 			style.bg_color = PINK_BTN
-			btn.text = "RETRY"
+			btn.text = _loc("retry", "RETRY")
 		style.corner_radius_top_left = 28
 		style.corner_radius_top_right = 28
 		style.corner_radius_bottom_right = 28

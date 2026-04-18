@@ -25,6 +25,17 @@ var anim_options: Dictionary = {
 	"pop": 1.0
 }
 
+func _loc(key: String, fallback: String) -> String:
+	if Localization:
+		var translated = Localization.get_text(key)
+		if translated != key:
+			return translated
+	return fallback
+
+func _fmt_loc(key: String, fallback: String, values: Array) -> String:
+	var template = _loc(key, fallback)
+	return template % values
+
 func _ready() -> void:
 	_ensure_cinematic_nodes()
 	_rebuild_animation()
@@ -40,7 +51,11 @@ func configure(
 	_is_success = success
 	_ensure_cinematic_nodes()
 	var outcome_theme := _build_outcome_theme(success)
-	title_label.text = "Scene Complete" if success else "Scene Failed"
+	title_label.text = (
+		_loc("cutscene_scene_complete", "Scene Complete")
+		if success
+		else _loc("cutscene_scene_failed", "Scene Failed")
+	)
 	title_label.add_theme_color_override("font_color", outcome_theme["title_color"])
 	if icon_label:
 		icon_label.text = str(outcome_theme["icon"])
@@ -52,11 +67,15 @@ func configure(
 		streak_back.color = outcome_theme["streak_back_color"]
 	if streak_front:
 		streak_front.color = outcome_theme["streak_front_color"]
-	stats_label.text = "+%d pts   |   Combo x%d   |   Lives %s" % [
-		score,
-		combo,
-		"❤".repeat(max(lives, 0))
-	]
+	stats_label.text = _fmt_loc(
+		"cutscene_outro_stats",
+		"+%d pts   |   Combo x%d   |   Lives %s",
+		[
+			score,
+			combo,
+			"❤".repeat(max(lives, 0))
+		]
+	)
 	for key in options.keys():
 		anim_options[key] = options[key]
 	_rebuild_animation()
