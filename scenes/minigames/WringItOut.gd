@@ -8,6 +8,7 @@ var clothes_node: Node2D
 var progress_bar: ProgressBar
 var water_drops: Array = []
 var last_tap_time: float = 0.0
+var tap_requested: bool = false
 
 func _apply_difficulty_settings() -> void:
 	match current_difficulty:
@@ -114,7 +115,8 @@ func _process(delta):
 	progress_bar.value = progress
 	
 	# Check for tap/click
-	if Input.is_action_just_pressed("ui_accept") or Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
+	if tap_requested:
+		tap_requested = false
 		var current_time = Time.get_ticks_msec() / 1000.0
 		if current_time - last_tap_time > 0.08: # Prevent too fast tapping
 			last_tap_time = current_time
@@ -139,6 +141,18 @@ func _process(delta):
 	if progress >= target_progress:
 		end_game(true)
 
+
+func _input(event):
+	if not game_active:
+		return
+
+	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+		tap_requested = true
+	elif event is InputEventScreenTouch and event.pressed:
+		tap_requested = true
+	elif event is InputEventKey and event.pressed and event.keycode == KEY_ENTER:
+		tap_requested = true
+
 func _on_tap():
 	progress += tap_gain
 	record_action(true)
@@ -153,7 +167,10 @@ func _on_tap():
 
 func _spawn_water_drop():
 	var drop = Polygon2D.new()
-	drop.polygon = PackedVector2Array([Vector2(0, -8), Vector2(6, 0), Vector2(0, 8), Vector2(-6, 0)])
+	drop.polygon = PackedVector2Array([
+		Vector2(0, -8), Vector2(6, 0),
+		Vector2(0, 8), Vector2(-6, 0)
+	])
 	drop.color = Color(0.3, 0.6, 1.0, 0.8)
 	drop.position = clothes_node.position + Vector2(randf_range(-30, 30), 100)
 	add_child(drop)

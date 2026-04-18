@@ -128,6 +128,7 @@ func _ready() -> void:
 	else:
 		battery_source = "desktop_estimate"
 	_create_overlay()
+	_apply_saved_dev_visibility()
 	print("📈 PerformanceProfiler ready (ISO/IEC 25010 monitoring)")
 	print("   Press F11 to toggle performance overlay")
 	print("   Battery source: %s" % battery_source)
@@ -269,10 +270,28 @@ func _process(delta: float) -> void:
 func _input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo:
 		if event.keycode == KEY_F11:
-			overlay_visible = !overlay_visible
-			var canvas = get_node_or_null("ProfilerCanvas")
-			if canvas:
-				canvas.visible = overlay_visible
+			toggle_overlay()
+
+func set_overlay_visible(visible: bool) -> void:
+	overlay_visible = visible
+	var canvas = get_node_or_null("ProfilerCanvas")
+	if canvas:
+		canvas.visible = overlay_visible
+
+func is_overlay_visible() -> bool:
+	return overlay_visible
+
+func toggle_overlay() -> void:
+	set_overlay_visible(not overlay_visible)
+
+func _apply_saved_dev_visibility() -> void:
+	var save_mgr = get_node_or_null("/root/SaveManager")
+	if not save_mgr:
+		return
+
+	var dev_mode_enabled = bool(save_mgr.get_setting("dev_mode", false))
+	var should_show_profiler = bool(save_mgr.get_setting("dev_show_profiler", false))
+	set_overlay_visible(dev_mode_enabled and should_show_profiler)
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # ALGORITHM LATENCY TRACKING
@@ -445,6 +464,7 @@ func export_session_report() -> Dictionary:
 			"passed": stress_test_passed,
 			"target_sec": STRESS_TEST_DURATION_SEC
 		},
+		"mobile_context": _build_mobile_context(),
 		"iso_25010_pass": _check_iso_compliance(),
 		"snapshots": snapshots
 	}
@@ -457,6 +477,43 @@ func _check_iso_compliance() -> bool:
 		algo_latency_max_ms <= MAX_ALGO_LATENCY_MS and
 		cpu_temp_peak <= MAX_CPU_TEMP_C
 	)
+
+
+func _build_mobile_context() -> Dictionary:
+	var viewport_size := Vector2.ZERO
+	var viewport = get_viewport()
+	if viewport:
+		viewport_size = viewport.get_visible_rect().size
+
+	var safe_margins := {
+		"top": 0.0,
+		"bottom": 0.0,
+		"left": 0.0,
+		"right": 0.0,
+	}
+	var mobile_mode := false
+	var orientation := "portrait" if viewport_size.y > viewport_size.x else "landscape"
+
+	if MobileUIManager:
+		mobile_mode = MobileUIManager.is_mobile_platform()
+		if MobileUIManager.has_method("is_portrait_orientation"):
+			orientation = "portrait" if MobileUIManager.is_portrait_orientation() else "landscape"
+		if MobileUIManager.has_method("get_safe_area_margins"):
+			safe_margins = MobileUIManager.get_safe_area_margins()
+
+	var haptics_enabled := true
+	var save_mgr = get_node_or_null("/root/SaveManager")
+	if save_mgr and save_mgr.has_method("get_setting"):
+		haptics_enabled = bool(save_mgr.get_setting("haptics_enabled", true))
+
+	return {
+		"mobile_mode": mobile_mode,
+		"orientation": orientation,
+		"viewport_width": int(viewport_size.x),
+		"viewport_height": int(viewport_size.y),
+		"safe_area": safe_margins,
+		"haptics_enabled": haptics_enabled,
+	}
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # OVERLAY TEXT
@@ -695,6 +752,7 @@ var _session_events: Array[Dictionary] = []
 func log_event(event_type: String, data: Dictionary = {}) -> void:
 	if not dev_log_enabled:
 		return
+	var mobile_context = _build_mobile_context()
 	var entry := {
 		"timestamp": Time.get_unix_time_from_system(),
 		"elapsed_sec": session_elapsed_sec,
@@ -703,13 +761,21 @@ func log_event(event_type: String, data: Dictionary = {}) -> void:
 		"mem_mb": memory_current_mb,
 		"cpu_temp_c": cpu_temp_c,
 		"algo_latency_ms": algo_latency_avg_ms,
+		"mobile_mode": bool(mobile_context.get("mobile_mode", false)),
+		"orientation": str(mobile_context.get("orientation", "landscape")),
 	}
 	entry.merge(data)
 	_session_events.append(entry)
 
 func export_session_log_to_file() -> String:
 	var dir_path := "user://perf_logs"
-	DirAccess.make_dir_recursive_absolute(dir_path)
+	var user_dir = DirAccess.open("user://")
+	if user_dir:
+		var mk_err = user_dir.make_dir_recursive("perf_logs")
+		if mk_err != OK and mk_err != ERR_ALREADY_EXISTS:
+			push_warning("Could not ensure perf_logs directory (%s)" % error_string(mk_err))
+	else:
+		push_warning("Could not open user:// for perf log export")
 	var datetime := Time.get_datetime_string_from_system().replace(":", "-")
 	var platform := OS.get_name()
 	var filename := "%s/session_%s_%s.json" % [dir_path, datetime, platform]

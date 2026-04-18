@@ -41,6 +41,8 @@ var touch_start_position: Vector2 = Vector2.ZERO
 var touch_start_time: float = 0.0
 var is_touching: bool = false
 var active_touches: Dictionary = {}  # Track multi-touch
+var haptics_enabled: bool = true
+var _last_scene: Node = null
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # INITIALIZATION
@@ -48,12 +50,24 @@ var active_touches: Dictionary = {}  # Track multi-touch
 
 func _ready() -> void:
 	_detect_platform()
+	_load_haptics_settings()
+
+	if get_tree().has_signal("current_scene_changed"):
+		if not get_tree().is_connected("current_scene_changed", _on_current_scene_changed):
+			get_tree().connect("current_scene_changed", _on_current_scene_changed)
+	else:
+		get_tree().tree_changed.connect(_on_tree_changed)
+	call_deferred("_apply_haptics_to_current_scene")
+
 	print("📱 TouchInputManager initialized - Mobile: %s" % is_mobile)
 
 func _detect_platform() -> void:
 	# Detect if running on mobile
-	var os_name = OS.get_name()
-	is_mobile = os_name in ["Android", "iOS"]
+	if MobileUIManager and MobileUIManager.has_method("is_mobile_platform"):
+		is_mobile = MobileUIManager.is_mobile_platform()
+	else:
+		var os_name = OS.get_name()
+		is_mobile = os_name in ["Android", "iOS"]
 	
 	# Also check if display is in portrait mode (likely mobile)
 	var viewport_size = get_viewport().get_visible_rect().size
@@ -63,6 +77,49 @@ func _detect_platform() -> void:
 	# Apply mobile-specific settings
 	if is_mobile:
 		_apply_mobile_settings()
+
+
+func _load_haptics_settings() -> void:
+	var save_mgr = get_node_or_null("/root/SaveManager")
+	if save_mgr and save_mgr.has_method("get_setting"):
+		haptics_enabled = bool(save_mgr.get_setting("haptics_enabled", true))
+
+
+func _is_haptics_allowed() -> bool:
+	if not is_mobile:
+		return false
+
+	var save_mgr = get_node_or_null("/root/SaveManager")
+	if save_mgr and save_mgr.has_method("get_setting"):
+		return bool(save_mgr.get_setting("haptics_enabled", true))
+
+	return haptics_enabled
+
+
+func _on_current_scene_changed(_scene_root: Node) -> void:
+	if not is_mobile:
+		return
+	call_deferred("_apply_haptics_to_current_scene")
+
+
+func _on_tree_changed() -> void:
+	var tree = get_tree()
+	if not tree:
+		return
+	var current = tree.current_scene
+	if current != _last_scene:
+		_last_scene = current
+		if is_mobile and current != null:
+			call_deferred("_apply_haptics_to_current_scene")
+
+
+func _apply_haptics_to_current_scene() -> void:
+	if not is_mobile:
+		return
+
+	var current_scene = get_tree().current_scene
+	if current_scene:
+		enable_haptics_for_scene(current_scene)
 
 func _apply_mobile_settings() -> void:
 	# Prevent screen from sleeping during gameplay
@@ -138,20 +195,20 @@ func _handle_screen_drag(event: InputEventScreenDrag) -> void:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func vibrate_light() -> void:
-	if is_mobile:
+	if _is_haptics_allowed():
 		Input.vibrate_handheld(50)  # 50ms light vibration
 
 func vibrate_medium() -> void:
-	if is_mobile:
+	if _is_haptics_allowed():
 		Input.vibrate_handheld(100)  # 100ms medium vibration
 
 func vibrate_heavy() -> void:
-	if is_mobile:
+	if _is_haptics_allowed():
 		Input.vibrate_handheld(200)  # 200ms heavy vibration
 
 func vibrate_success() -> void:
 	# Pattern: short-short-long
-	if is_mobile:
+	if _is_haptics_allowed():
 		Input.vibrate_handheld(50)
 		await get_tree().create_timer(0.1).timeout
 		Input.vibrate_handheld(50)
@@ -160,7 +217,7 @@ func vibrate_success() -> void:
 
 func vibrate_error() -> void:
 	# Pattern: long-long
-	if is_mobile:
+	if _is_haptics_allowed():
 		Input.vibrate_handheld(150)
 		await get_tree().create_timer(0.1).timeout
 		Input.vibrate_handheld(150)
@@ -168,7 +225,7 @@ func vibrate_error() -> void:
 func vibrate_button_press() -> void:
 	## Provide haptic feedback for button presses on mobile.
 	## Requirement 2.5: Haptic feedback on button press
-	if is_mobile:
+	if _is_haptics_allowed():
 		Input.vibrate_handheld(50)  # 50ms light vibration for button press
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

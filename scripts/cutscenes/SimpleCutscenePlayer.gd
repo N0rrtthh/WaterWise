@@ -27,8 +27,10 @@ func play_cutscene(minigame_key: String, cutscene_type) -> void:
 	if AudioManager:
 		if is_win:
 			AudioManager.play_success()
+			AudioManager.play_music("outcome_win", 0.15)
 		else:
 			AudioManager.play_failure()
+			AudioManager.play_music("outcome_fail", 0.15)
 
 	await _show_animated_droplet(is_win)
 	_is_playing = false

@@ -18,7 +18,6 @@ var anim_options: Dictionary = {"speed": 1.0, "distance": 1.0}
 
 # Procedural VFX nodes created at runtime
 var _particles: Array[Node] = []
-var _droplet_node: Node2D = null
 var _flash_rect: ColorRect = null
 var _vignette: ColorRect = null
 var _outcome_banner: Label = null
@@ -60,9 +59,10 @@ func play_cutscene() -> void:
 	if AudioManager:
 		if success:
 			AudioManager.play_success()
+			AudioManager.play_music("outcome_win", 0.2)
 		else:
 			AudioManager.play_failure()
-		AudioManager.play_music("cutscene", 0.2)
+			AudioManager.play_music("outcome_fail", 0.2)
 
 	# Build cinematic layers BEFORE starting the animation
 	_build_cinematic_layers()
@@ -158,7 +158,6 @@ func _spawn_ambient_particles(vp_size: Vector2) -> void:
 func _run_parallel_vfx() -> void:
 	var speed = max(0.5, float(anim_options.get("speed", 1.0)))
 	var length = 3.5 / speed
-	var vp_size = get_viewport_rect().size
 
 	# ── SCREEN SHAKE on entry (impact feel) ──
 	# Use character_label offset instead of moving self (which breaks full-rect layout)

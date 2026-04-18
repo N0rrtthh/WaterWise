@@ -116,7 +116,6 @@ func _spawn_water_drop(pos: Vector2, idx: int) -> void:
 	# Right side curve
 	for i in range(1, 13):
 		var t = float(i) / 12.0
-		var angle = -PI * 0.5 + t * PI * 1.15
 		var rx = 34.0 * sin(t * PI * 0.92)
 		var ry = -48 + t * 96
 		pts.append(Vector2(rx, ry))
@@ -340,7 +339,9 @@ func _spawn_evaporating_drop(pos: Vector2, idx: int) -> void:
 	var enter = create_tween()
 	enter.tween_interval(delay)
 	enter.tween_property(character, "modulate:a", 1.0, 0.2)
-	enter.tween_property(character, "scale", Vector2(1.0, 1.0), 0.3).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_BACK)
+	enter.tween_property(
+		character, "scale", Vector2(1.0, 1.0), 0.3
+	).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_BACK)
 
 	# Wobble then shrink (evaporation)
 	var evap = create_tween()
@@ -356,7 +357,9 @@ func _spawn_evaporating_drop(pos: Vector2, idx: int) -> void:
 		var st = create_tween()
 		st.tween_interval(delay + 0.6 + i * 0.18)
 		st.tween_property(puff, "modulate:a", 0.6, 0.2)
-		st.tween_property(puff, "position:y", puff.position.y - 40 - randf_range(10, 30), 1.2).set_ease(Tween.EASE_OUT)
+		st.tween_property(
+			puff, "position:y", puff.position.y - 40 - randf_range(10, 30), 1.2
+		).set_ease(Tween.EASE_OUT)
 		var sf = create_tween()
 		sf.tween_interval(delay + 1.2 + i * 0.18)
 		sf.tween_property(puff, "modulate:a", 0.0, 0.5)
@@ -449,7 +452,6 @@ func _display_stat_lines() -> void:
 # ═════════════════════════════════════════════════════════════
 
 func _setup_buttons() -> void:
-	var vp = get_viewport_rect().size
 	var buttons_node = $CenterContainer/VBoxContainer/Buttons
 	if not buttons_node:
 		return

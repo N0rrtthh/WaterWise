@@ -65,7 +65,7 @@ func play_cutscene() -> void:
 	_scene_key = _extract_scene_key()
 	if AudioManager:
 		AudioManager.play_game_end()
-		AudioManager.play_music("cutscene", 0.3)
+		AudioManager.play_music("outcome_win" if _is_success else "outcome_fail", 0.3)
 	if not animation_player.has_animation("outro"):
 		_rebuild_animation()
 	

@@ -19,9 +19,13 @@ var _page_indicator: Label
 var _tap_hint: Label
 var _container: VBoxContainer
 var _is_animating: bool = false
+var _is_finishing: bool = false
+var _tap_hint_pulse: Tween = null
 
 func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
+	mouse_filter = Control.MOUSE_FILTER_STOP
+	z_index = 50  # Above all InitialScreen UI (z_index=10)
 	_load_story_data()
 	_build_ui()
 	_show_current_page()
@@ -122,6 +126,7 @@ func _show_current_page() -> void:
 	if _current_chapter.is_empty():
 		get_next_unlocked_chapter()
 	if _current_chapter.is_empty():
+		_stop_tap_hint_pulse()
 		story_finished.emit()
 		return
 
@@ -172,18 +177,23 @@ func _show_current_page() -> void:
 	tween.tween_callback(func(): _is_animating = false)
 
 	# Pulse tap hint
-	var pulse := create_tween().set_loops()
-	pulse.tween_property(_tap_hint, "modulate:a", 0.3, 0.8)
-	pulse.tween_property(_tap_hint, "modulate:a", 1.0, 0.8)
+	_stop_tap_hint_pulse()
+	_tap_hint_pulse = create_tween().set_loops()
+	_tap_hint_pulse.tween_property(_tap_hint, "modulate:a", 0.3, 0.8)
+	_tap_hint_pulse.tween_property(_tap_hint, "modulate:a", 1.0, 0.8)
 
-func _gui_input(event: InputEvent) -> void:
+func _input(event: InputEvent) -> void:
+	if _is_finishing:
+		return
 	if event is InputEventMouseButton and event.pressed:
 		_advance_page()
+		get_viewport().set_input_as_handled()
 	elif event is InputEventScreenTouch and event.pressed:
 		_advance_page()
+		get_viewport().set_input_as_handled()
 
 func _advance_page() -> void:
-	if _is_animating:
+	if _is_animating or _is_finishing:
 		return
 	if AudioManager:
 		AudioManager.play_click()
@@ -195,7 +205,19 @@ func _advance_page() -> void:
 		_show_current_page()
 
 func _finish_story() -> void:
+	if _is_finishing:
+		return
+	_is_finishing = true
+	_stop_tap_hint_pulse()
 	var tween := create_tween()
 	tween.tween_property(self, "modulate:a", 0.0, 0.5)
 	await tween.finished
 	story_finished.emit()
+
+func _exit_tree() -> void:
+	_stop_tap_hint_pulse()
+
+func _stop_tap_hint_pulse() -> void:
+	if _tap_hint_pulse:
+		_tap_hint_pulse.kill()
+		_tap_hint_pulse = null
