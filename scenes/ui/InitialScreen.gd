@@ -37,6 +37,7 @@ var _loading_text: Label
 var _loading_started_ms: int = 0
 
 const MIN_LOADING_VISIBLE_MS: int = 500
+const UI_FONT_BRICK := preload("res://fonts/NTBrickSans.otf")
 
 
 # Scene root containers
@@ -126,6 +127,7 @@ func _ready() -> void:
 	else:
 		droplet_label.text = "0"
 		_update_next_unlock_panel(0)
+
 	# NOTE: Skip ThemeManager.apply_theme on InitialScreen — it overrides
 	# the custom sky-blue background and gold button styles with generic
 	# theme colors. InitialScreen has its own bespoke visual design.
@@ -142,6 +144,14 @@ func _ready() -> void:
 
 	if TouchInputManager and TouchInputManager.has_method("enable_haptics_for_scene"):
 		TouchInputManager.enable_haptics_for_scene(self)
+
+
+func _loc(key: String, fallback: String) -> String:
+	if Localization:
+		var translated = Localization.get_text(key)
+		if translated != key:
+			return translated
+	return fallback
 
 
 func _process(delta: float) -> void:
@@ -648,7 +658,7 @@ func _setup_signboard_highscore() -> void:
 	_signboard_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_signboard_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 
-	var font_res = load("res://fonts/NTBrickSans.otf")
+	var font_res = UI_FONT_BRICK
 	if font_res:
 		_signboard_label.add_theme_font_override("font", font_res)
 	_signboard_label.add_theme_font_size_override("font_size", 30)
@@ -683,7 +693,10 @@ func _setup_signboard_highscore() -> void:
 				if s > score_value:
 					score_value = s
 
-	_signboard_label.text = "HIGHSCORE\n%d" % score_value
+	_signboard_label.text = "%s\n%d" % [
+		_loc("initial_highscore_sign", "HIGHSCORE"),
+		score_value
+	]
 
 
 # ── Characters ──────────────────────────────────────────────────────
@@ -1017,10 +1030,10 @@ func _attach_role_prop(root: Node2D, role: String) -> void:
 
 func _build_title() -> void:
 	_title_node = Label.new()
-	_title_node.text = "WATERVILLE"
+	_title_node.text = _loc("title", "WATERVILLE")
 	_title_node.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_title_node.add_theme_font_size_override("font_size", 56)
-	var title_font = load("res://fonts/NTBrickSans.otf")
+	var title_font = UI_FONT_BRICK
 	if title_font:
 		_title_node.add_theme_font_override("font", title_font)
 	_title_node.add_theme_color_override("font_color", Color(1, 1, 1))
@@ -1587,7 +1600,7 @@ func _show_loading_overlay() -> void:
 	panel.add_child(vbox)
 
 	_loading_text = Label.new()
-	_loading_text.text = "Loading game..."
+	_loading_text.text = _loc("loading_game", "Loading game...")
 	_loading_text.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_loading_text.add_theme_font_size_override("font_size", 22)
 	vbox.add_child(_loading_text)
@@ -1735,14 +1748,17 @@ func _update_next_unlock_panel(current_droplets: int) -> void:
 
 	if next_threshold < 0:
 		next_unlock_progress.value = 100.0
-		next_unlock_label.text = "All character unlocks owned"
+		next_unlock_label.text = _loc(
+			"all_character_unlocks_owned",
+			"All character unlocks owned"
+		)
 		return
 
 	var segment = max(1, next_threshold - previous_threshold)
 	var in_segment = max(0, current_droplets - previous_threshold)
 	next_unlock_progress.value = clamp((float(in_segment) / float(segment)) * 100.0, 0.0, 100.0)
 	var remaining = next_threshold - current_droplets
-	next_unlock_label.text = "%d points to go" % remaining
+	next_unlock_label.text = _loc("points_to_go", "%d points to go") % remaining
 
 
 # ── Helpers ─────────────────────────────────────────────────────────

@@ -103,6 +103,8 @@ const MAX_PLAYERS: int = 2
 # Multiplayer performance tracking for CoopAdaptation
 var pending_mp_performance: Dictionary = {}  # {peer_id: {accuracy, time, errors}}
 var mp_game_name: String = ""
+var current_multiplayer_game_name: String = ""
+var _recorded_multiplayer_round_game: String = ""
 
 # Player progress tracking
 var completed_minigames: Array = []
@@ -186,15 +188,24 @@ var _transition_layer: CanvasLayer
 var _transition_rect: ColorRect
 var _is_transitioning: bool = false
 
+const LIGHT_TRANSITION_TINT := Color(0.16, 0.31, 0.46, 0.0)
+const DARK_TRANSITION_TINT := Color(0.08, 0.14, 0.24, 0.0)
+
 func _setup_transition_overlay() -> void:
 	_transition_layer = CanvasLayer.new()
 	_transition_layer.layer = 100  # Always on top
 	add_child(_transition_layer)
 	_transition_rect = ColorRect.new()
-	_transition_rect.color = Color(0, 0, 0, 0)
+	_transition_rect.color = LIGHT_TRANSITION_TINT
 	_transition_rect.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_transition_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_transition_layer.add_child(_transition_rect)
+
+
+func _get_transition_tint() -> Color:
+	if dark_mode_enabled:
+		return DARK_TRANSITION_TINT
+	return LIGHT_TRANSITION_TINT
 
 func transition_to_scene(scene_path: String, duration: float = 0.4) -> void:
 	if _is_transitioning:
@@ -202,20 +213,29 @@ func transition_to_scene(scene_path: String, duration: float = 0.4) -> void:
 	if not ResourceLoader.exists(scene_path):
 		push_error("Cannot transition. Scene does not exist: %s" % scene_path)
 		return
+	if not _transition_rect or not is_instance_valid(_transition_rect):
+		_setup_transition_overlay()
+
+	var tint = _get_transition_tint()
+	_transition_rect.color = Color(tint.r, tint.g, tint.b, _transition_rect.color.a)
+	var fade_alpha = 0.95 if dark_mode_enabled else 0.90
+	var fade_duration = max(duration, 0.18)
+	var reveal_duration = max(duration * 0.88, 0.15)
+
 	_is_transitioning = true
 	_transition_rect.mouse_filter = Control.MOUSE_FILTER_STOP
-	# Fade to black
-	var fade_out = create_tween()
-	fade_out.tween_property(_transition_rect, "color:a", 1.0, duration)
+	# Fade to themed tint.
+	var fade_out = create_tween().set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	fade_out.tween_property(_transition_rect, "color:a", fade_alpha, fade_duration)
 	await fade_out.finished
 	# Change scene
 	get_tree().change_scene_to_file(scene_path)
 	# Wait a frame for the new scene to load
 	await get_tree().process_frame
 	await get_tree().process_frame
-	# Fade from black
-	var fade_in = create_tween()
-	fade_in.tween_property(_transition_rect, "color:a", 0.0, duration)
+	# Fade from themed tint.
+	var fade_in = create_tween().set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	fade_in.tween_property(_transition_rect, "color:a", 0.0, reveal_duration)
 	await fade_in.finished
 	_transition_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_is_transitioning = false
@@ -246,30 +266,38 @@ func _save_data() -> void:
 	config.set_value("settings", "dark_mode", dark_mode_enabled)
 	config.save("user://waterwise_save.cfg")
 
+func save_persistent_data() -> void:
+	_save_data()
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # MULTIPLAYER: HOST/JOIN (ENet)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func host_game(port: int = DEFAULT_PORT) -> bool:
 	# Host a LAN multiplayer game
+	if multiplayer.multiplayer_peer:
+		disconnect_multiplayer()
+	_disconnect_multiplayer_callbacks()
 	peer = ENetMultiplayerPeer.new()
 	var error: int = peer.create_server(port, MAX_PLAYERS - 1)
 	
 	if error != OK:
 		print("❌ Failed to create server: ", error)
+		peer = null
 		return false
 	
 	multiplayer.multiplayer_peer = peer
 	is_host = true
 	is_multiplayer_connected = true
 	local_player_num = 1
+	current_game_mode = GameMode.MULTIPLAYER_COOP
 	
 	# Initialize our counter in G-Counter
+	g_counter.clear()
 	g_counter[multiplayer.get_unique_id()] = 0
 	
 	# Connect signals
-	multiplayer.peer_connected.connect(_on_peer_connected)
-	multiplayer.peer_disconnected.connect(_on_peer_disconnected)
+	_connect_multiplayer_callbacks()
 	
 	print("✅ Server created on port ", port)
 	print("🎮 You are Player 1 (Host)")
@@ -277,34 +305,71 @@ func host_game(port: int = DEFAULT_PORT) -> bool:
 
 func join_game(ip: String, port: int = DEFAULT_PORT) -> bool:
 	# Join a LAN multiplayer game
+	if multiplayer.multiplayer_peer:
+		disconnect_multiplayer()
+	_disconnect_multiplayer_callbacks()
 	peer = ENetMultiplayerPeer.new()
 	var error: int = peer.create_client(ip, port)
 	
 	if error != OK:
 		print("❌ Failed to connect: ", error)
+		peer = null
 		return false
 	
 	multiplayer.multiplayer_peer = peer
 	is_host = false
 	local_player_num = 2
+	current_game_mode = GameMode.MULTIPLAYER_COOP
 	
 	# Connect signals
-	multiplayer.connected_to_server.connect(_on_connected_to_server)
-	multiplayer.connection_failed.connect(_on_connection_failed)
-	multiplayer.server_disconnected.connect(_on_server_disconnected)
+	_connect_multiplayer_callbacks()
 	
 	print("🔄 Connecting to ", ip, ":", port)
 	return true
 
 func disconnect_multiplayer() -> void:
 	# Disconnect from multiplayer session
+	_disconnect_multiplayer_callbacks()
+	if peer:
+		peer.close()
 	if multiplayer.multiplayer_peer:
 		multiplayer.multiplayer_peer = null
 	peer = null
 	is_host = false
 	is_multiplayer_connected = false
+	local_player_num = 0
+	session_active = false
 	g_counter.clear()
+	player_modes.clear()
+	multiplayer_game_order.clear()
+	multiplayer_game_index = 0
+	current_multiplayer_game_name = ""
+	_recorded_multiplayer_round_game = ""
 	print("🔌 Disconnected from multiplayer")
+
+func _connect_multiplayer_callbacks() -> void:
+	if not multiplayer.peer_connected.is_connected(_on_peer_connected):
+		multiplayer.peer_connected.connect(_on_peer_connected)
+	if not multiplayer.peer_disconnected.is_connected(_on_peer_disconnected):
+		multiplayer.peer_disconnected.connect(_on_peer_disconnected)
+	if not multiplayer.connected_to_server.is_connected(_on_connected_to_server):
+		multiplayer.connected_to_server.connect(_on_connected_to_server)
+	if not multiplayer.connection_failed.is_connected(_on_connection_failed):
+		multiplayer.connection_failed.connect(_on_connection_failed)
+	if not multiplayer.server_disconnected.is_connected(_on_server_disconnected):
+		multiplayer.server_disconnected.connect(_on_server_disconnected)
+
+func _disconnect_multiplayer_callbacks() -> void:
+	if multiplayer.peer_connected.is_connected(_on_peer_connected):
+		multiplayer.peer_connected.disconnect(_on_peer_connected)
+	if multiplayer.peer_disconnected.is_connected(_on_peer_disconnected):
+		multiplayer.peer_disconnected.disconnect(_on_peer_disconnected)
+	if multiplayer.connected_to_server.is_connected(_on_connected_to_server):
+		multiplayer.connected_to_server.disconnect(_on_connected_to_server)
+	if multiplayer.connection_failed.is_connected(_on_connection_failed):
+		multiplayer.connection_failed.disconnect(_on_connection_failed)
+	if multiplayer.server_disconnected.is_connected(_on_server_disconnected):
+		multiplayer.server_disconnected.disconnect(_on_server_disconnected)
 
 func _on_peer_connected(peer_id: int) -> void:
 	print("✅ Player connected: ", peer_id)
@@ -317,6 +382,10 @@ func _on_peer_connected(peer_id: int) -> void:
 func _on_peer_disconnected(peer_id: int) -> void:
 	print("❌ Player disconnected: ", peer_id)
 	g_counter.erase(peer_id)
+	if current_game_mode == GameMode.MULTIPLAYER_COOP and session_active:
+		session_active = false
+		push_warning("Multiplayer peer disconnected during session. Returning to lobby.")
+		call_deferred("return_to_multiplayer_lobby")
 
 func _on_connected_to_server() -> void:
 	print("✅ Connected to server!")
@@ -327,10 +396,21 @@ func _on_connected_to_server() -> void:
 func _on_connection_failed() -> void:
 	print("❌ Connection failed!")
 	is_multiplayer_connected = false
+	if peer:
+		peer.close()
+	peer = null
+	if multiplayer.multiplayer_peer:
+		multiplayer.multiplayer_peer = null
 
 func _on_server_disconnected() -> void:
 	print("⚠️ Server disconnected!")
 	is_multiplayer_connected = false
+	peer = null
+	if multiplayer.multiplayer_peer:
+		multiplayer.multiplayer_peer = null
+	if current_game_mode == GameMode.MULTIPLAYER_COOP and session_active:
+		session_active = false
+		call_deferred("return_to_multiplayer_lobby")
 
 @rpc("authority", "reliable", "call_local")
 func _sync_game_state(counters: Dictionary, lives: int, diff_mult: float) -> void:
@@ -591,15 +671,42 @@ func get_spawn_interval(base_interval: float) -> float:
 func reset_multiplayer_game() -> void:
 	# Reset state for a new multiplayer round
 	g_counter.clear()
-	g_counter[multiplayer.get_unique_id()] = 0
+	if multiplayer.multiplayer_peer:
+		g_counter[multiplayer.get_unique_id()] = 0
 	team_lives = MAX_TEAM_LIVES
+	session_lives = MAX_TEAM_LIVES
 	rolling_window.clear()
 	difficulty_multiplier = 1.0
 	minigames_played_this_session = 0
+	session_score = 0
+	session_droplets_earned = 0
 	completed_minigames.clear()
+	round_scores.clear()
+	multiplayer_game_order.clear()
+	multiplayer_game_index = 0
+	player_modes.clear()
+	current_multiplayer_game_name = ""
+	_recorded_multiplayer_round_game = ""
 	
 	if is_host:
 		rpc("_sync_game_state", g_counter, team_lives, difficulty_multiplier)
+
+func get_connected_multiplayer_peer_ids() -> Array[int]:
+	var peer_ids: Array[int] = []
+	if multiplayer.multiplayer_peer == null:
+		return peer_ids
+	peer_ids.append(multiplayer.get_unique_id())
+	for peer_id in multiplayer.get_peers():
+		peer_ids.append(peer_id)
+	peer_ids.sort()
+	return peer_ids
+
+func is_multiplayer_session_ready() -> bool:
+	return is_multiplayer_connected and get_connected_multiplayer_peer_ids().size() >= MAX_PLAYERS
+
+@rpc("authority", "call_local", "reliable")
+func _begin_multiplayer_session_rpc() -> void:
+	start_new_session(GameMode.MULTIPLAYER_COOP)
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # MULTIPLAYER MINIGAME PROGRESSION
@@ -621,17 +728,17 @@ var player_modes: Dictionary = {}  # {peer_id: int (1 or 2)}
 func assign_random_modes() -> void:
 	# Randomly assign Mode 1 or Mode 2 to each player
 	player_modes.clear()
-	
-	# Get peer IDs and convert to regular Array for shuffling
-	var peer_ids: Array = []
-	for peer_id in multiplayer.get_peers():
-		peer_ids.append(peer_id)
-	peer_ids.append(multiplayer.get_unique_id())  # Include self
-	
-	# Shuffle the peer IDs
+	var peer_ids: Array[int] = get_connected_multiplayer_peer_ids()
+	if peer_ids.is_empty():
+		return
+
+	# If only one peer is present (debug/testing), force mode 1.
+	if peer_ids.size() == 1:
+		player_modes[peer_ids[0]] = 1
+		return
+
+	# Shuffle and assign alternating roles
 	peer_ids.shuffle()
-	
-	# Assign modes alternating
 	for i in range(peer_ids.size()):
 		player_modes[peer_ids[i]] = (i % 2) + 1  # Alternates between 1 and 2
 	
@@ -642,19 +749,113 @@ func get_my_player_mode() -> int:
 	var my_id = multiplayer.get_unique_id()
 	return player_modes.get(my_id, 1)  # Default to mode 1
 
+func record_multiplayer_round_result(
+	game_name: String,
+	round_time_seconds: float,
+	victory: bool,
+	mistakes: int = 0,
+	best_combo: int = 0
+) -> void:
+	if not is_host:
+		return
+	var round_score: int = max(get_global_score(), 0)
+	rpc(
+		"_apply_multiplayer_round_result",
+		game_name,
+		round_time_seconds,
+		round_score,
+		victory,
+		mistakes,
+		best_combo
+	)
+
+@rpc("authority", "call_local", "reliable")
+func _apply_multiplayer_round_result(
+	game_name: String,
+	round_time_seconds: float,
+	round_score: int,
+	victory: bool,
+	mistakes: int,
+	best_combo: int
+) -> void:
+	if not session_active:
+		return
+
+	var resolved_game_name := game_name
+	if resolved_game_name.is_empty():
+		resolved_game_name = current_multiplayer_game_name
+	if resolved_game_name.is_empty():
+		resolved_game_name = "MultiplayerRound"
+
+	# Guard against duplicate result submissions for the same round.
+	if _recorded_multiplayer_round_game == resolved_game_name:
+		return
+	_recorded_multiplayer_round_game = resolved_game_name
+
+	var clamped_time: float = max(round_time_seconds, 0.0)
+	var clamped_score: int = max(round_score, 0)
+	var clamped_mistakes: int = max(mistakes, 0)
+	var clamped_combo: int = max(best_combo, 0)
+	var accuracy := 0.0
+	if current_minigame_quota > 0:
+		accuracy = clampf(float(clamped_score) / float(current_minigame_quota), 0.0, 1.0)
+
+	add_round_time(clamped_time)
+
+	if not resolved_game_name in completed_minigames:
+		completed_minigames.append(resolved_game_name)
+
+	minigames_played_this_session += 1
+	session_score += clamped_score
+	session_lives = team_lives
+
+	round_scores.append({
+		"game": resolved_game_name,
+		"score": clamped_score,
+		"combo": clamped_combo,
+		"accuracy": accuracy,
+		"mistakes": clamped_mistakes,
+		"reaction_time": int(clamped_time * 1000.0),
+		"victory": victory
+	})
+
+	if PerformanceProfiler:
+		PerformanceProfiler.log_event("multiplayer_round_complete", {
+			"game_name": resolved_game_name,
+			"victory": victory,
+			"round_score": clamped_score,
+			"session_score": session_score,
+			"team_lives": team_lives,
+			"round_time_s": clamped_time,
+		})
+
 @rpc("authority", "call_local", "reliable")
 func _load_next_multiplayer_minigame() -> void:
 	# Load next random multiplayer minigame (loop until lives depleted)
+	if multiplayer.multiplayer_peer == null or not is_multiplayer_connected:
+		push_warning("Multiplayer connection is not active. Returning to lobby.")
+		return_to_multiplayer_lobby()
+		return
+
+	if team_lives <= 0:
+		_show_multiplayer_final_results()
+		return
+
+	if current_game_mode != GameMode.MULTIPLAYER_COOP:
+		current_game_mode = GameMode.MULTIPLAYER_COOP
+	if not session_active:
+		session_active = true
+
 	print("🎮 [Multiplayer] Loading next minigame...")
 	
 	# Reset G-Counter for next round (but keep lives and difficulty)
 	g_counter.clear()
-	for peer_id in multiplayer.get_peers():
+	for peer_id in get_connected_multiplayer_peer_ids():
 		g_counter[peer_id] = 0
-	g_counter[multiplayer.get_unique_id()] = 0
 	
 	# Reset quota to 0 so new game can set it
 	current_minigame_quota = 0
+	_recorded_multiplayer_round_game = ""
 	
 	# Randomly assign modes for the next game
 	assign_random_modes()
@@ -669,6 +870,7 @@ func _load_next_multiplayer_minigame() -> void:
 	# Get next game
 	var game_name: String = multiplayer_game_order[multiplayer_game_index]
 	multiplayer_game_index += 1
+	current_multiplayer_game_name = game_name
 	
 	print("🎯 Next game: ", game_name)
 	print("❤️ Team Lives: ", team_lives)
@@ -677,77 +879,21 @@ func _load_next_multiplayer_minigame() -> void:
 	# Load the scene
 	var game_path: String = "res://scripts/multiplayer/%s.tscn" % game_name
 	if ResourceLoader.exists(game_path):
-		get_tree().change_scene_to_file(game_path)
+		transition_to_scene(game_path, 0.25)
 	else:
 		push_error("❌ Multiplayer minigame scene not found: ", game_path)
+		_show_multiplayer_final_results()
 
 @rpc("authority", "call_local", "reliable")
 func _show_multiplayer_final_results() -> void:
-	# Show final game over screen for multiplayer session
+	# Use the shared final score flow so multiplayer mirrors single-player UX.
 	print("🏁 Multiplayer session ended!")
 	print("   Games Played: ", minigames_played_this_session)
 	print("   Final Difficulty: %.2f" % difficulty_multiplier)
-	print("   Total Score: ", get_global_score())
-	
-	# Create a simple results overlay
-	var tree = get_tree()
-	if not tree:
-		return
-	
-	var root = tree.root
-	var results_screen = Control.new()
-	results_screen.name = "MultiplayerResults"
-	results_screen.set_anchors_preset(Control.PRESET_FULL_RECT)
-	results_screen.z_index = 100
-	
-	# Background
-	var bg = ColorRect.new()
-	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
-	bg.color = Color(0.1, 0.1, 0.2, 0.95)
-	results_screen.add_child(bg)
-	
-	# Center container
-	var center = CenterContainer.new()
-	center.set_anchors_preset(Control.PRESET_FULL_RECT)
-	results_screen.add_child(center)
-	
-	# VBox for results
-	var vbox = VBoxContainer.new()
-	vbox.add_theme_constant_override("separation", 30)
-	center.add_child(vbox)
-	
-	# Title
-	var title = Label.new()
-	title.text = "🏁 SESSION COMPLETE!"
-	title.add_theme_font_size_override("font_size", 72)
-	title.add_theme_color_override("font_color", Color(1, 0.8, 0.3))
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	vbox.add_child(title)
-	
-	# Stats
-	var stats = Label.new()
-	stats.text = "Games Played: %d\nFinal Score: %d\nDifficulty: %.1fx" % [
-		minigames_played_this_session,
-		get_global_score(),
-		difficulty_multiplier
-	]
-	stats.add_theme_font_size_override("font_size", 36)
-	stats.add_theme_color_override("font_color", Color(1, 1, 1))
-	stats.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	vbox.add_child(stats)
-	
-	# Return button
-	var return_btn = Button.new()
-	return_btn.text = "Return to Lobby"
-	return_btn.custom_minimum_size = Vector2(300, 80)
-	return_btn.add_theme_font_size_override("font_size", 28)
-	return_btn.pressed.connect(func():
-		results_screen.queue_free()
-		tree.change_scene_to_file("res://scenes/ui/MultiplayerLobby.tscn")
-	)
-	vbox.add_child(return_btn)
-	
-	root.add_child(results_screen)
+	print("   Session Score: ", session_score)
+
+	all_minigames_completed.emit()
+	_show_final_score()
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # GAME STATE MANAGEMENT
@@ -811,6 +957,11 @@ func start_new_session(mode: GameMode = GameMode.SINGLE_PLAYER) -> void:
 
 func start_next_minigame() -> void:
 	if _story_transition_active:
+		return
+
+	if current_game_mode == GameMode.MULTIPLAYER_COOP:
+		if is_host:
+			rpc("_load_next_multiplayer_minigame")
 		return
 
 	if current_game_mode != GameMode.SINGLE_PLAYER:
@@ -1082,6 +1233,11 @@ func return_to_main_menu() -> void:
 		_save_data()
 	
 	get_tree().change_scene_to_file("res://scenes/ui/InitialScreen.tscn")
+
+func return_to_multiplayer_lobby() -> void:
+	get_tree().paused = false
+	disconnect_multiplayer()
+	transition_to_scene("res://scenes/ui/MultiplayerLobby.tscn", 0.2)
 
 func _show_final_score() -> void:
 	print("🎉 Session complete! Showing final score...")

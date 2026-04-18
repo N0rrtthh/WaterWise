@@ -67,6 +67,22 @@ func _load_translations() -> void:
 			"en": "📝 CONTINUE TO TEST",
 			"tl": "📝 MAGPATULOY SA TEST"
 		},
+		"loading_game": {
+			"en": "Loading game...",
+			"tl": "Naglo-load ng laro..."
+		},
+		"all_character_unlocks_owned": {
+			"en": "All character unlocks owned",
+			"tl": "Nakuha na lahat ng unlock ng character"
+		},
+		"points_to_go": {
+			"en": "%d points to go",
+			"tl": "%d puntos pa"
+		},
+		"initial_highscore_sign": {
+			"en": "HIGHSCORE",
+			"tl": "HIGHSCORE"
+		},
 		
 		# Settings
 		"language": {
@@ -92,6 +108,66 @@ func _load_translations() -> void:
 		"back": {
 			"en": "⬅️ BACK",
 			"tl": "⬅️ BUMALIK"
+		},
+		"exit": {
+			"en": "EXIT",
+			"tl": "UMALIS"
+		},
+		"settings_accessibility_header": {
+			"en": "♿ Accessibility",
+			"tl": "♿ Accessibility / Aksesibilidad"
+		},
+		"settings_colorblind_mode": {
+			"en": "🎨 Colorblind Mode",
+			"tl": "🎨 Colorblind Mode"
+		},
+		"settings_enable": {
+			"en": "Enable",
+			"tl": "I-enable"
+		},
+		"settings_large_touch_targets": {
+			"en": "👆 Large Touch Targets",
+			"tl": "👆 Malalaking Touch Target"
+		},
+		"settings_audio_cues": {
+			"en": "🔊 Audio Cues",
+			"tl": "🔊 Audio Cues"
+		},
+		"settings_haptic_feedback": {
+			"en": "📳 Haptic Feedback",
+			"tl": "📳 Haptic Feedback"
+		},
+		"settings_screen_shake": {
+			"en": "📳 Screen Shake",
+			"tl": "📳 Screen Shake"
+		},
+		"settings_particles_effects": {
+			"en": "✨ Particles/Effects",
+			"tl": "✨ Particle/Epekto"
+		},
+		"settings_dev_mode_header": {
+			"en": "🛠 Dev Mode / Thesis Monitoring",
+			"tl": "🛠 Dev Mode / Thesis Monitoring"
+		},
+		"settings_enable_dev_mode": {
+			"en": "Enable Dev Mode",
+			"tl": "I-enable ang Dev Mode"
+		},
+		"settings_show_iso_profiler": {
+			"en": "Show ISO Profiler (F11)",
+			"tl": "Ipakita ang ISO Profiler (F11)"
+		},
+		"settings_show_algorithm_overlay": {
+			"en": "Show Algorithm Overlay (F12)",
+			"tl": "Ipakita ang Algorithm Overlay (F12)"
+		},
+		"settings_show": {
+			"en": "Show",
+			"tl": "Ipakita"
+		},
+		"settings_dev_note": {
+			"en": "Use toggles on mobile (same as F11/F12 on PC).",
+			"tl": "Gamitin ang toggles sa mobile (kapareho ng F11/F12 sa PC)."
 		},
 		
 		# Instructions
@@ -325,6 +401,34 @@ func _load_translations() -> void:
 			"en": "GAME OVER!",
 			"tl": "TAPOS NA ANG LARO!"
 		},
+		"finalscore_rank": {
+			"en": "Rank: %s",
+			"tl": "Ranggo: %s"
+		},
+		"finalscore_round_row": {
+			"en": "%d. %s | %d pts | x%d",
+			"tl": "%d. %s | %d pts | x%d"
+		},
+		"finalscore_no_rounds_played": {
+			"en": "No rounds played.",
+			"tl": "Walang round na nalaro."
+		},
+		"finalscore_summary_legend": {
+			"en": "Legend pace. Water saved like a pro!",
+			"tl": "Legend ang pacing. Parang pro ang pagtitipid sa tubig!"
+		},
+		"finalscore_summary_solid": {
+			"en": "Solid run. Nice consistency!",
+			"tl": "Solid ang run. Maganda ang consistency!"
+		},
+		"finalscore_summary_good": {
+			"en": "Good effort. Keep building combos!",
+			"tl": "Magandang effort. Ituloy ang pagbuo ng combos!"
+		},
+		"finalscore_summary_rough": {
+			"en": "Rough run. Bounce back next session!",
+			"tl": "Medyo hirap ang run. Bawi sa susunod na session!"
+		},
 		
 		"difficulty_text": {
 			"en": (
@@ -412,6 +516,54 @@ func _load_translations() -> void:
 			"en": "🔄 RETRY",
 			"tl": "🔄 SUBUKAN MULI"
 		},
+		"mini_results_you_earned": {
+			"en": "YOU EARNED",
+			"tl": "NANALO KA NG"
+		},
+		"mini_results_accuracy_line": {
+			"en": "%s: %.0f%%",
+			"tl": "%s: %.0f%%"
+		},
+		"mini_results_time_line": {
+			"en": "%s: %.1fs",
+			"tl": "%s: %.1fs"
+		},
+		"mini_results_mistakes_line": {
+			"en": "%s: %d",
+			"tl": "%s: %d"
+		},
+		"mini_results_difficulty_line": {
+			"en": "%s: %s",
+			"tl": "%s: %s"
+		},
+		"mini_results_accuracy_caps": {
+			"en": "%s  %.0f%%",
+			"tl": "%s  %.0f%%"
+		},
+		"mini_results_mistakes_caps": {
+			"en": "%s  %d",
+			"tl": "%s  %d"
+		},
+		"outcome_nice": {
+			"en": "NICE!",
+			"tl": "AYOS!"
+		},
+		"outcome_oops": {
+			"en": "OOPS!",
+			"tl": "NAKU!"
+		},
+		"cutscene_scene_complete": {
+			"en": "Scene Complete",
+			"tl": "Tapos ang Eksena"
+		},
+		"cutscene_scene_failed": {
+			"en": "Scene Failed",
+			"tl": "Bigo ang Eksena"
+		},
+		"cutscene_outro_stats": {
+			"en": "+%d pts   |   Combo x%d   |   Lives %s",
+			"tl": "+%d pts   |   Combo x%d   |   Buhay %s"
+		},
 		
 		# Difficulty Levels
 		"easy": {
@@ -435,6 +587,10 @@ func _load_translations() -> void:
 		"question_of": {
 			"en": "Question %d of %d",
 			"tl": "Tanong %d ng %d"
+		},
+		"posttest_timer": {
+			"en": "⏱️ Time: %d:%02d",
+			"tl": "⏱️ Oras: %d:%02d"
 		},
 		
 		# Post-Test Results
@@ -494,6 +650,22 @@ func _load_translations() -> void:
 			"en": "Correlation (r)",
 			"tl": "Ugnayan (r)"
 		},
+		"posttest_gameplay_performance_line": {
+			"en": "%s: %d%%",
+			"tl": "%s: %d%%"
+		},
+		"posttest_knowledge_score_line": {
+			"en": "%s: %d%%",
+			"tl": "%s: %d%%"
+		},
+		"posttest_correlation_line": {
+			"en": "%s: %s",
+			"tl": "%s: %s"
+		},
+		"posttest_interpretation_line": {
+			"en": "[CHECK] %s",
+			"tl": "[CHECK] %s"
+		},
 		"export_data": {
 			"en": "📁 EXPORT DATA",
 			"tl": "📁 I-EXPORT ANG DATA"
@@ -525,6 +697,174 @@ func _load_translations() -> void:
 		"coming_soon": {
 			"en": "(Coming Soon)",
 			"tl": "(Malapit Na)"
+		},
+		"apply_look": {
+			"en": "APPLY LOOK",
+			"tl": "I-APPLY ANG LOOK"
+		},
+		"character_status_pick_apply": {
+			"en": "Pick a character, equip accessories, then apply.",
+			"tl": "Pumili ng character, lagyan ng accessory, tapos i-apply."
+		},
+		"character_accessory_of": {
+			"en": "%s's Accessory: %s",
+			"tl": "Accessory ni %s: %s"
+		},
+		"character_ready_customize": {
+			"en": "%s - Ready to customise",
+			"tl": "%s - Handa nang i-customize"
+		},
+		"character_unlock_in_shop": {
+			"en": "Unlock %s in the Shop first",
+			"tl": "I-unlock muna si %s sa Shop"
+		},
+		"character_locked_buy_shop": {
+			"en": "%s - Locked (buy in Shop first)",
+			"tl": "%s - Naka-lock (bilhin muna sa Shop)"
+		},
+		"character_unlock_first": {
+			"en": "Unlock %s first!",
+			"tl": "I-unlock muna si %s!"
+		},
+		"character_buy_accessory_first": {
+			"en": "Buy this accessory in the Shop first!",
+			"tl": "Bilhin muna ang accessory na ito sa Shop!"
+		},
+		"character_now_wears": {
+			"en": "%s now wears %s!",
+			"tl": "Suot na ngayon ni %s ang %s!"
+		},
+		"character_locked_buy_first": {
+			"en": "Character is locked. Buy it in the Shop first.",
+			"tl": "Naka-lock ang character. Bilhin muna ito sa Shop."
+		},
+		"character_saved_main": {
+			"en": "Saved! %s will appear on the main screen.",
+			"tl": "Naka-save! Lalabas si %s sa main screen."
+		},
+		"character_name_droppy_blue": {
+			"en": "Droppy",
+			"tl": "Droppy"
+		},
+		"character_name_pinky": {
+			"en": "Pinky",
+			"tl": "Pinky"
+		},
+		"character_name_minty": {
+			"en": "Minty",
+			"tl": "Minty"
+		},
+		"character_name_sunny": {
+			"en": "Sunny",
+			"tl": "Sunny"
+		},
+		"character_name_lavvy": {
+			"en": "Lavvy",
+			"tl": "Lavvy"
+		},
+		"character_name_peachy": {
+			"en": "Peachy",
+			"tl": "Peachy"
+		},
+		"character_name_cyanny": {
+			"en": "Cyanny",
+			"tl": "Cyanny"
+		},
+		"character_name_coral": {
+			"en": "Coral",
+			"tl": "Coral"
+		},
+		"accessory_default": {
+			"en": "Default",
+			"tl": "Default"
+		},
+		"accessory_sun_hat": {
+			"en": "Sun Hat",
+			"tl": "Sombrerong Pangsikat"
+		},
+		"accessory_cool_shades": {
+			"en": "Cool Shades",
+			"tl": "Cool Shades"
+		},
+		"accessory_party_cap": {
+			"en": "Party Cap",
+			"tl": "Party Cap"
+		},
+		"accessory_leaf_crown": {
+			"en": "Leaf Crown",
+			"tl": "Koronang Dahon"
+		},
+		"accessory_bow": {
+			"en": "Bow",
+			"tl": "Bow"
+		},
+		"accessory_safety_helmet": {
+			"en": "Safety Helmet",
+			"tl": "Safety Helmet"
+		},
+		"shop_title": {
+			"en": "🛍️ SHOP",
+			"tl": "🛍️ TINDAHAN"
+		},
+		"shop_tab_characters": {
+			"en": "👤 Characters",
+			"tl": "👤 Mga Character"
+		},
+		"shop_tab_minigames": {
+			"en": "🎮 Minigames",
+			"tl": "🎮 Mga Minigame"
+		},
+		"shop_tab_accessories": {
+			"en": "🧢 Accessories",
+			"tl": "🧢 Mga Accessory"
+		},
+		"shop_tab_decor": {
+			"en": "🏠 Decor",
+			"tl": "🏠 Dekor"
+		},
+		"shop_owned": {
+			"en": "✅ OWNED",
+			"tl": "✅ PAGMAMAY-ARI"
+		},
+		"shop_unlocked": {
+			"en": "✅ UNLOCKED",
+			"tl": "✅ NAKA-UNLOCK"
+		},
+		"shop_not_enough_drops": {
+			"en": "❌ Not enough drops!",
+			"tl": "❌ Kulang ang patak!"
+		},
+		"shop_accessory_character_hat": {
+			"en": "Character Hat",
+			"tl": "Sombrero ng Character"
+		},
+		"shop_decor_sailboat": {
+			"en": "Sailboat",
+			"tl": "Bangka"
+		},
+		"minigame_pipe_puzzle": {
+			"en": "Pipe Puzzle",
+			"tl": "Pipe Puzzle"
+		},
+		"minigame_water_sorting": {
+			"en": "Water Sort",
+			"tl": "Pag-sort ng Tubig"
+		},
+		"minigame_leak_fix": {
+			"en": "Fix Leaks",
+			"tl": "Ayusin ang mga Tagas"
+		},
+		"minigame_water_quiz": {
+			"en": "Water Quiz",
+			"tl": "Water Quiz"
+		},
+		"minigame_bucket_relay": {
+			"en": "Bucket Relay",
+			"tl": "Bucket Relay"
+		},
+		"minigame_fun_games": {
+			"en": "Fun Games",
+			"tl": "Fun Games"
 		},
 		
 		# Multiplayer / Co-op
@@ -596,6 +936,110 @@ func _load_translations() -> void:
 			"en": "TEAM LIVES",
 			"tl": "BUHAY NG TEAM"
 		},
+		"multiplayer_team_effort": {
+			"en": "TEAM EFFORT!",
+			"tl": "TEAM EFFORT!"
+		},
+		"multiplayer_final_score": {
+			"en": "Final Score: %d",
+			"tl": "Huling Puntos: %d"
+		},
+		"multiplayer_rounds_survived": {
+			"en": "Rounds Survived: %d",
+			"tl": "Mga Round na Nalagpasan: %d"
+		},
+		"multiplayer_p1_contribution": {
+			"en": "Player 1: %d points (%.1f%%)",
+			"tl": "Player 1: %d puntos (%.1f%%)"
+		},
+		"multiplayer_p2_contribution": {
+			"en": "Player 2: %d points (%.1f%%)",
+			"tl": "Player 2: %d puntos (%.1f%%)"
+		},
+		"round_transition_complete": {
+			"en": "ROUND %d COMPLETE!",
+			"tl": "ROUND %d COMPLETE!"
+		},
+		"round_transition_p1_gain": {
+			"en": "Player 1: +%d",
+			"tl": "Player 1: +%d"
+		},
+		"round_transition_p2_gain": {
+			"en": "Player 2: +%d",
+			"tl": "Player 2: +%d"
+		},
+		"round_transition_team_total": {
+			"en": "Team Total: %d",
+			"tl": "Kabuuang Team: %d"
+		},
+		"round_transition_lives": {
+			"en": "Lives: %s",
+			"tl": "Buhay: %s"
+		},
+		"round_transition_rounds_survived": {
+			"en": "Rounds Survived: %d",
+			"tl": "Mga Round na Nalagpasan: %d"
+		},
+		"round_transition_next_round": {
+			"en": "Next Round:\nP1: %s | P2: %s",
+			"tl": "Susunod na Round:\nP1: %s | P2: %s"
+		},
+		"round_transition_countdown": {
+			"en": "Next round in %.0fs...",
+			"tl": "Susunod na round sa %.0fs..."
+		},
+		"debug_status_prefix": {
+			"en": "Status: ",
+			"tl": "Katayuan: "
+		},
+		"debug_ready_connect": {
+			"en": "Ready to connect",
+			"tl": "Handa nang kumonekta"
+		},
+		"debug_creating_server_port": {
+			"en": "Creating server on port %d...",
+			"tl": "Gumagawa ng server sa port %d..."
+		},
+		"debug_server_created_waiting": {
+			"en": "✅ Server created! Waiting for players...",
+			"tl": "✅ Nalikha ang server! Naghihintay ng players..."
+		},
+		"debug_server_create_failed": {
+			"en": "❌ Failed to create server! Check console.",
+			"tl": "❌ Hindi nalikha ang server! Suriin ang console."
+		},
+		"debug_connecting_to": {
+			"en": "Connecting to %s:%d...",
+			"tl": "Kumokonekta sa %s:%d..."
+		},
+		"debug_connecting_short": {
+			"en": "🔄 Connecting...",
+			"tl": "🔄 Kumokonekta..."
+		},
+		"debug_connected_wait_host": {
+			"en": "✅ Connected! Waiting for host to start...",
+			"tl": "✅ Konektado! Hinihintay magsimula ang host..."
+		},
+		"debug_connection_failed_ip_port": {
+			"en": "❌ Connection failed! Check IP/Port.",
+			"tl": "❌ Hindi kumonekta! Suriin ang IP/Port."
+		},
+		"debug_connect_failed_console": {
+			"en": "❌ Failed to connect! Check console.",
+			"tl": "❌ Hindi nakakonekta! Suriin ang console."
+		},
+		"debug_player2_connected_ready": {
+			"en": "✅ Player 2 connected! Ready to start.",
+			"tl": "✅ Konektado si Player 2! Handa nang magsimula."
+		},
+		"debug_starting_multiplayer": {
+			"en": "🎮 Starting multiplayer game...",
+			"tl": "🎮 Sinisimulan ang multiplayer game..."
+		},
+		"debug_copied_clipboard": {
+			"en": "📋 Debug info copied to clipboard!",
+			"tl": "📋 Nakopya ang debug info sa clipboard!"
+		},
 		"team_wins": {
 			"en": "🎉 TEAM WINS!",
 			"tl": "🎉 PANALO ANG TEAM!"
@@ -611,76 +1055,112 @@ func _load_translations() -> void:
 			"tl": "🗺️ PAGLALAKBAY"
 		},
 		"roadmap_title": {
-			"en": "💧 Water Conservation Journey",
-			"tl": "💧 Paglalakbay sa Pagtitipid ng Tubig"
+			"en": "🗺️ WATER JOURNEY",
+			"tl": "🗺️ WATER JOURNEY"
 		},
 		"stage_locked": {
 			"en": "🔒 LOCKED",
 			"tl": "🔒 NAKA-LOCK"
 		},
+		"roadmap_stage_locked": {
+			"en": "🔒 This stage is still locked.",
+			"tl": "🔒 Naka-lock pa ang stage na ito."
+		},
+		"roadmap_included_minigames": {
+			"en": "Included mini-games",
+			"tl": "Kasamang mga minigame"
+		},
+		"roadmap_how_to_play_preview": {
+			"en": "How to play (animated preview)",
+			"tl": "Paano laruin (animated preview)"
+		},
+		"roadmap_close": {
+			"en": "CLOSE",
+			"tl": "ISARA"
+		},
+		"roadmap_no_minigame_data": {
+			"en": "No mini-game data",
+			"tl": "Walang data ng minigame"
+		},
+		"roadmap_no_tutorial_info": {
+			"en": "No tutorial information available yet.",
+			"tl": "Wala pang tutorial information sa ngayon."
+		},
+		"roadmap_default_instruction_hint": {
+			"en": "Follow on-screen controls to conserve water effectively.",
+			"tl": "Sundin ang controls sa screen para epektibong makatipid ng tubig."
+		},
+		"roadmap_progress_completed": {
+			"en": "%d/%d Completed",
+			"tl": "%d/%d Tapos"
+		},
+		"roadmap_scroll_to_explore": {
+			"en": "↕️ Scroll to explore",
+			"tl": "↕️ Mag-scroll para mag-explore"
+		},
 		"stage_1_title": {
-			"en": "💧 Start",
-			"tl": "💧 Simula"
+			"en": "💧 Water Drop Village",
+			"tl": "💧 Water Drop Village"
 		},
 		"stage_1_desc": {
-			"en": "Begin your water-saving journey!",
-			"tl": "Simulan ang iyong paglalakbay!"
+			"en": "Learn the basics of water conservation",
+			"tl": "Alamin ang mga batayan ng pagtitipid ng tubig"
 		},
 		"stage_2_title": {
-			"en": "🍚 Rice Wash",
-			"tl": "🍚 Hugas-Bigas"
+			"en": "🔧 Pipe Puzzle District",
+			"tl": "🔧 Pipe Puzzle District"
 		},
 		"stage_2_desc": {
-			"en": "Learn to reuse rice wash water",
-			"tl": "Matutong gamitin muli ang hugas-bigas"
+			"en": "Trace and repair the water network",
+			"tl": "Sundan at ayusin ang network ng tubig"
 		},
 		"stage_3_title": {
-			"en": "🥬 Veggie Bath",
-			"tl": "🥬 Hugas Gulay"
+			"en": "🧪 Water Sorting Lab",
+			"tl": "🧪 Water Sorting Lab"
 		},
 		"stage_3_desc": {
-			"en": "Wash vegetables efficiently",
-			"tl": "Hugasan ang gulay nang tama"
+			"en": "Sort clean and reusable water correctly",
+			"tl": "Ihiwalay nang tama ang malinis at reusable na tubig"
 		},
 		"stage_4_title": {
-			"en": "♻️ Greywater",
-			"tl": "♻️ Greywater"
+			"en": "🚿 Leak Fix Zone",
+			"tl": "🚿 Leak Fix Zone"
 		},
 		"stage_4_desc": {
-			"en": "Sort water for reuse",
-			"tl": "Pagbukud-bukurin ang tubig"
+			"en": "Stop waste in daily home routines",
+			"tl": "Pigilan ang aksaya sa pang-araw-araw na gawain"
 		},
 		"stage_5_title": {
-			"en": "👕 Wring Out",
-			"tl": "👕 Pigain"
+			"en": "❓ Water Wisdom Corner",
+			"tl": "❓ Water Wisdom Corner"
 		},
 		"stage_5_desc": {
-			"en": "Save laundry water",
-			"tl": "Tipirin ang tubig sa labahan"
+			"en": "Use quick thinking for water-saving choices",
+			"tl": "Gamitin ang mabilis na pag-iisip sa pagtitipid ng tubig"
 		},
 		"stage_6_title": {
-			"en": "🌱 Thirsty Plant",
-			"tl": "🌱 Uhaw na Halaman"
+			"en": "🪣 Bucket Relay Park",
+			"tl": "🪣 Bucket Relay Park"
 		},
 		"stage_6_desc": {
-			"en": "Water plants wisely",
-			"tl": "Diligan ang halaman nang tama"
+			"en": "Teamwork and timing save every drop",
+			"tl": "Teamwork at timing ang susi sa bawat patak"
 		},
 		"stage_7_title": {
-			"en": "🌧️ Catch Rain",
-			"tl": "🌧️ Saluhin ang Ulan"
+			"en": "🎉 Fun Games Pier",
+			"tl": "🎉 Fun Games Pier"
 		},
 		"stage_7_desc": {
-			"en": "Harvest rainwater",
-			"tl": "Mag-ipon ng tubig-ulan"
+			"en": "Bonus challenges for mastery and memory",
+			"tl": "Bonus challenges para sa mastery at memory"
 		},
 		"stage_8_title": {
-			"en": "🪣 Cover Drum",
-			"tl": "🪣 Takpan ang Drum"
+			"en": "🏆 Waterville Champion Path",
+			"tl": "🏆 Waterville Champion Path"
 		},
 		"stage_8_desc": {
-			"en": "Protect stored water",
-			"tl": "Protektahan ang naka-imbak na tubig"
+			"en": "Combine all your water-saving skills",
+			"tl": "Pagsamahin ang lahat ng water-saving skills mo"
 		},
 		"stage_9_title": {
 			"en": "🏆 Master",

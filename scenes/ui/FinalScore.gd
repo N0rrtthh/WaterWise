@@ -15,6 +15,31 @@ extends Control
 var _droplet: Node2D = null
 
 
+func _loc(key: String, fallback: String) -> String:
+	if Localization:
+		var translated = Localization.get_text(key)
+		if translated != key:
+			return translated
+	return fallback
+
+
+func _fmt_loc(key: String, fallback: String, values: Array) -> String:
+	var pattern = _loc(key, fallback)
+	if values.is_empty():
+		return pattern
+	if values.size() == 1:
+		return pattern % values[0]
+	return pattern % values
+
+
+func _should_show_particles() -> bool:
+	if AccessibilityManager and AccessibilityManager.has_method("should_show_particles"):
+		return AccessibilityManager.should_show_particles()
+	if SaveManager and SaveManager.has_method("is_particles_enabled"):
+		return SaveManager.is_particles_enabled()
+	return true
+
+
 func _ready() -> void:
 	var total = GameManager.session_score if GameManager else 0
 	var high = GameManager.high_score if GameManager else 0
@@ -26,14 +51,11 @@ func _ready() -> void:
 	_build_mascot(total, rounds)
 	_build_round_breakdown(rounds)
 	_animate_entrance(total, is_record)
+	continue_btn.text = _loc("continue", "CONTINUE")
 
 	new_record_label.visible = is_record
 	if is_record:
-		new_record_label.text = (
-			Localization.get_text("new_high_score")
-			if Localization
-			else "NEW HIGH SCORE!"
-		)
+		new_record_label.text = _loc("new_high_score", "NEW HIGH SCORE!")
 		_animate_record_label()
 		_spawn_confetti(12)
 	else:
@@ -62,9 +84,9 @@ func _build_bg(is_record: bool) -> void:
 # ── Labels ──────────────────────────────────────────────────────────
 
 func _init_labels(_total: int, high: int) -> void:
-	var score_key = Localization.get_text("total_score") if Localization else "TOTAL SCORE"
+	var score_key = _loc("total_score", "TOTAL SCORE")
 	total_score_label.text = "%s: 0" % score_key
-	var hs_key = Localization.get_text("high_score") if Localization else "HIGH SCORE"
+	var hs_key = _loc("high_score", "HIGH SCORE")
 	high_score_label.text = "%s: %d" % [hs_key, high]
 
 
@@ -83,7 +105,7 @@ func _animate_entrance(total: int, _is_record: bool) -> void:
 	).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_BACK)
 
 	# Score count-up
-	var score_key = Localization.get_text("total_score") if Localization else "TOTAL SCORE"
+	var score_key = _loc("total_score", "TOTAL SCORE")
 	var count = create_tween()
 	count.tween_interval(0.6)
 	count.tween_method(
@@ -126,6 +148,9 @@ func _animate_record_label() -> void:
 # ── Confetti (lightweight: ColorRect, no GPU particles) ────────────
 
 func _spawn_confetti(count: int) -> void:
+	if not _should_show_particles():
+		return
+
 	var vp = get_viewport_rect().size
 	var colors := [
 		Color(1, 0.85, 0.2, 0.85),
@@ -284,7 +309,7 @@ func _build_round_breakdown(rounds: Array) -> void:
 	var rank = _compute_rank(total)
 
 	var rank_lbl = Label.new()
-	rank_lbl.text = "Rank: %s" % rank
+	rank_lbl.text = _fmt_loc("finalscore_rank", "Rank: %s", [rank])
 	rank_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	rank_lbl.add_theme_font_size_override("font_size", 40)
 	rank_lbl.add_theme_color_override("font_color", _rank_color(rank))
@@ -304,12 +329,12 @@ func _build_round_breakdown(rounds: Array) -> void:
 	for i in range(show_count):
 		var row = rounds[i]
 		var lbl = Label.new()
-		lbl.text = "%d. %s | %d pts | x%d" % [
+		lbl.text = _fmt_loc("finalscore_round_row", "%d. %s | %d pts | x%d", [
 			i + 1,
 			str(row.get("game", "?")),
 			int(row.get("score", 0)),
 			int(row.get("combo", 0)),
-		]
+		])
 		lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		lbl.add_theme_font_size_override("font_size", 18)
 		lbl.add_theme_color_override("font_color", Color(0.85, 0.9, 1))
@@ -341,15 +366,18 @@ func _rank_color(rank: String) -> Color:
 
 func _summary_line(score: int, rounds: Array) -> String:
 	if rounds.is_empty():
-		return "No rounds played."
+		return _loc("finalscore_no_rounds_played", "No rounds played.")
 	var avg = float(score) / float(rounds.size())
 	if avg >= 120.0:
-		return "Legend pace. Water saved like a pro!"
+		return _loc(
+			"finalscore_summary_legend",
+			"Legend pace. Water saved like a pro!"
+		)
 	if avg >= 80.0:
-		return "Solid run. Nice consistency!"
+		return _loc("finalscore_summary_solid", "Solid run. Nice consistency!")
 	if avg >= 40.0:
-		return "Good effort. Keep building combos!"
-	return "Rough run. Bounce back next session!"
+		return _loc("finalscore_summary_good", "Good effort. Keep building combos!")
+	return _loc("finalscore_summary_rough", "Rough run. Bounce back next session!")
 
 
 func _on_continue() -> void:
@@ -364,6 +392,14 @@ func _on_continue() -> void:
 		tw.parallel().tween_property(_droplet, "scale", Vector2(1.3, 0.5), 0.15)
 		tw.parallel().tween_property(_droplet, "modulate:a", 0.0, 0.25)
 	if GameManager:
+		if GameManager.current_game_mode == GameManager.GameMode.MULTIPLAYER_COOP:
+			if NetworkManager and NetworkManager.has_method("disconnect_multiplayer"):
+				NetworkManager.disconnect_multiplayer()
+			if GameManager.has_method("return_to_multiplayer_lobby"):
+				GameManager.return_to_multiplayer_lobby()
+			else:
+				GameManager.transition_to_scene("res://scenes/ui/MultiplayerLobby.tscn")
+			return
 		GameManager.transition_to_scene("res://scenes/ui/InitialScreen.tscn")
 	else:
 		get_tree().change_scene_to_file("res://scenes/ui/InitialScreen.tscn")

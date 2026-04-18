@@ -156,17 +156,17 @@ layout_mode = 2
 theme_override_font_sizes/font_size = 34
 text = "🗺️"
 
-[node name="SettingsButton" type="Button" parent="UI/TopRight"]
-custom_minimum_size = Vector2(70, 70)
-layout_mode = 2
-theme_override_font_sizes/font_size = 32
-text = "⚙️"
-
 [node name="CustomizeButton" type="Button" parent="UI/TopRight"]
 custom_minimum_size = Vector2(70, 70)
 layout_mode = 2
 theme_override_font_sizes/font_size = 32
 text = "👤"
+
+[node name="SettingsButton" type="Button" parent="UI/TopRight"]
+custom_minimum_size = Vector2(70, 70)
+layout_mode = 2
+theme_override_font_sizes/font_size = 32
+text = "⚙️"
 
 [node name="HighscorePanel" type="Panel" parent="UI"]
 visible = false

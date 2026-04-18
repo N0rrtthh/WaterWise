@@ -738,6 +738,13 @@ func _schedule_particle_effect(particle: CutsceneDataModels.ParticleEffect) -> v
 		return
 	_scheduled_timers.append(timer)
 	await timer.timeout
+
+	if AccessibilityManager and AccessibilityManager.has_method("should_show_particles"):
+		if not AccessibilityManager.should_show_particles():
+			return
+	elif SaveManager and SaveManager.has_method("is_particles_enabled"):
+		if not SaveManager.is_particles_enabled():
+			return
 	
 	# Spawn particle effect with adaptive density using object pool
 	if is_instance_valid(_current_character):

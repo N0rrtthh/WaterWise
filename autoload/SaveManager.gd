@@ -18,6 +18,7 @@ extends Node
 signal data_loaded()
 signal data_saved()
 signal achievement_unlocked(achievement_id: String)
+signal setting_changed(key: String, value: Variant)
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # CONSTANTS
@@ -111,6 +112,7 @@ var settings: Dictionary = {
 	"audio_cues": true,
 	"screen_shake": true,
 	"particles": true,
+	"fullscreen": true,
 	"show_hints": true,
 	"haptics_enabled": true,
 	"auto_difficulty": true,
@@ -130,6 +132,7 @@ var session_start_time: int = 0
 
 func _ready() -> void:
 	load_all_data()
+	_apply_fullscreen_setting()
 	session_start_time = int(Time.get_unix_time_from_system())
 	_ensure_accessory_defaults()
 	
@@ -540,6 +543,9 @@ func record_difficulty_reached(difficulty: String) -> void:
 func set_setting(key: String, value: Variant) -> void:
 	settings[key] = value
 	_save_settings()
+	if key == "fullscreen":
+		_apply_fullscreen_setting()
+	setting_changed.emit(key, value)
 
 func get_setting(key: String, default: Variant = null) -> Variant:
 	return settings.get(key, default)
@@ -558,6 +564,26 @@ func is_screen_shake_enabled() -> bool:
 
 func is_particles_enabled() -> bool:
 	return settings.particles
+
+func is_fullscreen_enabled() -> bool:
+	return bool(settings.get("fullscreen", true))
+
+func _apply_fullscreen_setting() -> void:
+	# Mobile platforms are already fullscreen by design.
+	if OS.get_name() in ["Android", "iOS"]:
+		return
+
+	var wants_fullscreen = is_fullscreen_enabled()
+	var mode = DisplayServer.window_get_mode()
+	var is_fullscreen_mode = (
+		mode == DisplayServer.WINDOW_MODE_FULLSCREEN
+		or mode == DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN
+	)
+
+	if wants_fullscreen and not is_fullscreen_mode:
+		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
+	elif not wants_fullscreen and is_fullscreen_mode:
+		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # STATISTICS
