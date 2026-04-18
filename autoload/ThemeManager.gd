@@ -63,7 +63,7 @@ func set_dark_mode(enabled: bool) -> void:
 		theme_changed.emit(enabled)
 
 func get_color(color_name: String) -> Color:
-	"""Get a color from the current palette"""
+	# Get a color from the current palette.
 	var palette: Dictionary = DARK_PALETTE if is_dark_mode() else LIGHT_PALETTE
 	if palette.has(color_name):
 		return palette[color_name]
@@ -71,7 +71,7 @@ func get_color(color_name: String) -> Color:
 	return Color.WHITE
 
 func get_palette() -> Dictionary:
-	"""Get the current color palette"""
+	# Get the current color palette.
 	return DARK_PALETTE if is_dark_mode() else LIGHT_PALETTE
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -79,12 +79,12 @@ func get_palette() -> Dictionary:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func apply_to_label(label: Label, is_primary: bool = true) -> void:
-	"""Apply theme colors to a Label"""
+	# Apply theme colors to a Label.
 	var color := get_color("text_primary") if is_primary else get_color("text_secondary")
 	label.add_theme_color_override("font_color", color)
 
 func apply_to_button(button: Button) -> void:
-	"""Apply theme colors to a Button"""
+	# Apply theme colors to a Button.
 	var normal_style := StyleBoxFlat.new()
 	normal_style.bg_color = get_color("button_bg")
 	normal_style.corner_radius_top_left = 12
@@ -110,7 +110,7 @@ func apply_to_button(button: Button) -> void:
 	button.add_theme_color_override("font_pressed_color", get_color("button_text"))
 
 func apply_to_panel(panel: PanelContainer) -> void:
-	"""Apply theme colors to a PanelContainer"""
+	# Apply theme colors to a PanelContainer.
 	var style := StyleBoxFlat.new()
 	style.bg_color = get_color("panel")
 	style.border_color = get_color("panel_border")
@@ -130,7 +130,7 @@ func apply_to_panel(panel: PanelContainer) -> void:
 	panel.add_theme_stylebox_override("panel", style)
 
 func apply_to_background(control: Control) -> void:
-	"""Apply theme background color to a Control via ColorRect child"""
+	# Apply theme background color to a Control via ColorRect child.
 	var bg_rect := control.get_node_or_null("Background") as ColorRect
 	if bg_rect:
 		bg_rect.color = get_color("background")
@@ -140,7 +140,7 @@ func apply_to_background(control: Control) -> void:
 			control.color = get_color("background")
 
 func apply_to_control(control: Control) -> void:
-	"""Auto-detect control type and apply appropriate theme"""
+	# Auto-detect control type and apply appropriate theme.
 	if control is Label:
 		apply_to_label(control as Label, true)
 	elif control is Button:
@@ -151,8 +151,13 @@ func apply_to_control(control: Control) -> void:
 		control.color = get_color("background")
 
 func apply_to_tree(root: Control) -> void:
-	"""Recursively apply theme to all children of a control"""
+	# Recursively apply theme to all children of a control.
 	apply_to_control(root)
 	for child in root.get_children():
 		if child is Control:
 			apply_to_tree(child)
+
+
+func apply_theme(root: Control) -> void:
+	# Backward-compatible alias for screens that call apply_theme.
+	apply_to_tree(root)
