@@ -22,13 +22,20 @@ var anim_options: Dictionary = {
 }
 var _current_game_key: String = ""
 
+func _loc(key: String, fallback: String) -> String:
+	if Localization:
+		var translated = Localization.get_text(key)
+		if translated != key:
+			return translated
+	return fallback
+
 func _ready() -> void:
 	_ensure_cinematic_nodes()
 	_rebuild_animation()
 
 func configure(
 	title: String,
-	subtitle: String = "Get ready...",
+	subtitle: String = "",
 	options: Dictionary = {}
 ) -> void:
 	_ensure_cinematic_nodes()
@@ -1532,30 +1539,57 @@ func _prettify_title(raw: String) -> String:
 	return result
 
 func _get_game_instruction(title: String) -> String:
-	var instructions = {
-		"CatchTheRain": "Tap the falling drops!",
-		"FixLeak": "Find and seal the leaks!",
-		"PlugTheLeak": "Plug the pipe fast!",
-		"FilterBuilder": "Stack the filter layers!",
-		"QuickShower": "Finish before time runs out!",
-		"CoverTheDrum": "Cover it before contamination!",
-		"RiceWashRescue": "Save the rice water!",
-		"VegetableBath": "Rinse veggies efficiently!",
-		"GreywaterSorter": "Sort the water streams!",
-		"WringItOut": "Squeeze every last drop!",
-		"ThirstyPlant": "Water just the right amount!",
-		"MudPieMaker": "Mix the perfect ratio!",
-		"SpotTheSpeck": "Find all the particles!",
-		"WaterPlant": "Water with precision!",
-		"SwipeTheSoap": "Swipe fast, save water!",
-		"ToiletTankFix": "Calibrate the flush!",
-		"TracePipePath": "Follow the pipe route!",
-		"ScrubToSave": "Scrub smart, not wet!",
-		"BucketBrigade": "Pass the buckets!",
-		"TimingTap": "Tap on the beat!",
-		"TurnOffTap": "Cut the flow on time!",
-	}
-	return instructions.get(title, "Get ready...")
+	match title:
+		"CatchTheRain":
+			return _loc("intro_instruction_catch_the_rain", "Tap the falling drops!")
+		"FixLeak":
+			return _loc("intro_instruction_fix_leak", "Find and seal the leaks!")
+		"PlugTheLeak":
+			return _loc("intro_instruction_plug_the_leak", "Plug the pipe fast!")
+		"FilterBuilder":
+			return _loc("intro_instruction_filter_builder", "Stack the filter layers!")
+		"QuickShower":
+			return _loc("intro_instruction_quick_shower", "Finish before time runs out!")
+		"CoverTheDrum":
+			return _loc(
+				"intro_instruction_cover_the_drum",
+				"Cover it before contamination!"
+			)
+		"RiceWashRescue":
+			return _loc("intro_instruction_rice_wash_rescue", "Save the rice water!")
+		"VegetableBath":
+			return _loc("intro_instruction_vegetable_bath", "Rinse veggies efficiently!")
+		"GreywaterSorter":
+			return _loc("intro_instruction_greywater_sorter", "Sort the water streams!")
+		"WringItOut":
+			return _loc("intro_instruction_wring_it_out", "Squeeze every last drop!")
+		"ThirstyPlant":
+			return _loc(
+				"intro_instruction_thirsty_plant",
+				"Water just the right amount!"
+			)
+		"MudPieMaker":
+			return _loc("intro_instruction_mud_pie_maker", "Mix the perfect ratio!")
+		"SpotTheSpeck":
+			return _loc("intro_instruction_spot_the_speck", "Find all the particles!")
+		"WaterPlant":
+			return _loc("intro_instruction_water_plant", "Water with precision!")
+		"SwipeTheSoap":
+			return _loc("intro_instruction_swipe_the_soap", "Swipe fast, save water!")
+		"ToiletTankFix":
+			return _loc("intro_instruction_toilet_tank_fix", "Calibrate the flush!")
+		"TracePipePath":
+			return _loc("intro_instruction_trace_pipe_path", "Follow the pipe route!")
+		"ScrubToSave":
+			return _loc("intro_instruction_scrub_to_save", "Scrub smart, not wet!")
+		"BucketBrigade":
+			return _loc("intro_instruction_bucket_brigade", "Pass the buckets!")
+		"TimingTap":
+			return _loc("intro_instruction_timing_tap", "Tap on the beat!")
+		"TurnOffTap":
+			return _loc("intro_instruction_turn_off_tap", "Cut the flow on time!")
+		_:
+			return _loc("intro_instruction_default", "Get ready...")
 
 func _get_theme_color_for_title(title: String) -> Color:
 	if "Rain" in title or "Catch" in title:

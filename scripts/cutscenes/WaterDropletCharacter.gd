@@ -158,6 +158,13 @@ func apply_squash_stretch(squash: float, stretch: float) -> void:
 ## @param duration: How long the particles should emit (0 = one-shot)
 ## @return: The spawned particle node, or null if failed
 func spawn_particles(effect_type: CutsceneTypes.ParticleType, duration: float = 1.0) -> Node:
+	if AccessibilityManager and AccessibilityManager.has_method("should_show_particles"):
+		if not AccessibilityManager.should_show_particles():
+			return null
+	elif SaveManager and SaveManager.has_method("is_particles_enabled"):
+		if not SaveManager.is_particles_enabled():
+			return null
+
 	if not particle_container:
 		push_warning("[WaterDropletCharacter] Particle container not found. Skipping particle effect.")
 		return null

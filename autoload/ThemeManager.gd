@@ -9,6 +9,15 @@ extends Node
 
 signal theme_changed(is_dark: bool)
 
+# Global full-screen tint colors. Dark mode is intentionally cool-toned,
+# not pure black, so the game remains colorful while still distinct.
+const LIGHT_SCENE_TINT := Color(1.0, 0.97, 0.88, 0.06)
+const DARK_SCENE_TINT := Color(0.30, 0.45, 0.68, 0.18)
+
+var _theme_tint_layer: CanvasLayer
+var _theme_tint_rect: ColorRect
+var _theme_tint_tween: Tween
+
 # Color palettes
 const LIGHT_PALETTE := {
 	"background": Color(0.95, 0.97, 1.0),  # Light blue-white
@@ -26,18 +35,19 @@ const LIGHT_PALETTE := {
 }
 
 const DARK_PALETTE := {
-	"background": Color(0.1, 0.12, 0.18),  # Dark blue
-	"panel": Color(0.15, 0.18, 0.25, 0.95),
-	"panel_border": Color(0.3, 0.35, 0.45),
-	"text_primary": Color(0.95, 0.95, 0.97),
-	"text_secondary": Color(0.7, 0.72, 0.75),
-	"accent": Color(0.4, 0.75, 1.0),  # Lighter water blue
-	"accent_hover": Color(0.5, 0.85, 1.0),
-	"button_bg": Color(0.3, 0.55, 0.8),
+	# Deliberately colorful moonlight palette (not near-black).
+	"background": Color(0.27, 0.33, 0.48),
+	"panel": Color(0.24, 0.39, 0.56, 0.95),
+	"panel_border": Color(0.52, 0.70, 0.86),
+	"text_primary": Color(0.96, 0.98, 1.0),
+	"text_secondary": Color(0.83, 0.90, 0.96),
+	"accent": Color(0.35, 0.82, 1.0),
+	"accent_hover": Color(0.48, 0.90, 1.0),
+	"button_bg": Color(0.22, 0.64, 0.88),
 	"button_text": Color(1.0, 1.0, 1.0),
-	"success": Color(0.3, 0.9, 0.5),
-	"error": Color(1.0, 0.4, 0.4),
-	"warning": Color(1.0, 0.8, 0.3)
+	"success": Color(0.52, 0.93, 0.62),
+	"error": Color(1.0, 0.55, 0.60),
+	"warning": Color(1.0, 0.84, 0.42)
 }
 
 # Mini-game visual themes (bright, kid-friendly, and readable)
@@ -117,26 +127,33 @@ const MINIGAME_THEME_KEYWORDS: Array[Dictionary] = [
 const DEFAULT_MINIGAME_THEME_ID := "aqua_blue"
 
 func _ready() -> void:
+	_ensure_theme_tint_layer()
+	if not theme_changed.is_connected(_on_theme_changed):
+		theme_changed.connect(_on_theme_changed)
+
 	# Apply saved theme on startup
 	call_deferred("_apply_initial_theme")
 
 func _apply_initial_theme() -> void:
-	if GameManager and GameManager.dark_mode_enabled:
-		theme_changed.emit(true)
+	theme_changed.emit(is_dark_mode())
 
 func is_dark_mode() -> bool:
 	return GameManager.dark_mode_enabled if GameManager else false
 
 func toggle_theme() -> void:
-	if GameManager:
-		GameManager.dark_mode_enabled = not GameManager.dark_mode_enabled
-		theme_changed.emit(GameManager.dark_mode_enabled)
-		print("🎨 Theme toggled: ", "Dark" if GameManager.dark_mode_enabled else "Light")
+	set_dark_mode(not is_dark_mode())
+	print("Theme toggled: ", "Dark" if is_dark_mode() else "Light")
 
 func set_dark_mode(enabled: bool) -> void:
 	if GameManager:
 		GameManager.dark_mode_enabled = enabled
-		theme_changed.emit(enabled)
+		_persist_theme_preference()
+	theme_changed.emit(enabled)
+
+
+func _persist_theme_preference() -> void:
+	if GameManager and GameManager.has_method("save_persistent_data"):
+		GameManager.save_persistent_data()
 
 func get_color(color_name: String) -> Color:
 	# Get a color from the current palette.
@@ -170,10 +187,15 @@ func get_minigame_theme_id_for_name(minigame_name: String) -> String:
 
 func get_minigame_theme_for_name(minigame_name: String) -> Dictionary:
 	var theme_id = get_minigame_theme_id_for_name(minigame_name)
-	return MINIGAME_THEME_PALETTES.get(
+	var base_theme: Dictionary = MINIGAME_THEME_PALETTES.get(
 		theme_id,
 		MINIGAME_THEME_PALETTES[DEFAULT_MINIGAME_THEME_ID]
 	)
+
+	if not is_dark_mode():
+		return base_theme
+
+	return _build_dark_mode_minigame_variant(base_theme)
 
 
 func _normalize_minigame_theme_key(raw_text: String) -> String:
@@ -182,6 +204,64 @@ func _normalize_minigame_theme_key(raw_text: String) -> String:
 	t = t.replace("-", "")
 	t = t.replace(" ", "")
 	return t
+
+
+func _build_dark_mode_minigame_variant(base_theme: Dictionary) -> Dictionary:
+	var variant: Dictionary = base_theme.duplicate(true)
+
+	var primary: Color = variant.get("bg_primary", Color(0.73, 0.90, 0.99, 1.0))
+	var secondary: Color = variant.get("bg_secondary", Color(0.56, 0.79, 0.95, 1.0))
+	var wash: Color = variant.get("bg_wash", Color(0.86, 0.95, 1.0, 0.32))
+	var tint_modulate: Color = variant.get("tint_modulate", Color(1.0, 1.0, 1.0, 1.0))
+
+	var cool_primary := Color(0.34, 0.46, 0.67, 1.0)
+	var cool_secondary := Color(0.26, 0.38, 0.58, 1.0)
+	var cool_wash := Color(0.62, 0.77, 0.96, wash.a)
+
+	variant["bg_primary"] = primary.lerp(cool_primary, 0.46)
+	variant["bg_secondary"] = secondary.lerp(cool_secondary, 0.40)
+
+	var updated_wash = wash.lerp(cool_wash, 0.34)
+	updated_wash.a = min(0.40, wash.a + 0.05)
+	variant["bg_wash"] = updated_wash
+
+	variant["tint_modulate"] = tint_modulate.lerp(Color(0.86, 0.93, 1.0, 1.0), 0.62)
+	variant["scene_blend"] = clamp(float(base_theme.get("scene_blend", 0.24)) + 0.06, 0.0, 0.50)
+	return variant
+
+
+func _on_theme_changed(is_dark: bool) -> void:
+	_ensure_theme_tint_layer()
+	var target_tint: Color = DARK_SCENE_TINT if is_dark else LIGHT_SCENE_TINT
+	_apply_theme_tint(target_tint)
+
+
+func _ensure_theme_tint_layer() -> void:
+	if _theme_tint_layer and is_instance_valid(_theme_tint_layer):
+		return
+
+	_theme_tint_layer = CanvasLayer.new()
+	_theme_tint_layer.name = "ThemeTintLayer"
+	_theme_tint_layer.layer = 95
+	add_child(_theme_tint_layer)
+
+	_theme_tint_rect = ColorRect.new()
+	_theme_tint_rect.name = "ThemeTint"
+	_theme_tint_rect.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_theme_tint_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_theme_tint_rect.color = LIGHT_SCENE_TINT
+	_theme_tint_layer.add_child(_theme_tint_rect)
+
+
+func _apply_theme_tint(target_tint: Color) -> void:
+	if not _theme_tint_rect:
+		return
+
+	if _theme_tint_tween and _theme_tint_tween.is_valid():
+		_theme_tint_tween.kill()
+
+	_theme_tint_tween = create_tween().set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	_theme_tint_tween.tween_property(_theme_tint_rect, "color", target_tint, 0.25)
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # HELPER METHODS FOR UI ELEMENTS
@@ -252,6 +332,8 @@ func apply_to_control(control: Control) -> void:
 	# Auto-detect control type and apply appropriate theme.
 	if control is Label:
 		apply_to_label(control as Label, true)
+	elif control is CheckBox or control is CheckButton:
+		control.add_theme_color_override("font_color", get_color("text_primary"))
 	elif control is Button:
 		apply_to_button(control as Button)
 	elif control is PanelContainer:

@@ -456,8 +456,12 @@ func _on_team_won() -> void:
 		timer_sync_timer.stop()
 	if _is_host() and GameManager:
 		var time_sec = float(Time.get_ticks_msec() - round_start_time) / 1000.0
-		GameManager.add_round_time(time_sec)
-		GameManager.minigames_played_this_session += 1
+		if GameManager.has_method("record_multiplayer_round_result"):
+			GameManager.record_multiplayer_round_result(
+				"MiniGame_GreywaterSort",
+				time_sec,
+				true
+			)
 	_show_result_screen(true)
 	await get_tree().create_timer(2.0).timeout
 	if GameManager and _is_host():
@@ -468,6 +472,13 @@ func _on_team_lost() -> void:
 	spawn_timer.stop()
 	if timer_sync_timer:
 		timer_sync_timer.stop()
+	if _is_host() and GameManager and GameManager.has_method("record_multiplayer_round_result"):
+		var time_sec = float(Time.get_ticks_msec() - round_start_time) / 1000.0
+		GameManager.record_multiplayer_round_result(
+			"MiniGame_GreywaterSort",
+			time_sec,
+			false
+		)
 	_show_result_screen(false)
 	await get_tree().create_timer(2.0).timeout
 	if GameManager and _is_host():

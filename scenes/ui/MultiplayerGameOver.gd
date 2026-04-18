@@ -16,23 +16,49 @@ signal return_to_lobby_pressed()
 @onready var p2_contribution_label = $MarginContainer/VBoxContainer/ContributionsContainer/P2Label
 @onready var return_button = $MarginContainer/VBoxContainer/ReturnButton
 
+
+func _loc(key: String, fallback: String) -> String:
+	if Localization:
+		var translated = Localization.get_text(key)
+		if translated != key:
+			return translated
+	return fallback
+
+
+func _fmt_loc(key: String, fallback: String, values: Array) -> String:
+	var pattern = _loc(key, fallback)
+	if values.is_empty():
+		return pattern
+	if values.size() == 1:
+		return pattern % values[0]
+	return pattern % values
+
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	visible = false
 	
 	if return_button:
 		return_button.pressed.connect(_on_return_button_pressed)
+		return_button.text = _loc("back", "BACK")
 
 func show_game_over(final_score: int, rounds: int, p1_score: int, p2_score: int) -> void:
-	"""Display game over screen with team stats"""
+	# Display game over screen with team stats.
 	visible = true
 	get_tree().paused = true
 	
 	# Update labels
-	title_label.text = "GAME OVER"
-	subtitle_label.text = "TEAM EFFORT!"
-	final_score_label.text = "Final Score: %d" % final_score
-	rounds_survived_label.text = "Rounds Survived: %d" % rounds
+	title_label.text = _loc("game_over", "GAME OVER")
+	subtitle_label.text = _loc("multiplayer_team_effort", "TEAM EFFORT!")
+	final_score_label.text = _fmt_loc(
+		"multiplayer_final_score",
+		"Final Score: %d",
+		[final_score]
+	)
+	rounds_survived_label.text = _fmt_loc(
+		"multiplayer_rounds_survived",
+		"Rounds Survived: %d",
+		[rounds]
+	)
 	
 	# Show contributions
 	var p1_percent = 0.0
@@ -41,16 +67,29 @@ func show_game_over(final_score: int, rounds: int, p1_score: int, p2_score: int)
 		p1_percent = (float(p1_score) / float(final_score)) * 100.0
 		p2_percent = (float(p2_score) / float(final_score)) * 100.0
 	
-	p1_contribution_label.text = "Player 1: %d points (%.1f%%)" % [p1_score, p1_percent]
-	p2_contribution_label.text = "Player 2: %d points (%.1f%%)" % [p2_score, p2_percent]
+	p1_contribution_label.text = _fmt_loc(
+		"multiplayer_p1_contribution",
+		"Player 1: %d points (%.1f%%)",
+		[p1_score, p1_percent]
+	)
+	p2_contribution_label.text = _fmt_loc(
+		"multiplayer_p2_contribution",
+		"Player 2: %d points (%.1f%%)",
+		[p2_score, p2_percent]
+	)
 	
 	# Animate in
 	var tween = create_tween()
 	tween.tween_property(self, "modulate:a", 1.0, 0.5).from(0.0)
-	tween.tween_property(title_label, "scale", Vector2(1.0, 1.0), 0.5).from(Vector2(0.5, 0.5)).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_ELASTIC)
+	tween.tween_property(
+		title_label,
+		"scale",
+		Vector2(1.0, 1.0),
+		0.5
+	).from(Vector2(0.5, 0.5)).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_ELASTIC)
 
 func _on_return_button_pressed() -> void:
-	"""Return to multiplayer lobby"""
+	# Return to multiplayer lobby.
 	get_tree().paused = false
 	return_to_lobby_pressed.emit()
 	

@@ -74,6 +74,13 @@ var _theme_secondary_rect: ColorRect
 var _theme_wash_rect: ColorRect
 var _active_game_theme: Dictionary = {}
 
+func _loc(key: String, fallback: String) -> String:
+	if Localization:
+		var translated = Localization.get_text(key)
+		if translated != key:
+			return translated
+	return fallback
+
 func _ready() -> void:
 	await get_tree().process_frame
 	
@@ -553,7 +560,18 @@ func _activate_chaos_effect(effect_name: String) -> void:
 		"visual_obstruction":
 			_create_visual_obstruction()
 
+
+func _is_screen_shake_allowed() -> bool:
+	if AccessibilityManager and AccessibilityManager.has_method("is_screen_shake_enabled"):
+		return AccessibilityManager.is_screen_shake_enabled()
+	if SaveManager and SaveManager.has_method("is_screen_shake_enabled"):
+		return SaveManager.is_screen_shake_enabled()
+	return true
+
 func _start_screen_shake(intensity: float) -> void:
+	if not _is_screen_shake_allowed():
+		return
+
 	var camera = get_viewport().get_camera_2d()
 	if camera:
 		var shake_timer = Timer.new()
@@ -964,11 +982,7 @@ func _create_instruction_overlay():
 	
 	# Tap to start (blinking)
 	var tap_label = Label.new()
-	tap_label.text = (
-		Localization.get_text("tap_to_start")
-		if Localization
-		else "TAP ANYWHERE TO START"
-	)
+	tap_label.text = _loc("tap_to_start", "TAP ANYWHERE TO START")
 	tap_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	tap_label.add_theme_font_size_override("font_size", 26)
 	tap_label.add_theme_color_override("font_color", Color(0.5, 1, 0.5))
@@ -1028,7 +1042,7 @@ func _play_intro_animation() -> void:
 		var intro = scene.instantiate()
 		hud_layer.add_child(intro)
 		if intro.has_method("configure"):
-			intro.configure(game_name, "Get ready...")
+			intro.configure(game_name, _loc("get_ready", "Get ready..."))
 		if intro.has_method("play_cutscene"):
 			await intro.play_cutscene()
 		else:
@@ -1650,66 +1664,195 @@ func _get_result_reaction(success: bool) -> Dictionary:
 	}
 
 func _get_result_line_for_key(success: bool, key: String) -> String:
-	var success_lines := {
-		"RiceWashRescue": "Rice water saved. Smart kitchen move!",
-		"VegetableBath": "Veggies cleaned with one smart rinse!",
-		"GreywaterSorter": "Greywater routed to the right use!",
-		"WringItOut": "Nice squeeze. Every drop counted!",
-		"ThirstyPlant": "Plant hydrated with just enough water!",
-		"MudPieMaker": "Mud mix perfect. Zero waste vibes!",
-		"CatchTheRain": "Rain caught clean. Tanks up!",
-		"CoverTheDrum": "Drum covered in time. Great reflex!",
-		"SpotTheSpeck": "All impurities spotted. Crystal clear!",
-		"FixLeak": "Leak fixed fast. Flow restored!",
-		"RainwaterHarvesting": "Harvest complete. Rain put to work!",
-		"WaterPlant": "Perfect pour. Happy roots!",
-		"PlugTheLeak": "Pipe plugged. Waste stopped cold!",
-		"SwipeTheSoap": "Soap swipe efficiency unlocked!",
-		"QuickShower": "Quick shower run. Big water saved!",
-		"FilterBuilder": "Filter stack built like a pro!",
-		"ToiletTankFix": "Tank tuned right. No excess flush!",
-		"TracePipePath": "Path traced clean. Nice routing!",
-		"ScrubToSave": "Scrub done water-wise. Spotless!",
-		"BucketBrigade": "Relay complete. Team flow secured!",
-		"TimingTap": "Tap timing nailed. Zero extra drip!",
-		"TurnOffTap": "Tap shut off right on cue!"
-	}
+	if success:
+		match key:
+			"RiceWashRescue":
+				return _loc(
+					"result_line_success_rice_wash_rescue",
+					"Rice water saved. Smart kitchen move!"
+				)
+			"VegetableBath":
+				return _loc(
+					"result_line_success_vegetable_bath",
+					"Veggies cleaned with one smart rinse!"
+				)
+			"GreywaterSorter":
+				return _loc(
+					"result_line_success_greywater_sorter",
+					"Greywater routed to the right use!"
+				)
+			"WringItOut":
+				return _loc(
+					"result_line_success_wring_it_out",
+					"Nice squeeze. Every drop counted!"
+				)
+			"ThirstyPlant":
+				return _loc(
+					"result_line_success_thirsty_plant",
+					"Plant hydrated with just enough water!"
+				)
+			"MudPieMaker":
+				return _loc(
+					"result_line_success_mud_pie_maker",
+					"Mud mix perfect. Zero waste vibes!"
+				)
+			"CatchTheRain":
+				return _loc(
+					"result_line_success_catch_the_rain",
+					"Rain caught clean. Tanks up!"
+				)
+			"CoverTheDrum":
+				return _loc(
+					"result_line_success_cover_the_drum",
+					"Drum covered in time. Great reflex!"
+				)
+			"SpotTheSpeck":
+				return _loc(
+					"result_line_success_spot_the_speck",
+					"All impurities spotted. Crystal clear!"
+				)
+			"FixLeak":
+				return _loc(
+					"result_line_success_fix_leak",
+					"Leak fixed fast. Flow restored!"
+				)
+			"RainwaterHarvesting":
+				return _loc(
+					"result_line_success_rainwater_harvesting",
+					"Harvest complete. Rain put to work!"
+				)
+			"WaterPlant":
+				return _loc(
+					"result_line_success_water_plant",
+					"Perfect pour. Happy roots!"
+				)
+			"PlugTheLeak":
+				return _loc(
+					"result_line_success_plug_the_leak",
+					"Pipe plugged. Waste stopped cold!"
+				)
+			"SwipeTheSoap":
+				return _loc(
+					"result_line_success_swipe_the_soap",
+					"Soap swipe efficiency unlocked!"
+				)
+			"QuickShower":
+				return _loc(
+					"result_line_success_quick_shower",
+					"Quick shower run. Big water saved!"
+				)
+			"FilterBuilder":
+				return _loc(
+					"result_line_success_filter_builder",
+					"Filter stack built like a pro!"
+				)
+			"ToiletTankFix":
+				return _loc(
+					"result_line_success_toilet_tank_fix",
+					"Tank tuned right. No excess flush!"
+				)
+			"TracePipePath":
+				return _loc(
+					"result_line_success_trace_pipe_path",
+					"Path traced clean. Nice routing!"
+				)
+			"ScrubToSave":
+				return _loc(
+					"result_line_success_scrub_to_save",
+					"Scrub done water-wise. Spotless!"
+				)
+			"BucketBrigade":
+				return _loc(
+					"result_line_success_bucket_brigade",
+					"Relay complete. Team flow secured!"
+				)
+			"TimingTap":
+				return _loc(
+					"result_line_success_timing_tap",
+					"Tap timing nailed. Zero extra drip!"
+				)
+			"TurnOffTap":
+				return _loc(
+					"result_line_success_turn_off_tap",
+					"Tap shut off right on cue!"
+				)
+			_:
+				return _loc(
+					"result_line_success_default",
+					"Clean save! Keep it flowing!"
+				)
 
-	var fail_lines := {
-		"RiceWashRescue": "Rice water spilled. Retry!",
-		"VegetableBath": "Too much rinse. One-pass next!",
-		"GreywaterSorter": "Wrong route. Sort cleaner!",
-		"WringItOut": "Still dripping. Wring harder!",
-		"ThirstyPlant": "Watering off-balance. Re-aim!",
-		"MudPieMaker": "Mix missed. Steady hands!",
-		"CatchTheRain": "Rain got away. Track drops!",
-		"CoverTheDrum": "Drum stayed open. Cover faster!",
-		"SpotTheSpeck": "Speck missed. Scan sharper!",
-		"FixLeak": "Leak still live. Seal now!",
-		"RainwaterHarvesting": "Harvest missed. Reposition!",
-		"WaterPlant": "Watering off. Find the sweet spot!",
-		"PlugTheLeak": "Plug missed. Line it up!",
-		"SwipeTheSoap": "Swipe too slow. Clean cut!",
-		"QuickShower": "Shower too long. Speed run!",
-		"FilterBuilder": "Wrong layer stack. Rebuild!",
-		"ToiletTankFix": "Tank unstable. Retune it!",
-		"TracePipePath": "Route drifted. Follow flow!",
-		"ScrubToSave": "Scrub wasted water. Stay tight!",
-		"BucketBrigade": "Relay broke pace. Move!",
-		"TimingTap": "Timing off. Tap on beat!",
-		"TurnOffTap": "Tap stayed on. Cut early!"
-	}
-
-	if success and success_lines.has(key):
-		return success_lines[key]
-	if not success and fail_lines.has(key):
-		return fail_lines[key]
-
-	return (
-		"Clean save! Keep it flowing!"
-		if success
-		else "Oops! Try a faster rescue next round!"
-	)
+	match key:
+		"RiceWashRescue":
+			return _loc("result_line_fail_rice_wash_rescue", "Rice water spilled. Retry!")
+		"VegetableBath":
+			return _loc(
+				"result_line_fail_vegetable_bath",
+				"Too much rinse. One-pass next!"
+			)
+		"GreywaterSorter":
+			return _loc("result_line_fail_greywater_sorter", "Wrong route. Sort cleaner!")
+		"WringItOut":
+			return _loc("result_line_fail_wring_it_out", "Still dripping. Wring harder!")
+		"ThirstyPlant":
+			return _loc(
+				"result_line_fail_thirsty_plant",
+				"Watering off-balance. Re-aim!"
+			)
+		"MudPieMaker":
+			return _loc("result_line_fail_mud_pie_maker", "Mix missed. Steady hands!")
+		"CatchTheRain":
+			return _loc("result_line_fail_catch_the_rain", "Rain got away. Track drops!")
+		"CoverTheDrum":
+			return _loc(
+				"result_line_fail_cover_the_drum",
+				"Drum stayed open. Cover faster!"
+			)
+		"SpotTheSpeck":
+			return _loc("result_line_fail_spot_the_speck", "Speck missed. Scan sharper!")
+		"FixLeak":
+			return _loc("result_line_fail_fix_leak", "Leak still live. Seal now!")
+		"RainwaterHarvesting":
+			return _loc(
+				"result_line_fail_rainwater_harvesting",
+				"Harvest missed. Reposition!"
+			)
+		"WaterPlant":
+			return _loc(
+				"result_line_fail_water_plant",
+				"Watering off. Find the sweet spot!"
+			)
+		"PlugTheLeak":
+			return _loc("result_line_fail_plug_the_leak", "Plug missed. Line it up!")
+		"SwipeTheSoap":
+			return _loc("result_line_fail_swipe_the_soap", "Swipe too slow. Clean cut!")
+		"QuickShower":
+			return _loc("result_line_fail_quick_shower", "Shower too long. Speed run!")
+		"FilterBuilder":
+			return _loc(
+				"result_line_fail_filter_builder",
+				"Wrong layer stack. Rebuild!"
+			)
+		"ToiletTankFix":
+			return _loc("result_line_fail_toilet_tank_fix", "Tank unstable. Retune it!")
+		"TracePipePath":
+			return _loc("result_line_fail_trace_pipe_path", "Route drifted. Follow flow!")
+		"ScrubToSave":
+			return _loc(
+				"result_line_fail_scrub_to_save",
+				"Scrub wasted water. Stay tight!"
+			)
+		"BucketBrigade":
+			return _loc("result_line_fail_bucket_brigade", "Relay broke pace. Move!")
+		"TimingTap":
+			return _loc("result_line_fail_timing_tap", "Timing off. Tap on beat!")
+		"TurnOffTap":
+			return _loc("result_line_fail_turn_off_tap", "Tap stayed on. Cut early!")
+		_:
+			return _loc(
+				"result_line_fail_default",
+				"Oops! Try a faster rescue next round!"
+			)
 
 func _show_failure_micro_cutscene() -> void:
 	if AudioManager:
@@ -2286,6 +2429,9 @@ func _flash_screen(color: Color) -> void:
 	tween.finished.connect(flash.queue_free)
 
 func _shake_camera(intensity: float) -> void:
+	if not _is_screen_shake_allowed():
+		return
+
 	var camera = get_viewport().get_camera_2d()
 	if camera:
 		var original_offset = camera.offset
