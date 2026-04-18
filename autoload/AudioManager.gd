@@ -60,8 +60,8 @@ enum SFXType {
 # Frequency definitions for procedural audio
 var sfx_definitions: Dictionary = {
 	SFXType.CLICK: { "freq": 660, "duration": 0.05, "wave": "square" },
-	SFXType.SUCCESS: { "freq": 880, "duration": 0.15, "wave": "sine" },
-	SFXType.FAILURE: { "freq": 220, "duration": 0.3, "wave": "sine" },
+	SFXType.SUCCESS: { "freq": 760, "duration": 0.22, "wave": "arpeggio_up" },
+	SFXType.FAILURE: { "freq": 240, "duration": 0.45, "wave": "mocking" },
 	SFXType.BONUS: { "freq": 1320, "duration": 0.2, "wave": "sine" },
 	SFXType.WARNING: { "freq": 440, "duration": 0.1, "wave": "square" },
 	SFXType.WATER_SPLASH: { "freq": 200, "duration": 0.4, "wave": "noise" },
@@ -120,7 +120,7 @@ func _load_volume_settings() -> void:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func play_music(music_id: String, fade_duration: float = 1.0) -> void:
-	"""Play background music with crossfade"""
+	# Play background music with crossfade.
 	if music_id == current_music and music_player.playing:
 		return
 	
@@ -141,10 +141,12 @@ func play_music(music_id: String, fade_duration: float = 1.0) -> void:
 	
 	# Fade in
 	var fade_in_tween = create_tween()
-	fade_in_tween.tween_property(music_player, "volume_db", linear_to_db(music_volume), fade_duration / 2)
+	fade_in_tween.tween_property(
+		music_player, "volume_db", linear_to_db(music_volume), fade_duration / 2
+	)
 
 func stop_music(fade_duration: float = 1.0) -> void:
-	"""Stop music with fade out"""
+	# Stop music with fade out.
 	if not music_player.playing:
 		return
 	
@@ -154,7 +156,7 @@ func stop_music(fade_duration: float = 1.0) -> void:
 	current_music = ""
 
 func _generate_ambient_music(music_id: String) -> AudioStreamWAV:
-	"""Generate procedural music that varies by scene type"""
+	# Generate procedural music that varies by scene type.
 	var sample_rate := 44100.0
 	var duration := 10.0  # 10 second loop
 	var num_samples := int(sample_rate * duration)
@@ -172,10 +174,19 @@ func _generate_ambient_music(music_id: String) -> AudioStreamWAV:
 	match music_id:
 		"gameplay":
 			_fill_gameplay_music(data, num_samples, sample_rate)
+		"instruction":
+			_fill_instruction_music(data, num_samples, sample_rate)
+		"scoring":
+			_fill_scoring_music(data, num_samples, sample_rate)
+		"outcome_win":
+			_fill_outcome_win_music(data, num_samples, sample_rate)
+		"outcome_fail":
+			_fill_outcome_fail_music(data, num_samples, sample_rate)
 		"results":
 			_fill_results_music(data, num_samples, sample_rate)
 		"cutscene":
-			_fill_cutscene_music(data, num_samples, sample_rate)
+			# Compatibility alias for older scripts still requesting generic cutscene music.
+			_fill_instruction_music(data, num_samples, sample_rate)
 		_:
 			_fill_menu_music(data, num_samples, sample_rate)
 	
@@ -183,7 +194,7 @@ func _generate_ambient_music(music_id: String) -> AudioStreamWAV:
 	return audio
 
 func _fill_menu_music(data: PackedByteArray, num_samples: int, sample_rate: float) -> void:
-	"""Happy, bouncy, uplifting — DWTD-style cheerful main menu vibe"""
+	# Happy, bouncy, uplifting - cheerful main menu vibe.
 	# C major pentatonic in upper octave — bright and joyful
 	var melody = [523.3, 587.3, 659.3, 784.0, 880.0, 784.0, 659.3, 784.0,
 		880.0, 1047.0, 880.0, 784.0, 659.3, 587.3, 523.3, 659.3]
@@ -226,12 +237,13 @@ func _fill_menu_music(data: PackedByteArray, num_samples: int, sample_rate: floa
 		data[i * 2 + 1] = (sample_int >> 8) & 0xFF
 
 func _fill_gameplay_music(data: PackedByteArray, num_samples: int, sample_rate: float) -> void:
-	"""Upbeat, driving rhythm — energetic like DWTD gameplay"""
+	# Upbeat, driving rhythm - energetic gameplay music.
 	var bass_line = [130.8, 130.8, 164.8, 146.8, 130.8, 174.6, 164.8, 146.8]
-	var beat_samples = int(sample_rate * 0.3125)
+	var beat_samples = maxi(1, int(sample_rate * 0.3125))
+	var half_beat_samples = maxi(1, int(float(beat_samples) * 0.5))
 	for i in range(num_samples):
 		var t := float(i) / sample_rate
-		var beat_idx: int = (i / beat_samples) % bass_line.size()
+		var beat_idx: int = int(floor(float(i) / float(beat_samples))) % bass_line.size()
 		var bass_freq: float = bass_line[beat_idx]
 		var beat_phase = fmod(float(i), float(beat_samples)) / float(beat_samples)
 		
@@ -240,11 +252,11 @@ func _fill_gameplay_music(data: PackedByteArray, num_samples: int, sample_rate: 
 		sample += sin(2.0 * PI * bass_freq * t) * 0.15 * bass_env
 		var kick_env = maxf(0, 1.0 - beat_phase * 8.0)
 		sample += sin(2.0 * PI * (60.0 - beat_phase * 40.0) * t) * 0.12 * kick_env
-		var half_beat = fmod(float(i), float(beat_samples / 2)) / float(beat_samples / 2)
+		var half_beat = fmod(float(i), float(half_beat_samples)) / float(half_beat_samples)
 		var hat_env = maxf(0, 1.0 - half_beat * 12.0)
 		sample += (randf() - 0.5) * 0.06 * hat_env
 		var arp_notes = [523.3, 659.3, 784.0, 659.3]
-		var arp_idx: int = (i / (beat_samples / 2)) % arp_notes.size()
+		var arp_idx: int = int(floor(float(i) / float(half_beat_samples))) % arp_notes.size()
 		var arp_freq: float = arp_notes[arp_idx]
 		var arp_env = maxf(0, 1.0 - half_beat * 2.5) * 0.5
 		sample += sin(2.0 * PI * arp_freq * t) * 0.06 * arp_env
@@ -253,8 +265,105 @@ func _fill_gameplay_music(data: PackedByteArray, num_samples: int, sample_rate: 
 		data[i * 2] = sample_int & 0xFF
 		data[i * 2 + 1] = (sample_int >> 8) & 0xFF
 
+func _fill_instruction_music(data: PackedByteArray, num_samples: int, sample_rate: float) -> void:
+	# Friendly prep loop for instruction screens (playful, non-creepy).
+	var notes = [523.3, 659.3, 784.0, 659.3, 587.3, 659.3, 523.3, 440.0]
+	var bass = [130.8, 146.8, 164.8, 146.8]
+	var beat = maxi(1, int(sample_rate * 0.38))
+	var bar = maxi(1, int(sample_rate * 1.52))
+	for i in range(num_samples):
+		var t := float(i) / sample_rate
+		var n_idx = int(floor(float(i) / float(beat))) % notes.size()
+		var b_idx = int(floor(float(i) / float(bar))) % bass.size()
+		var n_freq = notes[n_idx]
+		var b_freq = bass[b_idx]
+		var phase = fmod(float(i), float(beat)) / float(beat)
+
+		var sample := 0.0
+		var env = maxf(0.0, 1.0 - phase * 3.2)
+		sample += sin(2.0 * PI * n_freq * t) * 0.11 * env
+		sample += sin(2.0 * PI * n_freq * 2.0 * t) * 0.03 * env
+		var bass_env = 0.45 + 0.35 * maxf(0.0, 1.0 - phase * 2.5)
+		sample += sin(2.0 * PI * b_freq * t) * 0.08 * bass_env
+		sample += sin(2.0 * PI * 261.6 * t) * 0.02 * (0.4 + 0.3 * sin(t * 1.4))
+
+		var sample_int := int(clampf(sample, -1.0, 1.0) * 32767)
+		data[i * 2] = sample_int & 0xFF
+		data[i * 2 + 1] = (sample_int >> 8) & 0xFF
+
+func _fill_scoring_music(data: PackedByteArray, num_samples: int, sample_rate: float) -> void:
+	# Warm reward-loop for score pages.
+	var chords = [
+		[261.6, 329.6, 392.0],
+		[293.7, 370.0, 440.0],
+		[329.6, 392.0, 493.9],
+		[349.2, 440.0, 523.3],
+	]
+	var chord_dur = maxi(1, int(sample_rate * 1.6))
+	var sparkle_dur = maxi(1, int(sample_rate * 0.8))
+	for i in range(num_samples):
+		var t := float(i) / sample_rate
+		var c_idx = int(floor(float(i) / float(chord_dur))) % chords.size()
+		var chord = chords[c_idx]
+		var c_phase = fmod(float(i), float(chord_dur)) / float(chord_dur)
+		var swell = 0.35 + 0.3 * sin(c_phase * PI)
+
+		var sample := 0.0
+		for n in chord:
+			sample += sin(2.0 * PI * n * t) * 0.048 * swell
+			sample += sin(2.0 * PI * n * 0.5 * t) * 0.025 * swell
+
+		var sparkle_phase = fmod(float(i), float(sparkle_dur)) / float(sparkle_dur)
+		var sparkle = maxf(0.0, 1.0 - sparkle_phase * 7.0)
+		sample += sin(2.0 * PI * 1047.0 * t) * 0.03 * sparkle
+
+		var sample_int := int(clampf(sample, -1.0, 1.0) * 32767)
+		data[i * 2] = sample_int & 0xFF
+		data[i * 2 + 1] = (sample_int >> 8) & 0xFF
+
+func _fill_outcome_win_music(data: PackedByteArray, num_samples: int, sample_rate: float) -> void:
+	# Satisfying and uplifting victory sting loop.
+	var motif = [659.3, 784.0, 987.8, 1047.0, 987.8, 784.0, 880.0, 1047.0]
+	var beat = maxi(1, int(sample_rate * 0.25))
+	for i in range(num_samples):
+		var t := float(i) / sample_rate
+		var m_idx = int(floor(float(i) / float(beat))) % motif.size()
+		var freq = motif[m_idx]
+		var phase = fmod(float(i), float(beat)) / float(beat)
+		var env = maxf(0.0, 1.0 - phase * 3.8)
+
+		var sample := 0.0
+		sample += sin(2.0 * PI * freq * t) * 0.12 * env
+		sample += sin(2.0 * PI * freq * 2.0 * t) * 0.05 * env
+		sample += sin(2.0 * PI * 196.0 * t) * 0.05 * (0.65 + 0.35 * env)
+
+		var sample_int := int(clampf(sample, -1.0, 1.0) * 32767)
+		data[i * 2] = sample_int & 0xFF
+		data[i * 2 + 1] = (sample_int >> 8) & 0xFF
+
+func _fill_outcome_fail_music(data: PackedByteArray, num_samples: int, sample_rate: float) -> void:
+	# Light, cartoon-ish "mocking" fail loop (playful, not horror).
+	var notes = [392.0, 349.2, 329.6, 293.7, 329.6, 293.7, 261.6]
+	var beat = maxi(1, int(sample_rate * 0.36))
+	for i in range(num_samples):
+		var t := float(i) / sample_rate
+		var n_idx = int(floor(float(i) / float(beat))) % notes.size()
+		var freq = notes[n_idx]
+		var phase = fmod(float(i), float(beat)) / float(beat)
+		var env = maxf(0.0, 1.0 - phase * 2.9)
+
+		var wobble = 1.0 + sin(t * 11.0) * 0.03
+		var sample := 0.0
+		sample += sin(2.0 * PI * freq * wobble * t) * 0.11 * env
+		sample += sin(2.0 * PI * freq * 1.5 * t) * 0.03 * env
+		sample += sin(2.0 * PI * 130.8 * t) * 0.035 * (0.5 + 0.5 * env)
+
+		var sample_int := int(clampf(sample, -1.0, 1.0) * 32767)
+		data[i * 2] = sample_int & 0xFF
+		data[i * 2 + 1] = (sample_int >> 8) & 0xFF
+
 func _fill_results_music(data: PackedByteArray, num_samples: int, sample_rate: float) -> void:
-	"""Triumphant, warm — score reveal feel"""
+	# Triumphant, warm track for score reveal.
 	var chord_notes = [
 		[261.6, 329.6, 392.0],
 		[293.7, 370.0, 440.0],
@@ -282,7 +391,7 @@ func _fill_results_music(data: PackedByteArray, num_samples: int, sample_rate: f
 		data[i * 2 + 1] = (sample_int >> 8) & 0xFF
 
 func _fill_cutscene_music(data: PackedByteArray, num_samples: int, sample_rate: float) -> void:
-	"""Dramatic, cinematic — tension/reveal for cutscene moments"""
+	# Dramatic, cinematic track for cutscene tension.
 	var tension_notes = [130.8, 155.6, 164.8, 196.0, 164.8, 155.6, 146.8, 130.8]
 	var note_dur = sample_rate * 1.25
 	for i in range(num_samples):
@@ -315,7 +424,7 @@ func set_music_volume(volume: float) -> void:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func play_sfx(sfx_type: SFXType) -> void:
-	"""Play a sound effect"""
+	# Play a sound effect.
 	if sfx_volume <= 0:
 		return
 	
@@ -333,7 +442,7 @@ func play_sfx(sfx_type: SFXType) -> void:
 	player.play()
 
 func _get_available_sfx_player() -> AudioStreamPlayer:
-	"""Get an available SFX player from the pool"""
+	# Get an available SFX player from the pool.
 	for player in sfx_players:
 		if not player.playing:
 			return player
@@ -341,7 +450,7 @@ func _get_available_sfx_player() -> AudioStreamPlayer:
 	return sfx_players[0]
 
 func _generate_sfx(frequency: float, duration: float, wave_type: String) -> AudioStreamWAV:
-	"""Generate a procedural sound effect"""
+	# Generate a procedural sound effect.
 	var sample_rate := 44100.0
 	var num_samples := int(sample_rate * duration)
 	
@@ -387,14 +496,35 @@ func _generate_sfx(frequency: float, duration: float, wave_type: String) -> Audi
 				if ni2 < uf.size():
 					sample = sin(2.0 * PI * uf[ni2] * t)
 			"whoosh":
-				var sweep_freq := lerpf(frequency * 2.0, frequency * 0.3, float(i) / float(num_samples))
+				var sweep_freq := lerpf(
+					frequency * 2.0, frequency * 0.3, float(i) / float(num_samples)
+				)
 				sample = (randf() - 0.5) * 0.6 + sin(2.0 * PI * sweep_freq * t) * 0.4
 			"fanfare":
 				var fn_dur := duration / 6
 				var fn_idx := int(t / fn_dur)
-				var fn_notes := [frequency, frequency, frequency * 1.25, frequency * 1.5, frequency * 1.5, frequency * 2.0]
+				var fn_notes := [
+					frequency, frequency, frequency * 1.25,
+					frequency * 1.5, frequency * 1.5, frequency * 2.0
+				]
 				if fn_idx < fn_notes.size():
-					sample = sin(2.0 * PI * fn_notes[fn_idx] * t) * 0.8 + sin(2.0 * PI * fn_notes[fn_idx] * 2.0 * t) * 0.2
+					sample = (
+						sin(2.0 * PI * fn_notes[fn_idx] * t) * 0.8
+						+ sin(2.0 * PI * fn_notes[fn_idx] * 2.0 * t) * 0.2
+					)
+			"mocking":
+				# Cartoon-ish "wah-wah" contour for fail moments.
+				var p = float(i) / float(maxi(1, num_samples))
+				var local_freq = frequency
+				if p < 0.5:
+					local_freq = lerpf(frequency * 1.25, frequency * 0.62, p * 2.0)
+				else:
+					local_freq = lerpf(frequency * 0.62, frequency * 0.9, (p - 0.5) * 2.0)
+				var vibrato = 1.0 + sin(2.0 * PI * 6.0 * t) * 0.03
+				sample = (
+					sin(2.0 * PI * local_freq * vibrato * t) * 0.82
+					+ sin(2.0 * PI * local_freq * 2.0 * t) * 0.18
+				)
 		
 		sample *= envelope * 0.5
 		var sample_int := int(clampf(sample, -1.0, 1.0) * 32767)

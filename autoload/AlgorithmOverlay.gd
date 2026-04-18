@@ -42,6 +42,7 @@ func _ready() -> void:
 	update_timer.timeout.connect(_update_overlay)
 	add_child(update_timer)
 	update_timer.start()
+	_apply_saved_dev_visibility()
 
 func _input(event: InputEvent) -> void:
 	# Toggle overlay with F12
@@ -146,24 +147,37 @@ func _build_overlay() -> void:
 	
 	# Hint
 	var hint = Label.new()
-	hint.text = "[F12 to toggle]"
+	hint.text = "[F12 or Dev Mode settings]"
 	hint.add_theme_font_size_override("font_size", 10)
 	hint.modulate = Color(0.5, 0.5, 0.5)
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	vbox.add_child(hint)
 
-func toggle_overlay() -> void:
-	is_visible_overlay = not is_visible_overlay
+func set_overlay_visible(is_enabled: bool) -> void:
+	is_visible_overlay = is_enabled
 	overlay_panel.visible = is_visible_overlay
+
+func is_overlay_visible() -> bool:
+	return is_visible_overlay
+
+func toggle_overlay() -> void:
+	set_overlay_visible(not is_visible_overlay)
 	print("🔬 Algorithm Overlay: %s" % ("ON" if is_visible_overlay else "OFF"))
 
 func show_overlay() -> void:
-	is_visible_overlay = true
-	overlay_panel.visible = true
+	set_overlay_visible(true)
 
 func hide_overlay() -> void:
-	is_visible_overlay = false
-	overlay_panel.visible = false
+	set_overlay_visible(false)
+
+func _apply_saved_dev_visibility() -> void:
+	var save_mgr = get_node_or_null("/root/SaveManager")
+	if not save_mgr:
+		return
+
+	var dev_mode_enabled = bool(save_mgr.get_setting("dev_mode", false))
+	var should_show_overlay = bool(save_mgr.get_setting("dev_show_algorithm_overlay", false))
+	set_overlay_visible(dev_mode_enabled and should_show_overlay)
 
 func _update_overlay() -> void:
 	if not is_visible_overlay or not AdaptiveDifficulty:
@@ -200,7 +214,8 @@ func _update_overlay() -> void:
 	
 	# Update active rule
 	if not status["algorithm_active"]:
-		rule_display.text = "⏳ Collecting data... (%d more games)" % (3 - window_size)
+		var games_left = int(status.get("games_until_algorithm_activation", 0))
+		rule_display.text = "⏳ Collecting data... (%d more games)" % games_left
 	elif phi < 0.5:
 		rule_display.text = "📋 Rule 1: Φ<0.5 → EASY"
 	elif phi > 0.85:
@@ -209,7 +224,9 @@ func _update_overlay() -> void:
 		rule_display.text = "📋 Rule 3: 0.5≤Φ≤0.85 → MEDIUM"
 	
 	# Update games counter
-	games_display.text = "Total: %d games played" % status["total_games_played"]
+	var session_games = int(status.get("session_games_played", status.get("total_games_played", 0)))
+	var lifetime_games = int(status.get("lifetime_games_played", session_games))
+	games_display.text = "Session: %d | Lifetime: %d" % [session_games, lifetime_games]
 
 func _on_algorithm_update(_metrics: Dictionary) -> void:
 	_update_overlay()

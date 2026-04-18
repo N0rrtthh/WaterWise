@@ -29,6 +29,26 @@ var minigames_data = [
 	{"id": "leak_fix", "name": "Fix Leaks", "cost": 200, "unlocked": false, "icon": "💧"},
 	{"id": "water_quiz", "name": "Water Quiz", "cost": 300, "unlocked": false, "icon": "❓"},
 	{"id": "bucket_relay", "name": "Bucket Relay", "cost": 400, "unlocked": false, "icon": "🪣"},
+	{"id": "fun_games", "name": "Fun Games", "cost": 500, "unlocked": false, "icon": "🎉"},
+]
+
+# Unlockable accessories data
+var accessories_data = [
+	{"id": "character_default", "name": "Character Hat", "cost": 0, "unlocked": true, "icon": "🎭"},
+	{"id": "sun_hat", "name": "Sun Hat", "cost": 120, "unlocked": false, "icon": "👒"},
+	{"id": "cool_shades", "name": "Cool Shades", "cost": 180, "unlocked": false, "icon": "🕶️"},
+	{"id": "party_cap", "name": "Party Cap", "cost": 220, "unlocked": false, "icon": "🎉"},
+	{"id": "leaf_crown", "name": "Leaf Crown", "cost": 260, "unlocked": false, "icon": "🍃"},
+	{"id": "safety_helmet", "name": "Safety Helmet", "cost": 320, "unlocked": false, "icon": "⛑️"},
+]
+
+# Unlockable decorations (placed on main screen)
+var decorations_data = [
+	{
+		"id": "boat", "name": "Sailboat",
+		"cost": 150, "unlocked": false,
+		"enabled": false, "icon": "⛵"
+	},
 ]
 
 var current_tab = "characters"
@@ -36,16 +56,31 @@ var waterpark_layer: Node2D
 var grid_container: GridContainer
 var tab_characters: Button
 var tab_minigames: Button
+var tab_accessories: Button
+var tab_decorations: Button
+var main_panel: PanelContainer
 var currency_label: Label
+var _selected_accessory_id: String = "character_default"
 
 func _ready() -> void:
 	_sync_from_save_manager()
 	_setup_waterpark_background()
 	_setup_ui()
 	_update_display()
-	
+
 	if Localization:
 		Localization.language_changed.connect(_on_language_changed)
+
+	# Entrance popup animation
+	if main_panel:
+		main_panel.pivot_offset = main_panel.size * 0.5
+		main_panel.modulate.a = 0.0
+		main_panel.scale = Vector2(0.85, 0.85)
+		var tw = create_tween()
+		tw.tween_property(main_panel, "modulate:a", 1.0, 0.25)
+		tw.parallel().tween_property(
+			main_panel, "scale", Vector2(1.0, 1.0), 0.3
+		).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 
 func _sync_from_save_manager() -> void:
 	var save_mgr = get_node_or_null("/root/SaveManager")
@@ -63,6 +98,25 @@ func _sync_from_save_manager() -> void:
 			minigames_data[i].unlocked = true
 		else:
 			minigames_data[i].unlocked = save_mgr.is_minigame_unlocked(minigames_data[i].id)
+
+	for i in range(accessories_data.size()):
+		if accessories_data[i].cost == 0:
+			accessories_data[i].unlocked = true
+		elif save_mgr.has_method("is_accessory_unlocked"):
+			accessories_data[i].unlocked = save_mgr.is_accessory_unlocked(accessories_data[i].id)
+
+	if save_mgr.has_method("get_selected_accessory"):
+		_selected_accessory_id = str(save_mgr.get_selected_accessory())
+	if not _is_accessory_unlocked_local(_selected_accessory_id):
+		_selected_accessory_id = "character_default"
+
+	# Sync decorations
+	for i in range(decorations_data.size()):
+		var did = str(decorations_data[i].id)
+		if save_mgr.has_method("is_decoration_unlocked"):
+			decorations_data[i].unlocked = save_mgr.is_decoration_unlocked(did)
+		if save_mgr.has_method("is_decoration_enabled"):
+			decorations_data[i].enabled = save_mgr.is_decoration_enabled(did)
 
 	if GameManager:
 		GameManager.water_droplets = save_mgr.get_droplets()
@@ -194,7 +248,7 @@ func _draw_pool_float(pos: Vector2, color: Color) -> void:
 
 func _setup_ui() -> void:
 	# Main UI container with semi-transparent panel
-	var main_panel = PanelContainer.new()
+	main_panel = PanelContainer.new()
 	main_panel.name = "MainPanel"
 	var panel_style = StyleBoxFlat.new()
 	panel_style.bg_color = Color(1, 1, 1, 0.85)
@@ -229,7 +283,7 @@ func _setup_ui() -> void:
 	vbox.add_child(title_row)
 	
 	var title = Label.new()
-	title.text = "🎁 UNLOCKABLES"
+	title.text = "🛍️ SHOP"
 	title.add_theme_font_size_override("font_size", 42)
 	title.add_theme_color_override("font_color", Color(0.2, 0.2, 0.3))
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -255,6 +309,14 @@ func _setup_ui() -> void:
 	tab_minigames = _create_tab_button("🎮 Minigames", false)
 	tab_minigames.pressed.connect(_on_minigames_tab)
 	tab_row.add_child(tab_minigames)
+
+	tab_accessories = _create_tab_button("🧢 Accessories", false)
+	tab_accessories.pressed.connect(_on_accessories_tab)
+	tab_row.add_child(tab_accessories)
+
+	tab_decorations = _create_tab_button("🏠 Decor", false)
+	tab_decorations.pressed.connect(_on_decorations_tab)
+	tab_row.add_child(tab_decorations)
 	
 	# Separator
 	var sep = HSeparator.new()
@@ -331,21 +393,31 @@ func _update_tab_styles() -> void:
 	inactive_style.corner_radius_top_right = 12
 	inactive_style.corner_radius_bottom_left = 12
 	inactive_style.corner_radius_bottom_right = 12
-	
-	if current_tab == "characters":
-		tab_characters.add_theme_stylebox_override("normal", active_style)
-		tab_characters.add_theme_stylebox_override("hover", active_style)
-		tab_characters.add_theme_color_override("font_color", Color.WHITE)
-		tab_minigames.add_theme_stylebox_override("normal", inactive_style)
-		tab_minigames.add_theme_stylebox_override("hover", inactive_style)
-		tab_minigames.add_theme_color_override("font_color", Color(0.3, 0.3, 0.3))
+
+	_set_tab_visual(tab_characters, current_tab == "characters", active_style, inactive_style)
+	_set_tab_visual(tab_minigames, current_tab == "minigames", active_style, inactive_style)
+	if tab_accessories:
+		_set_tab_visual(tab_accessories, current_tab == "accessories", active_style, inactive_style)
+	if tab_decorations:
+		_set_tab_visual(tab_decorations, current_tab == "decorations", active_style, inactive_style)
+
+
+func _set_tab_visual(
+	button: Button,
+	active: bool,
+	active_style: StyleBoxFlat,
+	inactive_style: StyleBoxFlat
+) -> void:
+	if not button:
+		return
+	if active:
+		button.add_theme_stylebox_override("normal", active_style)
+		button.add_theme_stylebox_override("hover", active_style)
+		button.add_theme_color_override("font_color", Color.WHITE)
 	else:
-		tab_minigames.add_theme_stylebox_override("normal", active_style)
-		tab_minigames.add_theme_stylebox_override("hover", active_style)
-		tab_minigames.add_theme_color_override("font_color", Color.WHITE)
-		tab_characters.add_theme_stylebox_override("normal", inactive_style)
-		tab_characters.add_theme_stylebox_override("hover", inactive_style)
-		tab_characters.add_theme_color_override("font_color", Color(0.3, 0.3, 0.3))
+		button.add_theme_stylebox_override("normal", inactive_style)
+		button.add_theme_stylebox_override("hover", inactive_style)
+		button.add_theme_color_override("font_color", Color(0.3, 0.3, 0.3))
 
 func _update_display() -> void:
 	# Clear existing items
@@ -356,8 +428,12 @@ func _update_display() -> void:
 	
 	if current_tab == "characters":
 		_show_characters()
-	else:
+	elif current_tab == "minigames":
 		_show_minigames()
+	elif current_tab == "decorations":
+		_show_decorations()
+	else:
+		_show_accessories()
 
 func _show_characters() -> void:
 	for char_data in characters_data:
@@ -367,6 +443,11 @@ func _show_characters() -> void:
 func _show_minigames() -> void:
 	for game_data in minigames_data:
 		var card = _create_minigame_card(game_data)
+		grid_container.add_child(card)
+
+func _show_accessories() -> void:
+	for accessory_data in accessories_data:
+		var card = _create_accessory_card(accessory_data)
 		grid_container.add_child(card)
 
 func _create_character_card(data: Dictionary) -> PanelContainer:
@@ -567,6 +648,72 @@ func _create_minigame_card(data: Dictionary) -> PanelContainer:
 	
 	return card
 
+func _create_accessory_card(data: Dictionary) -> PanelContainer:
+	var card = PanelContainer.new()
+	card.custom_minimum_size = Vector2(160, 180)
+
+	var card_style = StyleBoxFlat.new()
+	if data.unlocked:
+		card_style.bg_color = Color(0.96, 0.99, 0.96)
+		card_style.border_color = Color(0.45, 0.75, 0.55)
+	else:
+		card_style.bg_color = Color(0.92, 0.92, 0.92)
+		card_style.border_color = Color(0.7, 0.7, 0.7)
+	card_style.corner_radius_top_left = 15
+	card_style.corner_radius_top_right = 15
+	card_style.corner_radius_bottom_left = 15
+	card_style.corner_radius_bottom_right = 15
+	card_style.border_width_left = 3
+	card_style.border_width_right = 3
+	card_style.border_width_top = 3
+	card_style.border_width_bottom = 3
+	card.add_theme_stylebox_override("panel", card_style)
+
+	var vbox = VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 10)
+	vbox.alignment = BoxContainer.ALIGNMENT_CENTER
+	card.add_child(vbox)
+
+	var icon = Label.new()
+	icon.text = data.icon if data.unlocked else "🔒"
+	icon.add_theme_font_size_override("font_size", 48)
+	icon.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	vbox.add_child(icon)
+
+	var name_label = Label.new()
+	name_label.text = data.name
+	name_label.add_theme_font_size_override("font_size", 15)
+	name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	if not data.unlocked:
+		name_label.add_theme_color_override("font_color", Color(0.5, 0.5, 0.5))
+	vbox.add_child(name_label)
+
+	if data.unlocked:
+		var status = Label.new()
+		status.text = "✅ OWNED"
+		status.add_theme_font_size_override("font_size", 14)
+		status.add_theme_color_override("font_color", Color(0.25, 0.7, 0.35))
+		status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		vbox.add_child(status)
+	else:
+		var buy_btn = Button.new()
+		buy_btn.text = "💧 " + str(data.cost)
+		buy_btn.custom_minimum_size = Vector2(100, 35)
+		var btn_style = StyleBoxFlat.new()
+		btn_style.bg_color = Color(0.3, 0.7, 1.0)
+		btn_style.corner_radius_top_left = 8
+		btn_style.corner_radius_top_right = 8
+		btn_style.corner_radius_bottom_left = 8
+		btn_style.corner_radius_bottom_right = 8
+		buy_btn.add_theme_stylebox_override("normal", btn_style)
+		buy_btn.add_theme_stylebox_override("hover", btn_style)
+		buy_btn.add_theme_font_size_override("font_size", 16)
+		buy_btn.add_theme_color_override("font_color", Color.WHITE)
+		buy_btn.pressed.connect(_on_buy_accessory.bind(str(data.id)))
+		vbox.add_child(buy_btn)
+
+	return card
+
 func _on_characters_tab() -> void:
 	if AudioManager:
 		AudioManager.play_click()
@@ -578,6 +725,20 @@ func _on_minigames_tab() -> void:
 	if AudioManager:
 		AudioManager.play_click()
 	current_tab = "minigames"
+	_update_tab_styles()
+	_update_display()
+
+func _on_accessories_tab() -> void:
+	if AudioManager:
+		AudioManager.play_click()
+	current_tab = "accessories"
+	_update_tab_styles()
+	_update_display()
+
+func _on_decorations_tab() -> void:
+	if AudioManager:
+		AudioManager.play_click()
+	current_tab = "decorations"
 	_update_tab_styles()
 	_update_display()
 
@@ -638,6 +799,51 @@ func _on_buy_minigame(game_id: String) -> void:
 			_update_display()
 			break
 
+func _on_buy_accessory(accessory_id: String) -> void:
+	if AudioManager:
+		AudioManager.play_click()
+
+	var save_mgr = get_node_or_null("/root/SaveManager")
+	for i in range(accessories_data.size()):
+		if accessories_data[i].id == accessory_id:
+			var cost = int(accessories_data[i].cost)
+			if save_mgr:
+				if save_mgr.spend_droplets(cost):
+					if save_mgr.has_method("unlock_accessory"):
+						save_mgr.unlock_accessory(accessory_id)
+					# Don't auto-equip — equipping is done in Character Customization
+					accessories_data[i].unlocked = true
+					if GameManager:
+						GameManager.water_droplets = save_mgr.get_droplets()
+				else:
+					_show_insufficient_funds()
+			else:
+				var current_currency = GameManager.water_droplets if GameManager else 0
+				if current_currency >= cost:
+					if GameManager:
+						GameManager.water_droplets -= cost
+					accessories_data[i].unlocked = true
+				else:
+					_show_insufficient_funds()
+
+			_update_currency_display()
+			_update_display()
+			break
+
+func _on_equip_accessory(accessory_id: String) -> void:
+	if AudioManager:
+		AudioManager.play_click()
+
+	if not _is_accessory_unlocked_local(accessory_id):
+		return
+
+	_selected_accessory_id = accessory_id
+	var save_mgr = get_node_or_null("/root/SaveManager")
+	if save_mgr and save_mgr.has_method("set_selected_accessory"):
+		save_mgr.set_selected_accessory(accessory_id)
+
+	_update_display()
+
 func _update_currency_display() -> void:
 	var save_mgr = get_node_or_null("/root/SaveManager")
 	var current = 0
@@ -662,10 +868,146 @@ func _show_insufficient_funds() -> void:
 	tween.tween_property(popup, "modulate:a", 0.0, 1.5)
 	tween.tween_callback(popup.queue_free)
 
+func _is_accessory_unlocked_local(accessory_id: String) -> bool:
+	for data in accessories_data:
+		if str(data.id) == accessory_id:
+			return bool(data.unlocked)
+	return accessory_id == "character_default"
+
+
+func _show_decorations() -> void:
+	for dec_data in decorations_data:
+		var card = _create_decoration_card(dec_data)
+		grid_container.add_child(card)
+
+
+func _create_decoration_card(data: Dictionary) -> PanelContainer:
+	var card = PanelContainer.new()
+	card.custom_minimum_size = Vector2(160, 200)
+
+	var card_style = StyleBoxFlat.new()
+	if data.unlocked:
+		card_style.bg_color = Color(0.94, 0.98, 1.0)
+		card_style.border_color = Color(0.4, 0.75, 0.6)
+	else:
+		card_style.bg_color = Color(0.92, 0.92, 0.92)
+		card_style.border_color = Color(0.7, 0.7, 0.7)
+	card_style.corner_radius_top_left = 15
+	card_style.corner_radius_top_right = 15
+	card_style.corner_radius_bottom_left = 15
+	card_style.corner_radius_bottom_right = 15
+	card_style.border_width_left = 3
+	card_style.border_width_right = 3
+	card_style.border_width_top = 3
+	card_style.border_width_bottom = 3
+	card.add_theme_stylebox_override("panel", card_style)
+
+	var vbox = VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 8)
+	vbox.alignment = BoxContainer.ALIGNMENT_CENTER
+	card.add_child(vbox)
+
+	var icon = Label.new()
+	icon.text = data.icon if data.unlocked else "🔒"
+	icon.add_theme_font_size_override("font_size", 48)
+	icon.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	vbox.add_child(icon)
+
+	var name_label = Label.new()
+	name_label.text = data.name
+	name_label.add_theme_font_size_override("font_size", 16)
+	name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	if not data.unlocked:
+		name_label.add_theme_color_override(
+			"font_color", Color(0.5, 0.5, 0.5)
+		)
+	vbox.add_child(name_label)
+
+	if data.unlocked:
+		# Toggle on/off
+		var toggle = CheckButton.new()
+		toggle.text = "Show"
+		toggle.button_pressed = bool(data.get("enabled", false))
+		toggle.add_theme_font_size_override("font_size", 14)
+		toggle.toggled.connect(
+			_on_toggle_decoration.bind(str(data.id))
+		)
+		vbox.add_child(toggle)
+	else:
+		var buy_btn = Button.new()
+		buy_btn.text = "💧 " + str(data.cost)
+		buy_btn.custom_minimum_size = Vector2(100, 35)
+		var btn_style = StyleBoxFlat.new()
+		btn_style.bg_color = Color(0.3, 0.7, 1.0)
+		btn_style.corner_radius_top_left = 8
+		btn_style.corner_radius_top_right = 8
+		btn_style.corner_radius_bottom_left = 8
+		btn_style.corner_radius_bottom_right = 8
+		buy_btn.add_theme_stylebox_override("normal", btn_style)
+		buy_btn.add_theme_stylebox_override("hover", btn_style)
+		buy_btn.add_theme_font_size_override("font_size", 16)
+		buy_btn.add_theme_color_override(
+			"font_color", Color.WHITE
+		)
+		buy_btn.pressed.connect(
+			_on_buy_decoration.bind(str(data.id))
+		)
+		vbox.add_child(buy_btn)
+
+	return card
+
+
+func _on_buy_decoration(dec_id: String) -> void:
+	if AudioManager:
+		AudioManager.play_click()
+	var save_mgr = get_node_or_null("/root/SaveManager")
+	for i in range(decorations_data.size()):
+		if str(decorations_data[i].id) == dec_id:
+			var cost = int(decorations_data[i].cost)
+			if save_mgr:
+				if save_mgr.spend_droplets(cost):
+					if save_mgr.has_method("unlock_decoration"):
+						save_mgr.unlock_decoration(dec_id)
+					if save_mgr.has_method("toggle_decoration"):
+						save_mgr.toggle_decoration(dec_id, true)
+					decorations_data[i].unlocked = true
+					decorations_data[i].enabled = true
+					if GameManager:
+						GameManager.water_droplets = (
+							save_mgr.get_droplets()
+						)
+				else:
+					_show_insufficient_funds()
+			else:
+				var cc = GameManager.water_droplets if GameManager else 0
+				if cc >= cost:
+					if GameManager:
+						GameManager.water_droplets -= cost
+					decorations_data[i].unlocked = true
+					decorations_data[i].enabled = true
+				else:
+					_show_insufficient_funds()
+			_update_currency_display()
+			_update_display()
+			break
+
+
+func _on_toggle_decoration(enabled: bool, dec_id: String) -> void:
+	var save_mgr = get_node_or_null("/root/SaveManager")
+	for i in range(decorations_data.size()):
+		if str(decorations_data[i].id) == dec_id:
+			decorations_data[i].enabled = enabled
+			if save_mgr and save_mgr.has_method("toggle_decoration"):
+				save_mgr.toggle_decoration(dec_id, enabled)
+			break
+
 func _on_back_pressed() -> void:
 	if AudioManager:
 		AudioManager.play_click()
-	get_tree().change_scene_to_file("res://scenes/ui/InitialScreen.tscn")
+	if GameManager and GameManager.has_method("transition_to_scene"):
+		GameManager.transition_to_scene("res://scenes/ui/InitialScreen.tscn")
+	else:
+		get_tree().change_scene_to_file("res://scenes/ui/InitialScreen.tscn")
 
 func _on_language_changed(_new_lang: String) -> void:
 	pass  # Add translations if needed

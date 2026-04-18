@@ -40,6 +40,82 @@ const DARK_PALETTE := {
 	"warning": Color(1.0, 0.8, 0.3)
 }
 
+# Mini-game visual themes (bright, kid-friendly, and readable)
+const MINIGAME_THEME_PALETTES := {
+	"aqua_blue": {
+		"bg_primary": Color(0.73, 0.90, 0.99, 1.0),
+		"bg_secondary": Color(0.56, 0.79, 0.95, 1.0),
+		"bg_wash": Color(0.86, 0.95, 1.0, 0.32),
+		"tint_modulate": Color(0.96, 0.99, 1.0, 1.0),
+		"scene_blend": 0.24,
+	},
+	"garden_green": {
+		"bg_primary": Color(0.82, 0.95, 0.74, 1.0),
+		"bg_secondary": Color(0.67, 0.88, 0.55, 1.0),
+		"bg_wash": Color(0.93, 1.0, 0.86, 0.30),
+		"tint_modulate": Color(0.97, 1.0, 0.95, 1.0),
+		"scene_blend": 0.26,
+	},
+	"bubble_pop": {
+		"bg_primary": Color(0.94, 0.87, 0.97, 1.0),
+		"bg_secondary": Color(0.78, 0.88, 1.0, 1.0),
+		"bg_wash": Color(1.0, 0.97, 1.0, 0.27),
+		"tint_modulate": Color(0.99, 0.97, 1.0, 1.0),
+		"scene_blend": 0.23,
+	},
+	"earthy_orange": {
+		"bg_primary": Color(0.98, 0.88, 0.74, 1.0),
+		"bg_secondary": Color(0.93, 0.67, 0.46, 1.0),
+		"bg_wash": Color(1.0, 0.95, 0.85, 0.28),
+		"tint_modulate": Color(1.0, 0.97, 0.93, 1.0),
+		"scene_blend": 0.24,
+	},
+	"sunny_yellow": {
+		"bg_primary": Color(1.0, 0.95, 0.74, 1.0),
+		"bg_secondary": Color(1.0, 0.86, 0.49, 1.0),
+		"bg_wash": Color(1.0, 0.99, 0.88, 0.28),
+		"tint_modulate": Color(1.0, 0.98, 0.94, 1.0),
+		"scene_blend": 0.22,
+	},
+}
+
+const MINIGAME_THEME_KEYWORDS: Array[Dictionary] = [
+	{
+		"id": "garden_green",
+		"keywords": ["vegetable", "plant", "thirsty", "leaf", "garden"],
+	},
+	{
+		"id": "bubble_pop",
+		"keywords": ["soap", "shower", "scrub", "wring", "bath", "wash"],
+	},
+	{
+		"id": "earthy_orange",
+		"keywords": ["mud", "pie", "bucket"],
+	},
+	{
+		"id": "sunny_yellow",
+		"keywords": ["timing", "memory", "dash"],
+	},
+	{
+		"id": "aqua_blue",
+		"keywords": [
+			"rain",
+			"water",
+			"leak",
+			"pipe",
+			"tap",
+			"drum",
+			"cloud",
+			"filter",
+			"grey",
+			"toilet",
+			"speck",
+			"rice",
+		],
+	},
+]
+const DEFAULT_MINIGAME_THEME_ID := "aqua_blue"
+
 func _ready() -> void:
 	# Apply saved theme on startup
 	call_deferred("_apply_initial_theme")
@@ -73,6 +149,39 @@ func get_color(color_name: String) -> Color:
 func get_palette() -> Dictionary:
 	# Get the current color palette.
 	return DARK_PALETTE if is_dark_mode() else LIGHT_PALETTE
+
+
+func get_minigame_theme_id_for_name(minigame_name: String) -> String:
+	var key = _normalize_minigame_theme_key(minigame_name)
+	if key.is_empty():
+		return DEFAULT_MINIGAME_THEME_ID
+
+	for bucket in MINIGAME_THEME_KEYWORDS:
+		var theme_id = str(bucket.get("id", ""))
+		var keywords: Array = bucket.get("keywords", [])
+		for raw_kw in keywords:
+			var kw = _normalize_minigame_theme_key(str(raw_kw))
+			if not kw.is_empty() and key.contains(kw):
+				if MINIGAME_THEME_PALETTES.has(theme_id):
+					return theme_id
+
+	return DEFAULT_MINIGAME_THEME_ID
+
+
+func get_minigame_theme_for_name(minigame_name: String) -> Dictionary:
+	var theme_id = get_minigame_theme_id_for_name(minigame_name)
+	return MINIGAME_THEME_PALETTES.get(
+		theme_id,
+		MINIGAME_THEME_PALETTES[DEFAULT_MINIGAME_THEME_ID]
+	)
+
+
+func _normalize_minigame_theme_key(raw_text: String) -> String:
+	var t = raw_text.strip_edges().to_lower()
+	t = t.replace("_", "")
+	t = t.replace("-", "")
+	t = t.replace(" ", "")
+	return t
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # HELPER METHODS FOR UI ELEMENTS
