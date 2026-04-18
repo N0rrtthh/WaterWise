@@ -70,8 +70,14 @@ func _ready() -> void:
 func play_cutscene(
 	minigame_key: String,
 	cutscene_type: CutsceneTypes.CutsceneType,
-	options: Dictionary = {}
+	_options: Dictionary = {}
 ) -> void:
+	var force_legacy: bool = bool(_options.get("force_legacy", false))
+	if force_legacy:
+		await _fallback_to_legacy_cutscene(minigame_key, cutscene_type)
+		cutscene_finished.emit()
+		return
+
 	if _is_playing:
 		push_warning("[AnimatedCutscenePlayer] Cutscene already playing, ignoring request")
 		return
@@ -89,29 +95,31 @@ func play_cutscene(
 		return
 	
 	# Load configuration with error handling
-	var config = _load_config(minigame_key, cutscene_type)
-	if not config:
+	var cutscene_config = _load_config(minigame_key, cutscene_type)
+	if not cutscene_config:
 		push_error("[AnimatedCutscenePlayer] Failed to load configuration for " + minigame_key + 
 			" (type: " + _cutscene_type_to_string(cutscene_type) + "). " +
 			"Using minimal default configuration to prevent blocking game progression.")
 		# Create minimal config as last resort fallback
-		config = _create_minimal_config(minigame_key, cutscene_type)
+		cutscene_config = _create_minimal_config(minigame_key, cutscene_type)
 	
 	# Validate configuration with fallback to defaults for invalid fields
-	var validation = CutsceneParser.validate_config(config)
+	var validation = CutsceneParser.validate_config(cutscene_config)
 	if validation.has_errors():
-		push_warning("[AnimatedCutscenePlayer] Configuration validation found issues for " + minigame_key + 
-			" (type: " + _cutscene_type_to_string(cutscene_type) + "):\n" + 
-			validation.get_error_message() + 
-			"\nApplying default values for invalid fields to continue playback.")
+		push_warning(
+			"[AnimatedCutscenePlayer] Configuration validation found issues for " + minigame_key +
+			" (type: " + _cutscene_type_to_string(cutscene_type) + "):\n" +
+			validation.get_error_message() +
+			"\nApplying default values for invalid fields to continue playback."
+		)
 		# Apply default values for invalid fields instead of failing
-		config = _apply_validation_defaults(config, validation)
+		cutscene_config = _apply_validation_defaults(cutscene_config, validation)
 	
 	# Set up scene
-	_setup_cutscene(config)
+	_setup_cutscene(cutscene_config)
 	
 	# Play animation
-	await _play_animation(config)
+	await _play_animation(cutscene_config)
 	
 	# Clean up
 	_cleanup_cutscene()
@@ -136,17 +144,21 @@ func preload_cutscene(minigame_key: String) -> void:
 		_animation_cache[minigame_key] = {}
 	
 	# Preload all cutscene types for this minigame
-	for cutscene_type in [CutsceneTypes.CutsceneType.INTRO, CutsceneTypes.CutsceneType.WIN, CutsceneTypes.CutsceneType.FAIL]:
-		var config = _load_config(minigame_key, cutscene_type)
-		if config:
+	for cutscene_type in [
+		CutsceneTypes.CutsceneType.INTRO,
+		CutsceneTypes.CutsceneType.WIN,
+		CutsceneTypes.CutsceneType.FAIL
+	]:
+		var preload_config = _load_config(minigame_key, cutscene_type)
+		if preload_config:
 			# Cache the configuration for quick access
-			_animation_cache[minigame_key][cutscene_type] = config
+			_animation_cache[minigame_key][cutscene_type] = preload_config
 			
 			# Preload character expression textures referenced in config
-			_preload_character_textures(config)
+			_preload_character_textures(preload_config)
 			
 			# Preload particle effect scenes referenced in config
-			_preload_particle_scenes(config)
+			_preload_particle_scenes(preload_config)
 
 
 ## Preload character expression textures from configuration
@@ -162,7 +174,10 @@ static func _preload_character_textures(config: CutsceneDataModels.CutsceneConfi
 			if texture:
 				_texture_cache[texture_path] = texture
 		else:
-			push_warning("[AnimatedCutscenePlayer] Expression texture not found during preload: " + texture_path)
+			push_warning(
+				"[AnimatedCutscenePlayer] Expression texture not found " +
+				"during preload: " + texture_path
+			)
 
 
 ## Preload particle effect scenes from configuration
@@ -181,7 +196,9 @@ static func _preload_particle_scenes(config: CutsceneDataModels.CutsceneConfig) 
 			if scene:
 				_particle_scene_cache[particle_type] = scene
 		else:
-			push_warning("[AnimatedCutscenePlayer] Particle scene not found during preload: " + scene_path)
+			push_warning(
+				"[AnimatedCutscenePlayer] Particle scene not found during preload: " + scene_path
+			)
 
 
 ## Check if a custom cutscene exists for a minigame
@@ -235,7 +252,10 @@ static func _get_pooled_particle(particle_type: CutsceneTypes.ParticleType) -> G
 ## Return a particle effect to the object pool for reuse
 ## @param particle: The particle effect to return
 ## @param particle_type: The type of particle effect
-static func _return_pooled_particle(particle: GPUParticles2D, particle_type: CutsceneTypes.ParticleType) -> void:
+static func _return_pooled_particle(
+	particle: GPUParticles2D,
+	particle_type: CutsceneTypes.ParticleType
+) -> void:
 	if not is_instance_valid(particle):
 		return
 	
@@ -280,7 +300,7 @@ static func get_memory_stats() -> Dictionary:
 	return {
 		"static_memory_mb": OS.get_static_memory_usage() / 1024.0 / 1024.0,
 		"peak_memory_mb": OS.get_static_memory_peak_usage() / 1024.0 / 1024.0,
-		"memory_ratio": ParticleEffectManager._get_memory_usage_ratio(),
+		"memory_ratio": _get_memory_usage_ratio(),
 		"cached_animations": _animation_cache.size(),
 		"cached_textures": _texture_cache.size(),
 		"cached_particle_scenes": _particle_scene_cache.size(),
@@ -294,6 +314,14 @@ static func _get_total_pooled_particles() -> int:
 	for pool in _particle_pool.values():
 		total += pool.size()
 	return total
+
+
+static func _get_memory_usage_ratio() -> float:
+	var static_memory = OS.get_static_memory_usage()
+	var peak_memory = OS.get_static_memory_peak_usage()
+	if peak_memory == 0:
+		return 0.0
+	return float(static_memory) / float(peak_memory)
 
 
 # ============================================================================
@@ -311,11 +339,16 @@ func _load_character_scene() -> void:
 		if _character_scene:
 			push_warning("[AnimatedCutscenePlayer] Character scene loaded successfully")
 		else:
-			push_error("[AnimatedCutscenePlayer] Failed to load character scene from: " + CHARACTER_SCENE_PATH + 
-				". Will fall back to legacy emoji cutscenes.")
+			push_error(
+				"[AnimatedCutscenePlayer] Failed to load character scene " +
+				"from: " + CHARACTER_SCENE_PATH +
+				". Will fall back to legacy emoji cutscenes."
+			)
 	else:
-		push_error("[AnimatedCutscenePlayer] Character scene not found at: " + CHARACTER_SCENE_PATH + 
-			". Will fall back to legacy emoji cutscenes.")
+		push_error(
+			"[AnimatedCutscenePlayer] Character scene not found at: " + CHARACTER_SCENE_PATH +
+			". Will fall back to legacy emoji cutscenes."
+		)
 
 
 ## Check if character assets are available
@@ -328,9 +361,14 @@ func _can_use_animated_cutscene() -> bool:
 ## Implements Requirement 12.2: Fallback to legacy emoji cutscenes on asset load failure
 ## @param minigame_key: The minigame identifier
 ## @param cutscene_type: The type of cutscene
-func _fallback_to_legacy_cutscene(minigame_key: String, cutscene_type: CutsceneTypes.CutsceneType) -> void:
-	push_warning("[AnimatedCutscenePlayer] Falling back to legacy emoji cutscene for " + minigame_key + 
-		" (type: " + _cutscene_type_to_string(cutscene_type) + ")")
+func _fallback_to_legacy_cutscene(
+	minigame_key: String,
+	cutscene_type: CutsceneTypes.CutsceneType
+) -> void:
+	push_warning(
+		"[AnimatedCutscenePlayer] Falling back to legacy emoji cutscene for " + minigame_key +
+		" (type: " + _cutscene_type_to_string(cutscene_type) + ")"
+	)
 	
 	# Create a simple emoji-based display
 	var emoji_label = Label.new()
@@ -358,7 +396,10 @@ func _fallback_to_legacy_cutscene(minigame_key: String, cutscene_type: CutsceneT
 	
 	if not tween:
 		# If tween creation fails, show static emoji for fixed duration
-		push_warning("[AnimatedCutscenePlayer] Failed to create tween for emoji fallback, using static display")
+		push_warning(
+			"[AnimatedCutscenePlayer] Failed to create tween for " +
+			"emoji fallback, using static display"
+		)
 		emoji_label.modulate.a = 1.0
 		var static_timer = get_tree().create_timer(2.0)
 		if static_timer:
@@ -383,7 +424,10 @@ func _fallback_to_legacy_cutscene(minigame_key: String, cutscene_type: CutsceneT
 # PRIVATE METHODS - Configuration Loading
 # ============================================================================
 
-func _load_config(minigame_key: String, cutscene_type: CutsceneTypes.CutsceneType) -> CutsceneDataModels.CutsceneConfig:
+func _load_config(
+	minigame_key: String,
+	cutscene_type: CutsceneTypes.CutsceneType
+) -> CutsceneDataModels.CutsceneConfig:
 	# Check cache first
 	if _animation_cache.has(minigame_key) and _animation_cache[minigame_key].has(cutscene_type):
 		return _animation_cache[minigame_key][cutscene_type]
@@ -391,17 +435,18 @@ func _load_config(minigame_key: String, cutscene_type: CutsceneTypes.CutsceneTyp
 	# Try custom minigame-specific configuration first
 	var custom_path = _get_config_path(minigame_key, cutscene_type)
 	if FileAccess.file_exists(custom_path):
-		var config = CutsceneParser.parse_config(custom_path)
-		if config:
+		var custom_config = CutsceneParser.parse_config(custom_path)
+		if custom_config:
 			# Cache the loaded configuration
 			if not _animation_cache.has(minigame_key):
 				_animation_cache[minigame_key] = {}
-			_animation_cache[minigame_key][cutscene_type] = config
+			_animation_cache[minigame_key][cutscene_type] = custom_config
 			print("[AnimatedCutscenePlayer] Loaded custom cutscene configuration: " + custom_path)
-			return config
-		else:
-			push_warning("[AnimatedCutscenePlayer] Failed to parse custom configuration file: " + custom_path + 
-				". Falling back to default configuration.")
+			return custom_config
+		push_warning(
+			"[AnimatedCutscenePlayer] Failed to parse custom configuration file: " + custom_path +
+			". Falling back to default configuration."
+		)
 	else:
 		print("[AnimatedCutscenePlayer] No custom cutscene found for " + minigame_key + 
 			" (type: " + _cutscene_type_to_string(cutscene_type) + "). " +
@@ -410,30 +455,33 @@ func _load_config(minigame_key: String, cutscene_type: CutsceneTypes.CutsceneTyp
 	# Fall back to default configuration
 	var default_path = _get_default_config_path(cutscene_type)
 	if FileAccess.file_exists(default_path):
-		var config = CutsceneParser.parse_config(default_path)
-		if config:
+		var default_config = CutsceneParser.parse_config(default_path)
+		if default_config:
 			# Cache the default configuration
 			if not _animation_cache.has(minigame_key):
 				_animation_cache[minigame_key] = {}
-			_animation_cache[minigame_key][cutscene_type] = config
+			_animation_cache[minigame_key][cutscene_type] = default_config
 			print("[AnimatedCutscenePlayer] Loaded default cutscene configuration: " + default_path)
-			return config
-		else:
-			push_warning("[AnimatedCutscenePlayer] Failed to parse default configuration file: " + default_path + 
-				". Creating minimal fallback configuration.")
+			return default_config
+		push_warning(
+			"[AnimatedCutscenePlayer] Failed to parse default configuration file: " + default_path +
+			". Creating minimal fallback configuration."
+		)
 	else:
-		push_warning("[AnimatedCutscenePlayer] Default configuration file not found: " + default_path + 
-			". Creating minimal fallback configuration.")
+		push_warning(
+			"[AnimatedCutscenePlayer] Default configuration file not found: " + default_path +
+			". Creating minimal fallback configuration."
+		)
 	
 	# Last resort: create minimal default configuration
 	print("[AnimatedCutscenePlayer] Creating minimal fallback configuration for " + minigame_key + 
 		" (type: " + _cutscene_type_to_string(cutscene_type) + ")")
-	var config = _create_minimal_config(minigame_key, cutscene_type)
+	var fallback_config = _create_minimal_config(minigame_key, cutscene_type)
 	# Cache the minimal configuration
 	if not _animation_cache.has(minigame_key):
 		_animation_cache[minigame_key] = {}
-	_animation_cache[minigame_key][cutscene_type] = config
-	return config
+	_animation_cache[minigame_key][cutscene_type] = fallback_config
+	return fallback_config
 
 
 func _get_config_path(minigame_key: String, cutscene_type: CutsceneTypes.CutsceneType) -> String:
@@ -511,42 +559,55 @@ func _apply_validation_defaults(
 	# Re-validate to ensure we fixed the critical issues
 	var revalidation = CutsceneParser.validate_config(config)
 	if revalidation.has_errors():
-		push_warning("[AnimatedCutscenePlayer] Some validation errors remain after applying defaults. " +
-			"Creating minimal fallback configuration.")
+		push_warning(
+			"[AnimatedCutscenePlayer] Some validation errors remain after applying defaults. " +
+			"Creating minimal fallback configuration."
+		)
 		# If we still have errors, create a completely new minimal config
 		return _create_minimal_config(config.minigame_key, config.cutscene_type)
 	
 	return config
 
 
-func _create_minimal_config(minigame_key: String, cutscene_type: CutsceneTypes.CutsceneType) -> CutsceneDataModels.CutsceneConfig:
-	var config = CutsceneDataModels.CutsceneConfig.new()
-	config.minigame_key = minigame_key
-	config.cutscene_type = cutscene_type
-	config.duration = 2.0
+func _create_minimal_config(
+	minigame_key: String,
+	cutscene_type: CutsceneTypes.CutsceneType
+) -> CutsceneDataModels.CutsceneConfig:
+	var minimal_config = CutsceneDataModels.CutsceneConfig.new()
+	minimal_config.minigame_key = minigame_key
+	minimal_config.cutscene_type = cutscene_type
+	minimal_config.duration = 2.0
 	
 	# Set expression based on cutscene type
 	match cutscene_type:
 		CutsceneTypes.CutsceneType.WIN:
-			config.character.expression = CutsceneTypes.CharacterExpression.HAPPY
+			minimal_config.character.expression = CutsceneTypes.CharacterExpression.HAPPY
 		CutsceneTypes.CutsceneType.FAIL:
-			config.character.expression = CutsceneTypes.CharacterExpression.SAD
+			minimal_config.character.expression = CutsceneTypes.CharacterExpression.SAD
 		CutsceneTypes.CutsceneType.INTRO:
-			config.character.expression = CutsceneTypes.CharacterExpression.DETERMINED
+			minimal_config.character.expression = CutsceneTypes.CharacterExpression.DETERMINED
 	
 	# Create simple animation: pop in and settle
 	var keyframe1 = CutsceneDataModels.Keyframe.new(0.0)
-	var scale_transform1 = CutsceneDataModels.Transform.new(CutsceneTypes.TransformType.SCALE, Vector2(0.3, 0.3), false)
+	var scale_transform1 = CutsceneDataModels.Transform.new(
+		CutsceneTypes.TransformType.SCALE,
+		Vector2(0.3, 0.3),
+		false
+	)
 	keyframe1.add_transform(scale_transform1)
 	keyframe1.easing = CutsceneTypes.Easing.EASE_OUT
 	
 	var keyframe2 = CutsceneDataModels.Keyframe.new(1.0)
-	var scale_transform2 = CutsceneDataModels.Transform.new(CutsceneTypes.TransformType.SCALE, Vector2(1.0, 1.0), false)
+	var scale_transform2 = CutsceneDataModels.Transform.new(
+		CutsceneTypes.TransformType.SCALE,
+		Vector2(1.0, 1.0),
+		false
+	)
 	keyframe2.add_transform(scale_transform2)
 	keyframe2.easing = CutsceneTypes.Easing.EASE_IN_OUT
 	
-	config.add_keyframe(keyframe1)
-	config.add_keyframe(keyframe2)
+	minimal_config.add_keyframe(keyframe1)
+	minimal_config.add_keyframe(keyframe2)
 	
 	# Add contextual particle effect for win and fail cutscenes
 	if cutscene_type != CutsceneTypes.CutsceneType.INTRO:
@@ -556,9 +617,9 @@ func _create_minimal_config(minigame_key: String, cutscene_type: CutsceneTypes.C
 			0.5,
 			1.5
 		)
-		config.add_particle(particle)
+		minimal_config.add_particle(particle)
 	
-	return config
+	return minimal_config
 
 
 # ============================================================================
@@ -566,19 +627,11 @@ func _create_minimal_config(minigame_key: String, cutscene_type: CutsceneTypes.C
 # ============================================================================
 
 func _setup_cutscene(config: CutsceneDataModels.CutsceneConfig) -> void:
-	# Set initial background color (will be transitioned during animation)
-	if _background:
-		# Store the initial color for potential transitions
-		var initial_color = _background.color
-		
-		# If the target color is different, we'll transition during animation
-		# For now, set it to the initial state
-		# The transition will happen in _play_animation if needed
-		pass
-	
 	# Instantiate character with error handling (Requirement 12.2, 12.5)
 	if not _character_scene:
-		push_error("[AnimatedCutscenePlayer] Character scene not loaded, cannot instantiate character")
+		push_error(
+			"[AnimatedCutscenePlayer] Character scene not loaded, cannot instantiate character"
+		)
 		return
 	
 	_current_character = _character_scene.instantiate()
@@ -620,7 +673,10 @@ func _setup_cutscene(config: CutsceneDataModels.CutsceneConfig) -> void:
 
 func _play_animation(config: CutsceneDataModels.CutsceneConfig) -> void:
 	if not _current_character:
-		push_warning("[AnimatedCutscenePlayer] No character available for animation, skipping cutscene playback")
+		push_warning(
+			"[AnimatedCutscenePlayer] No character available for animation, " +
+			"skipping cutscene playback"
+		)
 		return
 	
 	# Start background color transition if the target color is different
@@ -663,7 +719,9 @@ func _play_animation(config: CutsceneDataModels.CutsceneConfig) -> void:
 	if _current_tween and _current_tween.is_valid():
 		await _current_tween.finished
 	else:
-		push_warning("[AnimatedCutscenePlayer] Tween became invalid during playback, using fallback timing")
+		push_warning(
+			"[AnimatedCutscenePlayer] Tween became invalid during playback, using fallback timing"
+		)
 		await _fallback_static_display(config.duration)
 
 
@@ -674,7 +732,9 @@ func _schedule_particle_effect(particle: CutsceneDataModels.ParticleEffect) -> v
 	# Wait for the specified time
 	var timer = get_tree().create_timer(particle.time)
 	if not timer:
-		push_warning("[AnimatedCutscenePlayer] Failed to create timer for particle effect, skipping")
+		push_warning(
+			"[AnimatedCutscenePlayer] Failed to create timer for particle effect, skipping"
+		)
 		return
 	_scheduled_timers.append(timer)
 	await timer.timeout
@@ -686,8 +746,11 @@ func _schedule_particle_effect(particle: CutsceneDataModels.ParticleEffect) -> v
 		
 		if not particle_node:
 			# Graceful degradation: Skip particles if texture/scene is missing or allocation fails
-			push_warning("[AnimatedCutscenePlayer] Skipping particle effect due to missing texture/scene or memory allocation failure: " + 
-				str(particle.type) + ". Continuing cutscene without particles.")
+			push_warning(
+				"[AnimatedCutscenePlayer] Skipping particle effect due to missing texture/scene " +
+				"or memory allocation failure: " +
+				str(particle.type) + ". Continuing cutscene without particles."
+			)
 			return
 		
 		# Add to character's particle container with error recovery (Requirement 12.5)
@@ -710,7 +773,10 @@ func _schedule_particle_effect(particle: CutsceneDataModels.ParticleEffect) -> v
 			var cleanup_timer = get_tree().create_timer(particle.duration)
 			if not cleanup_timer:
 				# If timer creation fails, clean up immediately to prevent memory leak
-				push_warning("[AnimatedCutscenePlayer] Failed to create cleanup timer, cleaning up particle immediately")
+				push_warning(
+					"[AnimatedCutscenePlayer] Failed to create cleanup timer, " +
+					"cleaning up particle immediately"
+				)
 				particle_node.emitting = false
 				_active_particles.erase(particle_node)
 				_return_pooled_particle(particle_node, particle.type)
@@ -735,17 +801,22 @@ func _schedule_audio_cue(audio: CutsceneDataModels.AudioCue) -> void:
 	# Wait for the specified time with error recovery (Requirement 12.5)
 	var timer = get_tree().create_timer(audio.time)
 	if not timer:
-		push_warning("[AnimatedCutscenePlayer] Failed to create timer for audio cue, playing immediately")
+		push_warning(
+			"[AnimatedCutscenePlayer] Failed to create timer for audio cue, playing immediately"
+		)
 		# Fallback: Play audio immediately if timer creation fails
 		_play_audio_by_name(audio.sound)
 		return
 	_scheduled_timers.append(timer)
 	await timer.timeout
 	
-	# Play audio through AudioManager if available (Requirement 12.4: graceful audio failure handling)
+	# Play audio through AudioManager if available.
 	if not AudioManager:
-		push_warning("[AnimatedCutscenePlayer] AudioManager not available, skipping audio cue: " + audio.sound + 
-			". Continuing cutscene without audio.")
+		push_warning(
+			"[AnimatedCutscenePlayer] AudioManager not available, skipping audio cue: " +
+			audio.sound +
+			". Continuing cutscene without audio."
+		)
 		return
 	
 	# Try to play audio, but don't fail if it doesn't work
@@ -756,7 +827,9 @@ func _schedule_screen_shake(shake: CutsceneDataModels.ScreenShake) -> void:
 	# Wait for the specified time with error recovery (Requirement 12.5)
 	var timer = get_tree().create_timer(shake.time)
 	if not timer:
-		push_warning("[AnimatedCutscenePlayer] Failed to create timer for screen shake, skipping effect")
+		push_warning(
+			"[AnimatedCutscenePlayer] Failed to create timer for screen shake, skipping effect"
+		)
 		return
 	_scheduled_timers.append(timer)
 	await timer.timeout
@@ -801,9 +874,8 @@ func _start_background_transition(target_color: Color, duration: float) -> void:
 ## Implements Requirement 12.5: Ensure game progression never blocks on cutscene errors
 ## @param duration: How long to display the static character
 func _fallback_static_display(duration: float) -> void:
-	"""Display character statically for the specified duration when animation fails.
-	This ensures the cutscene completes and game progression continues even if
-	the animation engine fails."""
+	# Display character statically for the specified duration when animation fails.
+	# This ensures cutscene completion and game progression even if animation fails.
 	print("[AnimatedCutscenePlayer] Using fallback static display for %.1f seconds" % duration)
 	
 	# Simply wait for the duration - character is already visible
@@ -822,9 +894,7 @@ func _fallback_static_display(duration: float) -> void:
 
 
 func _apply_screen_shake(camera: Camera2D, intensity: float, duration: float) -> void:
-	"""Apply screen shake effect to the camera using viewport offset
-	Implements Requirement 12.5: Runtime error handling for animation failures
-	"""
+	# Apply screen shake effect to the camera using viewport offset.
 	if not camera:
 		return
 	
@@ -833,7 +903,9 @@ func _apply_screen_shake(camera: Camera2D, intensity: float, duration: float) ->
 	
 	# Handle tween creation failure gracefully (Requirement 12.5)
 	if not shake_tween:
-		push_warning("[AnimatedCutscenePlayer] Failed to create screen shake tween, skipping effect")
+		push_warning(
+			"[AnimatedCutscenePlayer] Failed to create screen shake tween, skipping effect"
+		)
 		return
 	
 	# Calculate number of shake iterations based on duration
@@ -862,7 +934,9 @@ func _schedule_text_overlay(overlay: CutsceneDataModels.TextOverlay) -> void:
 	# Create and add text overlay with memory allocation error handling (Requirement 12.5)
 	var text_overlay = AnimatedTextOverlay.new()
 	if not text_overlay:
-		push_warning("[AnimatedCutscenePlayer] Failed to allocate text overlay node, skipping text display")
+		push_warning(
+			"[AnimatedCutscenePlayer] Failed to allocate text overlay node, skipping text display"
+		)
 		return
 	
 	add_child(text_overlay)
@@ -877,18 +951,7 @@ func _schedule_text_overlay(overlay: CutsceneDataModels.TextOverlay) -> void:
 # ============================================================================
 
 func _cleanup_cutscene() -> void:
-	"""Comprehensive cleanup of all cutscene resources
-	
-	This method implements Requirements 9.6 (resource cleanup) by:
-	- Killing and freeing all active tweens
-	- Stopping and returning particles to object pool
-	- Removing temporary text overlay nodes
-	- Clearing scheduled timer references
-	- Freeing the character node
-	
-	Memory monitoring (Requirement 9.5) is handled by checking memory
-	usage and clearing caches if needed.
-	"""
+	# Comprehensive cleanup of all active cutscene resources.
 	
 	# Kill tweens
 	if _current_tween and _current_tween.is_valid():
@@ -927,9 +990,12 @@ func _cleanup_cutscene() -> void:
 		_current_character = null
 	
 	# Check memory usage and clear caches if needed (adaptive quality reduction)
-	var memory_ratio = ParticleEffectManager._get_memory_usage_ratio()
+	var memory_ratio = _get_memory_usage_ratio()
 	if memory_ratio > 0.8:  # 80% memory usage threshold
-		push_warning("[AnimatedCutscenePlayer] High memory usage detected (%.1f%%), clearing caches" % (memory_ratio * 100))
+		push_warning(
+			"[AnimatedCutscenePlayer] High memory usage detected (%.1f%%), clearing caches"
+			% (memory_ratio * 100)
+		)
 		clear_caches()
 
 
@@ -949,13 +1015,13 @@ func _identify_particle_type(particle: GPUParticles2D) -> CutsceneTypes.Particle
 	var node_name = particle.name.to_lower()
 	if "sparkle" in node_name:
 		return CutsceneTypes.ParticleType.SPARKLES
-	elif "water" in node_name or "drop" in node_name:
+	if "water" in node_name or "drop" in node_name:
 		return CutsceneTypes.ParticleType.WATER_DROPS
-	elif "star" in node_name:
+	if "star" in node_name:
 		return CutsceneTypes.ParticleType.STARS
-	elif "smoke" in node_name:
+	if "smoke" in node_name:
 		return CutsceneTypes.ParticleType.SMOKE
-	elif "splash" in node_name:
+	if "splash" in node_name:
 		return CutsceneTypes.ParticleType.SPLASH
 	
 	# Default fallback
@@ -967,9 +1033,7 @@ func _identify_particle_type(particle: GPUParticles2D) -> CutsceneTypes.Particle
 # ============================================================================
 
 func _play_audio_by_name(sound_name: String) -> void:
-	"""Map sound name to AudioManager method and play it
-	Implements Requirement 12.4: Audio file failure handling (play without audio)
-	"""
+	# Map sound name to AudioManager method and play it.
 	# Wrap audio playback in error handling to prevent cutscene blocking
 	# If audio fails, log warning but continue cutscene
 	match sound_name.to_lower():
@@ -982,12 +1046,16 @@ func _play_audio_by_name(sound_name: String) -> void:
 			if AudioManager.has_method("play_water_splash"):
 				AudioManager.play_water_splash()
 			else:
-				push_warning("[AnimatedCutscenePlayer] AudioManager.play_water_splash() not available")
+				push_warning(
+					"[AnimatedCutscenePlayer] AudioManager.play_water_splash() not available"
+				)
 		"water_drop", "drop":
 			if AudioManager.has_method("play_water_drop"):
 				AudioManager.play_water_drop()
 			else:
-				push_warning("[AnimatedCutscenePlayer] AudioManager.play_water_drop() not available")
+				push_warning(
+					"[AnimatedCutscenePlayer] AudioManager.play_water_drop() not available"
+				)
 		"warning", "alert":
 			if AudioManager.has_method("play_sfx"):
 				AudioManager.play_sfx(AudioManager.SFXType.WARNING)
@@ -1002,7 +1070,9 @@ func _play_audio_by_name(sound_name: String) -> void:
 			if AudioManager.has_method("play_game_start"):
 				AudioManager.play_game_start()
 			else:
-				push_warning("[AnimatedCutscenePlayer] AudioManager.play_game_start() not available")
+				push_warning(
+					"[AnimatedCutscenePlayer] AudioManager.play_game_start() not available"
+				)
 		"ready", "countdown":
 			if AudioManager.has_method("play_countdown"):
 				AudioManager.play_countdown()

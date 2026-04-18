@@ -1,5 +1,4 @@
 class_name ParticleEffectManager
-extends RefCounted
 
 ## Manages particle effect selection and adaptive density for cutscenes
 ##
@@ -76,7 +75,7 @@ static func _is_water_themed_minigame(minigame_key: String) -> bool:
 ## Get current performance-based density factor
 ## @return: Density factor (0.3 to 1.0) based on current performance
 static func get_adaptive_density_factor() -> float:
-	var memory_usage = _get_memory_usage_ratio()
+	var memory_usage = get_memory_usage_ratio()
 	var current_fps = Engine.get_frames_per_second()
 	
 	# Check memory pressure
@@ -106,7 +105,7 @@ static func apply_adaptive_density(particles: GPUParticles2D) -> void:
 
 ## Get memory usage ratio (0.0 to 1.0)
 ## @return: Memory usage as a ratio of available memory
-static func _get_memory_usage_ratio() -> float:
+static func get_memory_usage_ratio() -> float:
 	var static_memory = OS.get_static_memory_usage()
 	var max_memory = OS.get_static_memory_peak_usage()
 	

@@ -287,7 +287,7 @@ func record_game_result(game_id: String, score: int, accuracy: float, time_secon
 	
 	return is_new_record
 
-func get_high_score(game_id: String) -> Dictionary:
+func get_high_score(game_id: String = "catch_rain") -> Dictionary:
 	if high_scores.has(game_id):
 		return high_scores[game_id]
 	return { "score": 0, "accuracy": 0.0, "best_time": 999.0, "times_played": 0 }
