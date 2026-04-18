@@ -40,6 +40,7 @@ var player_data: Dictionary = {
 	"total_play_time": 0,  # seconds
 	"current_level": 1,
 	"selected_character": "droppy_blue",
+	"selected_accessory": "character_default",
 	"first_play_date": "",
 	"last_play_date": ""
 }
@@ -53,7 +54,9 @@ var high_scores: Dictionary = {
 var unlocked_content: Dictionary = {
 	"characters": ["droppy_blue"],
 	"minigames": ["catch_rain", "pipe_puzzle"],
-	"themes": ["default"]
+	"themes": ["default"],
+	"accessories": ["character_default"],
+	"decorations": []
 }
 
 # Achievements
@@ -109,7 +112,11 @@ var settings: Dictionary = {
 	"screen_shake": true,
 	"particles": true,
 	"show_hints": true,
-	"auto_difficulty": true
+	"haptics_enabled": true,
+	"auto_difficulty": true,
+	"dev_mode": false,
+	"dev_show_profiler": false,
+	"dev_show_algorithm_overlay": false
 }
 
 # Session tracking (not saved)
@@ -124,6 +131,7 @@ var session_start_time: int = 0
 func _ready() -> void:
 	load_all_data()
 	session_start_time = int(Time.get_unix_time_from_system())
+	_ensure_accessory_defaults()
 	
 	# Set first play date if new player
 	if player_data.first_play_date == "":
@@ -218,6 +226,26 @@ func _merge_data(data: Dictionary) -> void:
 			if achievements.has(key):
 				achievements[key].unlocked = data.achievements[key].get("unlocked", false)
 
+	_ensure_accessory_defaults()
+
+
+func _ensure_accessory_defaults() -> void:
+	if not player_data.has("selected_accessory"):
+		player_data["selected_accessory"] = "character_default"
+
+	if not player_data.has("character_accessories"):
+		player_data["character_accessories"] = {}
+
+	if not unlocked_content.has("accessories"):
+		unlocked_content["accessories"] = ["character_default"]
+
+	if "character_default" not in unlocked_content["accessories"]:
+		unlocked_content["accessories"].append("character_default")
+
+	var selected = str(player_data.get("selected_accessory", "character_default"))
+	if selected not in unlocked_content["accessories"]:
+		player_data["selected_accessory"] = "character_default"
+
 func _save_settings() -> void:
 	var file = FileAccess.open(SETTINGS_PATH, FileAccess.WRITE)
 	if file:
@@ -297,15 +325,21 @@ func get_high_score(game_id: String = "catch_rain") -> Dictionary:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func add_droplets(amount: int) -> void:
+	if amount <= 0:
+		return
 	player_data.water_droplets += amount
 	if GameManager:
 		GameManager.water_droplets = player_data.water_droplets
+	save_all_data()
 
 func spend_droplets(amount: int) -> bool:
+	if amount <= 0:
+		return true
 	if player_data.water_droplets >= amount:
 		player_data.water_droplets -= amount
 		if GameManager:
 			GameManager.water_droplets = player_data.water_droplets
+		save_all_data()
 		return true
 	return false
 
@@ -327,19 +361,102 @@ func unlock_minigame(game_id: String) -> void:
 		unlocked_content.minigames.append(game_id)
 		save_all_data()
 
+func unlock_accessory(accessory_id: String) -> void:
+	_ensure_accessory_defaults()
+	if accessory_id not in unlocked_content.accessories:
+		unlocked_content.accessories.append(accessory_id)
+		save_all_data()
+
 func is_character_unlocked(char_id: String) -> bool:
 	return char_id in unlocked_content.characters
 
 func is_minigame_unlocked(game_id: String) -> bool:
 	return game_id in unlocked_content.minigames
 
+func is_accessory_unlocked(accessory_id: String) -> bool:
+	_ensure_accessory_defaults()
+	return accessory_id in unlocked_content.accessories
+
 func set_selected_character(char_id: String) -> void:
 	if is_character_unlocked(char_id):
 		player_data.selected_character = char_id
 		save_all_data()
 
+func set_selected_accessory(accessory_id: String) -> void:
+	if is_accessory_unlocked(accessory_id):
+		player_data["selected_accessory"] = accessory_id
+		save_all_data()
+
 func get_selected_character() -> String:
 	return player_data.selected_character
+
+func get_selected_accessory() -> String:
+	_ensure_accessory_defaults()
+	return str(player_data.get("selected_accessory", "character_default"))
+
+func get_accessory_icon(accessory_id: String) -> String:
+	var icon_map: Dictionary = {
+		"character_default": "",
+		"sun_hat": "👒",
+		"cool_shades": "🕶️",
+		"party_cap": "🎉",
+		"leaf_crown": "🍃",
+		"bow": "🎀",
+		"safety_helmet": "⛑️",
+	}
+	return str(icon_map.get(accessory_id, ""))
+
+
+func set_character_accessory(char_id: String, acc_id: String) -> void:
+	_ensure_accessory_defaults()
+	if not is_accessory_unlocked(acc_id):
+		return
+	player_data["character_accessories"][char_id] = acc_id
+	# Also update the global selected_accessory for the active character
+	if char_id == str(player_data.get("selected_character", "droppy_blue")):
+		player_data["selected_accessory"] = acc_id
+	save_all_data()
+
+
+func get_character_accessory(char_id: String) -> String:
+	_ensure_accessory_defaults()
+	var ca = player_data.get("character_accessories", {})
+	return str(ca.get(char_id, "character_default"))
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# DECORATIONS (boat, furniture, etc.)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+func _ensure_decoration_defaults() -> void:
+	if not unlocked_content.has("decorations"):
+		unlocked_content["decorations"] = []
+	if not player_data.has("enabled_decorations"):
+		player_data["enabled_decorations"] = []
+
+func unlock_decoration(dec_id: String) -> void:
+	_ensure_decoration_defaults()
+	if dec_id not in unlocked_content.decorations:
+		unlocked_content.decorations.append(dec_id)
+		save_all_data()
+
+func is_decoration_unlocked(dec_id: String) -> bool:
+	_ensure_decoration_defaults()
+	return dec_id in unlocked_content.decorations
+
+func toggle_decoration(dec_id: String, enabled: bool) -> void:
+	_ensure_decoration_defaults()
+	var arr: Array = player_data.enabled_decorations
+	if enabled and dec_id not in arr:
+		arr.append(dec_id)
+	elif not enabled and dec_id in arr:
+		arr.erase(dec_id)
+	save_all_data()
+
+func is_decoration_enabled(dec_id: String) -> bool:
+	_ensure_decoration_defaults()
+	return dec_id in player_data.get(
+		"enabled_decorations", []
+	)
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # ACHIEVEMENTS
@@ -455,6 +572,14 @@ func get_total_play_time() -> int:
 func get_total_water_saved() -> float:
 	return player_data.total_water_saved
 
+func get_session_games_played() -> int:
+	return session_games_played
+
+func reset_session_stats() -> void:
+	session_games_played = 0
+	win_streak = 0
+	session_start_time = int(Time.get_unix_time_from_system())
+
 func get_play_time_formatted() -> String:
 	var total = player_data.total_play_time
 	var hours = int(total / 3600)
@@ -475,6 +600,7 @@ func reset_all_data() -> void:
 		"total_play_time": 0,
 		"current_level": 1,
 		"selected_character": "droppy_blue",
+		"selected_accessory": "character_default",
 		"first_play_date": Time.get_datetime_string_from_system(),
 		"last_play_date": Time.get_datetime_string_from_system()
 	}
@@ -484,11 +610,14 @@ func reset_all_data() -> void:
 	unlocked_content = {
 		"characters": ["droppy_blue"],
 		"minigames": ["catch_rain", "pipe_puzzle"],
-		"themes": ["default"]
+		"themes": ["default"],
+		"accessories": ["character_default"]
 	}
 	
 	for id in achievements:
 		achievements[id].unlocked = false
+
+	reset_session_stats()
 	
 	save_all_data()
 	print("🗑️ All data reset")

@@ -24,8 +24,8 @@ func _load_translations() -> void:
 	translations = {
 		# Main Menu
 		"title": {
-			"en": "WATERWISE",
-			"tl": "WATERWISE"
+			"en": "WATERVILLE",
+			"tl": "WATERVILLE"
 		},
 		"subtitle": {
 			"en": "Every Drop Counts",

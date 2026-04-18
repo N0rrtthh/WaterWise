@@ -34,7 +34,10 @@ func configure(
 	_ensure_cinematic_nodes()
 	_current_game_key = title
 	title_label.text = _prettify_title(title)
-	subtitle_label.text = _get_game_instruction(title)
+	var intro_subtitle := _get_game_instruction(title)
+	if not subtitle.is_empty():
+		intro_subtitle = subtitle
+	subtitle_label.text = intro_subtitle
 	if icon_label:
 		icon_label.text = _get_intro_icon_for_title(title)
 
@@ -49,7 +52,7 @@ func configure(
 func play_cutscene() -> void:
 	if AudioManager:
 		AudioManager.play_game_start()
-		AudioManager.play_music("cutscene", 0.3)
+		AudioManager.play_music("instruction", 0.3)
 	if not animation_player.has_animation("intro"):
 		_rebuild_animation()
 
@@ -1004,13 +1007,21 @@ func _run_intro_vfx() -> void:
 		_water_droplet.rotation = 0.3
 
 		var crash = create_tween()
-		crash.tween_property(_water_droplet, "position", target_pos + Vector2(-15, 8), 0.3).set_ease(Tween.EASE_IN).set_trans(Tween.TRANS_QUAD)
+		crash.tween_property(
+			_water_droplet, "position", target_pos + Vector2(-15, 8), 0.3
+		).set_ease(Tween.EASE_IN).set_trans(Tween.TRANS_QUAD)
 		crash.tween_callback(func():
 			if AudioManager: AudioManager.play_click()
 		)
-		crash.tween_property(_water_droplet, "scale", Vector2(1.3, 0.6), 0.1).set_ease(Tween.EASE_OUT)
-		crash.tween_property(_water_droplet, "scale", Vector2(0.7, 1.3), 0.12).set_ease(Tween.EASE_OUT)
-		crash.tween_property(_water_droplet, "position", target_pos + Vector2(8, -5), 0.15).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_BACK)
+		crash.tween_property(
+			_water_droplet, "scale", Vector2(1.3, 0.6), 0.1
+		).set_ease(Tween.EASE_OUT)
+		crash.tween_property(
+			_water_droplet, "scale", Vector2(0.7, 1.3), 0.12
+		).set_ease(Tween.EASE_OUT)
+		crash.tween_property(
+			_water_droplet, "position", target_pos + Vector2(8, -5), 0.15
+		).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_BACK)
 		crash.tween_property(_water_droplet, "scale", Vector2(1.1, 0.9), 0.1)
 		crash.tween_property(_water_droplet, "position", target_pos, 0.15).set_ease(Tween.EASE_OUT)
 		crash.tween_property(_water_droplet, "scale", Vector2(1.0, 1.0), 0.12)
@@ -1048,7 +1059,7 @@ func _run_intro_vfx() -> void:
 		pt.tween_interval(randf_range(0.3, 0.6))
 		pt.tween_property(p, "modulate:a", 0.0, 0.2)
 
-func _run_game_specific_intro(length: float) -> void:
+func _run_game_specific_intro(_length: float) -> void:
 	if not _water_droplet:
 		return
 	var left_arm = _water_droplet.get_node_or_null("LeftArm")
@@ -1352,17 +1363,21 @@ func _run_game_specific_intro(length: float) -> void:
 func _animate_excited_hop(delay: float, loops: int) -> void:
 	var t = create_tween()
 	t.tween_interval(delay)
-	var lp = t.set_loops(mini(loops, 3))
-	lp.tween_property(_water_droplet, "position:y", _water_droplet.position.y - 18, 0.16).set_ease(Tween.EASE_OUT)
+	var lp = t.set_loops(maxi(1, mini(loops, 3)))
+	lp.tween_property(
+		_water_droplet, "position:y", _water_droplet.position.y - 18, 0.16
+	).set_ease(Tween.EASE_OUT)
 	lp.tween_property(_water_droplet, "scale", Vector2(0.88, 1.15), 0.1)
-	lp.tween_property(_water_droplet, "position:y", _water_droplet.position.y, 0.16).set_ease(Tween.EASE_IN)
+	lp.tween_property(
+		_water_droplet, "position:y", _water_droplet.position.y, 0.16
+	).set_ease(Tween.EASE_IN)
 	lp.tween_property(_water_droplet, "scale", Vector2(1.1, 0.88), 0.08)
 	lp.tween_property(_water_droplet, "scale", Vector2(1.0, 1.0), 0.08)
 
 func _animate_panic_shake(delay: float, loops: int) -> void:
 	var t = create_tween()
 	t.tween_interval(delay)
-	var lp = t.set_loops(mini(loops, 3))
+	var lp = t.set_loops(maxi(1, mini(loops, 3)))
 	lp.tween_property(_water_droplet, "rotation", 0.16, 0.08)
 	lp.tween_property(_water_droplet, "rotation", -0.16, 0.08)
 	lp.tween_property(_water_droplet, "rotation", 0.1, 0.06)
@@ -1372,7 +1387,7 @@ func _animate_panic_shake(delay: float, loops: int) -> void:
 func _animate_effort_squish(delay: float, loops: int) -> void:
 	var t = create_tween()
 	t.tween_interval(delay)
-	var lp = t.set_loops(mini(loops, 3))
+	var lp = t.set_loops(maxi(1, mini(loops, 3)))
 	lp.tween_property(_water_droplet, "scale", Vector2(1.15, 0.8), 0.15)
 	lp.tween_property(_water_droplet, "scale", Vector2(0.88, 1.18), 0.15)
 	lp.tween_property(_water_droplet, "scale", Vector2(1.0, 1.0), 0.1)
@@ -1380,7 +1395,7 @@ func _animate_effort_squish(delay: float, loops: int) -> void:
 func _animate_gentle_sway(delay: float, loops: int) -> void:
 	var t = create_tween()
 	t.tween_interval(delay)
-	var lp = t.set_loops(mini(loops, 3))
+	var lp = t.set_loops(maxi(1, mini(loops, 3)))
 	lp.tween_property(_water_droplet, "rotation", 0.08, 0.25)
 	lp.tween_property(_water_droplet, "rotation", -0.08, 0.25)
 	lp.tween_property(_water_droplet, "rotation", 0.0, 0.18)
@@ -1388,7 +1403,7 @@ func _animate_gentle_sway(delay: float, loops: int) -> void:
 func _animate_careful_wobble(delay: float, loops: int) -> void:
 	var t = create_tween()
 	t.tween_interval(delay)
-	var lp = t.set_loops(loops)
+	var lp = t.set_loops(maxi(1, mini(loops, 4)))
 	lp.tween_property(_water_droplet, "rotation", 0.06, 0.3)
 	lp.tween_property(_water_droplet, "rotation", -0.05, 0.25)
 	lp.tween_property(_water_droplet, "rotation", 0.0, 0.2)
@@ -1396,7 +1411,7 @@ func _animate_careful_wobble(delay: float, loops: int) -> void:
 func _animate_shower_dance(delay: float, loops: int) -> void:
 	var t = create_tween()
 	t.tween_interval(delay)
-	var lp = t.set_loops(mini(loops, 3))
+	var lp = t.set_loops(maxi(1, mini(loops, 3)))
 	lp.tween_property(_water_droplet, "position:x", _water_droplet.position.x + 12, 0.18)
 	lp.tween_property(_water_droplet, "scale", Vector2(1.1, 0.9), 0.1)
 	lp.tween_property(_water_droplet, "position:x", _water_droplet.position.x - 12, 0.18)
@@ -1407,7 +1422,7 @@ func _animate_shower_dance(delay: float, loops: int) -> void:
 func _animate_tongue_wiggle(tongue: Node, delay: float, loops: int) -> void:
 	var t = create_tween()
 	t.tween_interval(delay)
-	var lp = t.set_loops(loops)
+	var lp = t.set_loops(maxi(1, mini(loops, 5)))
 	lp.tween_property(tongue, "rotation_degrees", 12.0, 0.18)
 	lp.tween_property(tongue, "rotation_degrees", -12.0, 0.18)
 	lp.tween_property(tongue, "rotation_degrees", 0.0, 0.12)
@@ -1415,7 +1430,7 @@ func _animate_tongue_wiggle(tongue: Node, delay: float, loops: int) -> void:
 func _animate_look_left_right(delay: float, loops: int) -> void:
 	var t = create_tween()
 	t.tween_interval(delay)
-	var lp = t.set_loops(mini(loops, 2))
+	var lp = t.set_loops(maxi(1, mini(loops, 2)))
 	lp.tween_property(_water_droplet, "rotation", -0.12, 0.2)
 	lp.tween_interval(0.2)
 	lp.tween_property(_water_droplet, "rotation", 0.12, 0.2)
@@ -1425,7 +1440,7 @@ func _animate_look_left_right(delay: float, loops: int) -> void:
 func _animate_lean_peer(delay: float, loops: int) -> void:
 	var t = create_tween()
 	t.tween_interval(delay)
-	var lp = t.set_loops(mini(loops, 2))
+	var lp = t.set_loops(maxi(1, mini(loops, 2)))
 	lp.tween_property(_water_droplet, "scale", Vector2(1.06, 0.94), 0.22)
 	lp.tween_property(_water_droplet, "position:x", _water_droplet.position.x + 8, 0.18)
 	lp.tween_property(_water_droplet, "scale", Vector2(1.0, 1.0), 0.15)
@@ -1434,7 +1449,7 @@ func _animate_lean_peer(delay: float, loops: int) -> void:
 func _animate_rhythm_bounce(delay: float, loops: int) -> void:
 	var t = create_tween()
 	t.tween_interval(delay)
-	var lp = t.set_loops(mini(loops, 4))
+	var lp = t.set_loops(maxi(1, mini(loops, 4)))
 	lp.tween_property(_water_droplet, "scale", Vector2(1.08, 0.92), 0.12)
 	lp.tween_property(_water_droplet, "position:y", _water_droplet.position.y - 8, 0.1)
 	lp.tween_property(_water_droplet, "scale", Vector2(0.92, 1.08), 0.1)

@@ -1,7 +1,14 @@
-[gd_scene load_steps=7 format=3 uid="uid://cks33gpdabacw"]
+[gd_scene load_steps=14 format=3 uid="uid://cks33gpdabacw"]
 
 [ext_resource type="Script" uid="uid://d12w4ldcunn2w" path="res://scenes/ui/InitialScreen.gd" id="1_initial"]
 [ext_resource type="FontFile" uid="uid://6gq30qbnrhfs" path="res://fonts/NTBrickSans.otf" id="4_brick"]
+[ext_resource type="Texture2D" uid="uid://bgakmdufxahcm" path="res://assets/bg_layers/highscore_post.png" id="bg_highscore"]
+[ext_resource type="Texture2D" uid="uid://bdckppinc04gt" path="res://assets/bg_layers/hills.png" id="bg_hills"]
+[ext_resource type="Texture2D" uid="uid://b81l4l4otk0ds" path="res://assets/bg_layers/house.png" id="bg_house"]
+[ext_resource type="Texture2D" uid="uid://dhs4dt7jjxtv1" path="res://assets/bg_layers/platform.png" id="bg_platform"]
+[ext_resource type="Texture2D" uid="uid://c0j86a73hcdgw" path="res://assets/bg_layers/waves_1.png" id="bg_waves1"]
+[ext_resource type="Texture2D" uid="uid://b10768i6x66eb" path="res://assets/bg_layers/waves_2.png" id="bg_waves2"]
+[ext_resource type="Texture2D" uid="uid://bkwq37gravs6f" path="res://assets/bg_layers/waves_3.png" id="bg_waves3"]
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_play_normal"]
 bg_color = Color(0.96, 0.8, 0.2, 1)
@@ -65,6 +72,7 @@ grow_vertical = 2
 color = Color(0.529412, 0.807843, 0.921569, 1)
 
 [node name="Ground" type="ColorRect" parent="."]
+visible = false
 z_index = -15
 layout_mode = 1
 anchors_preset = 12
@@ -136,16 +144,16 @@ grow_horizontal = 0
 theme_override_constants/separation = 12
 alignment = 2
 
-[node name="CustomizeButton" type="Button" parent="UI/TopRight"]
-custom_minimum_size = Vector2(70, 70)
-layout_mode = 2
-theme_override_font_sizes/font_size = 32
-text = "👤"
-
 [node name="StoreButton" type="Button" parent="UI/TopRight"]
 custom_minimum_size = Vector2(70, 70)
 layout_mode = 2
-theme_override_font_sizes/font_size = 32
+theme_override_font_sizes/font_size = 34
+text = "🛍️"
+
+[node name="RoadmapButton" type="Button" parent="UI/TopRight"]
+custom_minimum_size = Vector2(70, 70)
+layout_mode = 2
+theme_override_font_sizes/font_size = 34
 text = "🗺️"
 
 [node name="SettingsButton" type="Button" parent="UI/TopRight"]
@@ -154,16 +162,24 @@ layout_mode = 2
 theme_override_font_sizes/font_size = 32
 text = "⚙️"
 
+[node name="CustomizeButton" type="Button" parent="UI/TopRight"]
+custom_minimum_size = Vector2(70, 70)
+layout_mode = 2
+theme_override_font_sizes/font_size = 32
+text = "👤"
+
 [node name="HighscorePanel" type="Panel" parent="UI"]
+visible = false
 layout_mode = 1
 anchors_preset = 5
 anchor_left = 0.5
 anchor_right = 0.5
-offset_left = -120.0
-offset_top = 180.0
-offset_right = 120.0
-offset_bottom = 230.0
+offset_left = -629.0
+offset_top = 127.000015
+offset_right = -389.0
+offset_bottom = 177.00002
 grow_horizontal = 2
+rotation = -0.012359246
 
 [node name="HighscoreLabel" type="Label" parent="UI/HighscorePanel"]
 layout_mode = 1
@@ -175,7 +191,8 @@ grow_vertical = 2
 theme_override_colors/font_color = Color(0.3, 0.2, 0.1, 1)
 theme_override_fonts/font = ExtResource("4_brick")
 theme_override_font_sizes/font_size = 24
-text = "HIGHSCORE 0"
+text = "HIGHSCORE 
+0"
 horizontal_alignment = 1
 vertical_alignment = 1
 
@@ -220,7 +237,7 @@ anchor_top = 1.0
 anchor_right = 0.5
 anchor_bottom = 1.0
 offset_left = -200.0
-offset_top = -140.0
+offset_top = -200.0
 offset_right = 200.0
 offset_bottom = -25.0
 grow_horizontal = 2
@@ -249,6 +266,123 @@ theme_override_styles/normal = SubResource("StyleBoxFlat_play_normal")
 theme_override_styles/pressed = SubResource("StyleBoxFlat_play_pressed")
 theme_override_styles/hover = SubResource("StyleBoxFlat_play_hover")
 text = "MULTIPLAYER"
+
+[node name="BGLayers" type="Control" parent="."]
+z_index = -19
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+
+[node name="HighscorePost" type="TextureRect" parent="BGLayers"]
+layout_mode = 1
+offset_left = -42.0
+offset_top = -61.0
+offset_right = 2318.0
+offset_bottom = 1579.0
+scale = Vector2(0.75, 0.75)
+mouse_filter = 2
+texture = ExtResource("bg_highscore")
+stretch_mode = 6
+
+[node name="Hills" type="TextureRect" parent="BGLayers"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 1.0
+offset_top = -136.0
+offset_right = 441.0
+offset_bottom = 424.0
+grow_horizontal = 2
+grow_vertical = 2
+scale = Vector2(0.82999873, 0.75)
+mouse_filter = 2
+texture = ExtResource("bg_hills")
+stretch_mode = 6
+
+[node name="Platform" type="TextureRect" parent="BGLayers"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 1.0
+offset_top = -136.0
+offset_right = 441.0
+offset_bottom = 424.0
+grow_horizontal = 2
+grow_vertical = 2
+scale = Vector2(0.830001, 0.75)
+mouse_filter = 2
+texture = ExtResource("bg_platform")
+stretch_mode = 6
+
+[node name="House" type="TextureRect" parent="BGLayers"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 1.0
+offset_top = -136.0
+offset_right = 441.0
+offset_bottom = 424.0
+grow_horizontal = 2
+grow_vertical = 2
+scale = Vector2(0.75, 0.75)
+mouse_filter = 2
+texture = ExtResource("bg_house")
+stretch_mode = 6
+
+[node name="Waves3" type="TextureRect" parent="BGLayers"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -42.0
+offset_top = -142.0
+offset_right = 398.0
+offset_bottom = 418.0
+grow_horizontal = 2
+grow_vertical = 2
+scale = Vector2(0.8700003, 0.75)
+mouse_filter = 2
+texture = ExtResource("bg_waves3")
+stretch_mode = 6
+
+[node name="Waves2" type="TextureRect" parent="BGLayers"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -42.0
+offset_top = -142.0
+offset_right = 398.0
+offset_bottom = 418.0
+grow_horizontal = 2
+grow_vertical = 2
+scale = Vector2(0.8700003, 0.75)
+mouse_filter = 2
+texture = ExtResource("bg_waves2")
+stretch_mode = 6
+
+[node name="Waves1" type="TextureRect" parent="BGLayers"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -42.0
+offset_top = -142.0
+offset_right = 398.0
+offset_bottom = 418.0
+grow_horizontal = 2
+grow_vertical = 2
+scale = Vector2(0.8700003, 0.75)
+mouse_filter = 2
+texture = ExtResource("bg_waves1")
+stretch_mode = 6
 
 [node name="WelcomePopup" type="Control" parent="."]
 visible = false
@@ -304,7 +438,7 @@ layout_mode = 2
 theme_override_colors/font_color = Color(0.2, 0.2, 0.2, 1)
 theme_override_fonts/font = ExtResource("4_brick")
 theme_override_font_sizes/font_size = 36
-text = "WELCOME TO WATERWISE"
+text = "WELCOME TO WATERVILLE"
 horizontal_alignment = 1
 
 [node name="ImagePlaceholder" type="ColorRect" parent="WelcomePopup/Panel/VBox"]
@@ -336,9 +470,10 @@ theme_override_font_sizes/font_size = 24
 theme_override_styles/normal = SubResource("StyleBoxFlat_play_pressed")
 text = "X"
 
-[connection signal="pressed" from="UI/TopRight/CustomizeButton" to="." method="_on_customize_button_pressed"]
 [connection signal="pressed" from="UI/TopRight/StoreButton" to="." method="_on_store_button_pressed"]
+[connection signal="pressed" from="UI/TopRight/RoadmapButton" to="." method="_on_roadmap_button_pressed"]
 [connection signal="pressed" from="UI/TopRight/SettingsButton" to="." method="_on_settings_button_pressed"]
+[connection signal="pressed" from="UI/TopRight/CustomizeButton" to="." method="_on_customize_button_pressed"]
 [connection signal="pressed" from="UI/ButtonContainer/PlayButton" to="." method="_on_play_button_pressed"]
 [connection signal="pressed" from="UI/ButtonContainer/MultiplayerButton" to="." method="_on_multiplayer_button_pressed"]
 [connection signal="pressed" from="WelcomePopup/Panel/CloseButton" to="." method="_on_close_popup_pressed"]

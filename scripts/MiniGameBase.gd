@@ -65,6 +65,14 @@ var timer_bar: ProgressBar
 var pause_menu: Control
 var instruction_overlay: Control
 var animated_cutscene_player: SimpleCutscenePlayer  # Simple animated cutscene system
+var _instruction_overlay_tweens: Array[Tween] = []
+
+## Theme visuals (kid-friendly palette per minigame)
+var _theme_layer: CanvasLayer
+var _theme_primary_rect: ColorRect
+var _theme_secondary_rect: ColorRect
+var _theme_wash_rect: ColorRect
+var _active_game_theme: Dictionary = {}
 
 func _ready() -> void:
 	await get_tree().process_frame
@@ -76,16 +84,199 @@ func _ready() -> void:
 	_load_difficulty_settings()
 	_apply_difficulty_settings()
 	_setup_ui()
+	_apply_minigame_theme_visuals()
+	call_deferred("_refresh_minigame_theme_visuals")
 	_setup_animated_cutscene_player()  # Initialize animated cutscene system
 	_create_instruction_overlay()
 	
 	# Show instruction overlay, wait for tap to start
 	instruction_overlay.visible = true
+	if AudioManager:
+		AudioManager.play_music("instruction", 0.25)
 	await _wait_for_input()
-	instruction_overlay.visible = false
+	_hide_instruction_overlay()
 	
 	# Start game
 	start_game()
+
+
+func _refresh_minigame_theme_visuals() -> void:
+	_apply_minigame_theme_visuals()
+
+
+func _apply_minigame_theme_visuals() -> void:
+	var theme = _resolve_minigame_theme()
+	_active_game_theme = theme
+	_ensure_theme_layer()
+	_apply_theme_layer_colors(theme)
+	_tint_existing_background_nodes(theme)
+
+	var theme_id = "default"
+	if ThemeManager and ThemeManager.has_method("get_minigame_theme_id_for_name"):
+		theme_id = ThemeManager.get_minigame_theme_id_for_name(_build_theme_lookup_text())
+
+	print("🎨 Minigame theme applied: %s (%s)" % [game_name, theme_id])
+
+
+func _resolve_minigame_theme() -> Dictionary:
+	if ThemeManager and ThemeManager.has_method("get_minigame_theme_for_name"):
+		return ThemeManager.get_minigame_theme_for_name(_build_theme_lookup_text())
+
+	return {
+		"bg_primary": Color(0.73, 0.90, 0.99, 1.0),
+		"bg_secondary": Color(0.56, 0.79, 0.95, 1.0),
+		"bg_wash": Color(0.86, 0.95, 1.0, 0.32),
+		"scene_blend": 0.24,
+	}
+
+
+func _build_theme_lookup_text() -> String:
+	var parts: Array[String] = []
+	if not game_name.strip_edges().is_empty():
+		parts.append(game_name)
+
+	if not scene_file_path.is_empty():
+		parts.append(scene_file_path.get_file().get_basename())
+
+	if GameManager:
+		var pending_name = str(GameManager.pending_next_minigame_name)
+		if not pending_name.is_empty():
+			parts.append(pending_name)
+
+	if parts.is_empty():
+		return "MiniGame"
+	return " ".join(parts)
+
+
+func _ensure_theme_layer() -> void:
+	if _theme_layer and is_instance_valid(_theme_layer):
+		return
+
+	_theme_layer = CanvasLayer.new()
+	_theme_layer.name = "_ThemeLayer"
+	_theme_layer.layer = -120
+	add_child(_theme_layer)
+
+	_theme_primary_rect = ColorRect.new()
+	_theme_primary_rect.name = "PrimaryBackdrop"
+	_theme_primary_rect.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_theme_primary_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_theme_layer.add_child(_theme_primary_rect)
+
+	_theme_secondary_rect = ColorRect.new()
+	_theme_secondary_rect.name = "SecondaryGlow"
+	_theme_secondary_rect.anchor_left = 0.0
+	_theme_secondary_rect.anchor_top = 0.42
+	_theme_secondary_rect.anchor_right = 1.0
+	_theme_secondary_rect.anchor_bottom = 1.0
+	_theme_secondary_rect.offset_left = 0.0
+	_theme_secondary_rect.offset_top = 0.0
+	_theme_secondary_rect.offset_right = 0.0
+	_theme_secondary_rect.offset_bottom = 0.0
+	_theme_secondary_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_theme_layer.add_child(_theme_secondary_rect)
+
+	_theme_wash_rect = ColorRect.new()
+	_theme_wash_rect.name = "TopWash"
+	_theme_wash_rect.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_theme_wash_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_theme_layer.add_child(_theme_wash_rect)
+
+
+func _apply_theme_layer_colors(theme: Dictionary) -> void:
+	if not _theme_primary_rect:
+		return
+
+	var primary = theme.get("bg_primary", Color(0.73, 0.90, 0.99, 1.0))
+	var secondary = theme.get("bg_secondary", Color(0.56, 0.79, 0.95, 1.0))
+	var wash = theme.get("bg_wash", Color(0.86, 0.95, 1.0, 0.32))
+
+	_theme_primary_rect.color = primary
+
+	var secondary_tint = secondary
+	secondary_tint.a = 0.33
+	_theme_secondary_rect.color = secondary_tint
+
+	_theme_wash_rect.color = wash
+	RenderingServer.set_default_clear_color(primary)
+
+
+func _tint_existing_background_nodes(theme: Dictionary) -> void:
+	var blend_strength = clamp(float(theme.get("scene_blend", 0.24)), 0.0, 0.45)
+	_tint_background_nodes_recursive(self, theme, blend_strength)
+
+
+func _tint_background_nodes_recursive(node: Node, theme: Dictionary, blend_strength: float) -> void:
+	for child in node.get_children():
+		if child == _theme_layer or child == hud_layer:
+			continue
+
+		if child is ColorRect:
+			_tint_background_rect(child as ColorRect, theme, blend_strength)
+
+		_tint_background_nodes_recursive(child, theme, blend_strength)
+
+
+func _tint_background_rect(rect: ColorRect, theme: Dictionary, blend_strength: float) -> void:
+	if not rect or not _is_theme_background_rect(rect):
+		return
+
+	var base_color: Color
+	if rect.has_meta("_theme_base_color"):
+		base_color = rect.get_meta("_theme_base_color")
+	else:
+		base_color = rect.color
+		rect.set_meta("_theme_base_color", base_color)
+
+	var target = _pick_theme_target_for_rect(rect, theme)
+	var themed_color = base_color.lerp(target, blend_strength)
+	themed_color.a = base_color.a
+	rect.color = themed_color
+
+
+func _is_theme_background_rect(rect: ColorRect) -> bool:
+	if not rect:
+		return false
+
+	var lower_name = rect.name.to_lower()
+	if (
+		lower_name.contains("background")
+		or lower_name == "bg"
+		or lower_name.contains("ground")
+		or lower_name.contains("sky")
+		or lower_name.contains("wall")
+		or lower_name.contains("counter")
+	):
+		return true
+
+	if rect.z_index <= -1:
+		return true
+
+	var vp = get_viewport_rect().size
+	if vp != Vector2.ZERO:
+		if rect.size.x >= vp.x * 0.75 and rect.size.y >= vp.y * 0.5:
+			return true
+
+	return false
+
+
+func _pick_theme_target_for_rect(rect: ColorRect, theme: Dictionary) -> Color:
+	var lower_name = rect.name.to_lower()
+	if (
+		lower_name.contains("ground")
+		or lower_name.contains("counter")
+		or lower_name.contains("wall")
+	):
+		return theme.get("bg_secondary", theme.get("bg_primary", rect.color))
+
+	if (
+		lower_name.contains("sky")
+		or lower_name.contains("background")
+		or lower_name == "bg"
+	):
+		return theme.get("bg_primary", rect.color)
+
+	return theme.get("bg_secondary", theme.get("bg_primary", rect.color))
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # DIFFICULTY MANAGEMENT
@@ -193,6 +384,7 @@ func start_timer_now() -> void:
 func end_game(success: bool = true) -> void:
 	game_active = false
 	timer_running = false
+	_hide_instruction_overlay()
 	get_tree().paused = false
 	
 	# Stop the game timer so it can't double-trigger
@@ -225,7 +417,18 @@ func end_game(success: bool = true) -> void:
 			droplets_earned = 10 # Base reward
 			if accuracy > 0.9: droplets_earned += 5 # Perfect bonus
 			if reaction_time < game_duration * 1000: droplets_earned += 5 # Speed bonus
-			GameManager.water_droplets += droplets_earned
+
+			if SaveManager and SaveManager.has_method("add_droplets"):
+				SaveManager.add_droplets(droplets_earned)
+				if SaveManager.has_method("save_all_data"):
+					SaveManager.save_all_data()
+				if SaveManager.has_method("get_droplets"):
+					GameManager.water_droplets = int(SaveManager.get_droplets())
+			else:
+				GameManager.water_droplets += droplets_earned
+
+			if GameManager.has_method("add_session_droplets"):
+				GameManager.add_session_droplets(droplets_earned)
 		
 		# Always complete minigame (records performance for algorithm)
 		GameManager.complete_minigame(
@@ -442,86 +645,67 @@ func _setup_ui() -> void:
 
 	var margin = MarginContainer.new()
 	margin.set_anchors_preset(Control.PRESET_FULL_RECT)
+	margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	margin.add_theme_constant_override("margin_top", 16)
 	margin.add_theme_constant_override("margin_left", 16)
 	margin.add_theme_constant_override("margin_right", 16)
 	hud_layer.add_child(margin)
 
 	var vbox = VBoxContainer.new()
+	vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	vbox.add_theme_constant_override("separation", 8)
 	margin.add_child(vbox)
 
-	# ── Top Row: Lives | Timer | Score | Pause ────────────────────
+	# ── Top Row: Game Name | Timer | Score | Pause ───────────────
 	var top_row = HBoxContainer.new()
+	top_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	top_row.add_theme_constant_override("separation", 10)
 	vbox.add_child(top_row)
 
-	# -- Lives Pill (left) --
-	var lives_pill = PanelContainer.new()
-	var lives_style = StyleBoxFlat.new()
-	lives_style.bg_color = Color(0.96, 0.93, 0.86, 0.92)
-	lives_style.corner_radius_top_left = 20
-	lives_style.corner_radius_top_right = 20
-	lives_style.corner_radius_bottom_left = 20
-	lives_style.corner_radius_bottom_right = 20
-	lives_style.border_width_left = 2
-	lives_style.border_width_right = 2
-	lives_style.border_width_top = 2
-	lives_style.border_width_bottom = 2
-	lives_style.border_color = Color(0.85, 0.8, 0.7, 0.6)
-	lives_style.shadow_size = 3
-	lives_style.shadow_offset = Vector2(0, 2)
-	lives_style.shadow_color = Color(0, 0, 0, 0.12)
-	lives_pill.add_theme_stylebox_override("panel", lives_style)
-	top_row.add_child(lives_pill)
+	# -- Shared pill style --
+	var pill_style = StyleBoxFlat.new()
+	pill_style.bg_color = Color(0.96, 0.93, 0.86, 0.92)
+	pill_style.corner_radius_top_left = 20
+	pill_style.corner_radius_top_right = 20
+	pill_style.corner_radius_bottom_left = 20
+	pill_style.corner_radius_bottom_right = 20
+	pill_style.border_width_left = 2
+	pill_style.border_width_right = 2
+	pill_style.border_width_top = 2
+	pill_style.border_width_bottom = 2
+	pill_style.border_color = Color(0.85, 0.8, 0.7, 0.6)
+	pill_style.shadow_size = 3
+	pill_style.shadow_offset = Vector2(0, 2)
+	pill_style.shadow_color = Color(0, 0, 0, 0.12)
 
-	var lives_inner = MarginContainer.new()
-	lives_inner.add_theme_constant_override("margin_left", 14)
-	lives_inner.add_theme_constant_override("margin_right", 14)
-	lives_inner.add_theme_constant_override("margin_top", 6)
-	lives_inner.add_theme_constant_override("margin_bottom", 6)
-	lives_pill.add_child(lives_inner)
+	# -- Game Name (left) --
+	var name_pill = PanelContainer.new()
+	name_pill.add_theme_stylebox_override("panel", pill_style.duplicate())
+	top_row.add_child(name_pill)
 
-	var lives_hbox = HBoxContainer.new()
-	lives_hbox.add_theme_constant_override("separation", 4)
-	lives_inner.add_child(lives_hbox)
+	var name_inner = MarginContainer.new()
+	name_inner.add_theme_constant_override("margin_left", 14)
+	name_inner.add_theme_constant_override("margin_right", 14)
+	name_inner.add_theme_constant_override("margin_top", 6)
+	name_inner.add_theme_constant_override("margin_bottom", 6)
+	name_pill.add_child(name_inner)
 
-	# Show hearts as individual emojis
-	for i in range(lives):
-		var heart = Label.new()
-		heart.text = "❤️"
-		heart.add_theme_font_size_override("font_size", 22)
-		lives_hbox.add_child(heart)
-
-	var lives_count = Label.new()
-	lives_count.add_theme_font_size_override("font_size", 22)
-	lives_count.add_theme_color_override("font_color", Color(0.35, 0.3, 0.25))
-	lives_count.text = "x" + str(lives)
-	lives_count.name = "LivesLabel"
-	lives_hbox.add_child(lives_count)
+	var hud_name_label = Label.new()
+	hud_name_label.text = game_name
+	hud_name_label.add_theme_font_size_override("font_size", 22)
+	hud_name_label.add_theme_color_override("font_color", Color(0.25, 0.22, 0.18))
+	hud_name_label.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	name_inner.add_child(hud_name_label)
 
 	# -- Spacer (push timer to center) --
 	var spacer_l = Control.new()
+	spacer_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	spacer_l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	top_row.add_child(spacer_l)
 
 	# -- Timer Pill (center) --
 	var timer_pill = PanelContainer.new()
-	var timer_style = StyleBoxFlat.new()
-	timer_style.bg_color = Color(0.96, 0.93, 0.86, 0.92)
-	timer_style.corner_radius_top_left = 20
-	timer_style.corner_radius_top_right = 20
-	timer_style.corner_radius_bottom_left = 20
-	timer_style.corner_radius_bottom_right = 20
-	timer_style.border_width_left = 2
-	timer_style.border_width_right = 2
-	timer_style.border_width_top = 2
-	timer_style.border_width_bottom = 2
-	timer_style.border_color = Color(0.85, 0.8, 0.7, 0.6)
-	timer_style.shadow_size = 3
-	timer_style.shadow_offset = Vector2(0, 2)
-	timer_style.shadow_color = Color(0, 0, 0, 0.12)
-	timer_pill.add_theme_stylebox_override("panel", timer_style)
+	timer_pill.add_theme_stylebox_override("panel", pill_style.duplicate())
 	top_row.add_child(timer_pill)
 
 	var timer_inner = MarginContainer.new()
@@ -550,12 +734,13 @@ func _setup_ui() -> void:
 
 	# -- Spacer (push score/pause to right) --
 	var spacer_r = Control.new()
+	spacer_r.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	spacer_r.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	top_row.add_child(spacer_r)
 
 	# -- Score + Combo Pill (right) --
 	var score_pill = PanelContainer.new()
-	score_pill.add_theme_stylebox_override("panel", lives_style.duplicate())
+	score_pill.add_theme_stylebox_override("panel", pill_style.duplicate())
 	score_pill.visible = show_quota
 	top_row.add_child(score_pill)
 
@@ -714,48 +899,67 @@ func _setup_animated_cutscene_player() -> void:
 	hud_layer.add_child(animated_cutscene_player)
 
 func _create_instruction_overlay():
+	if instruction_overlay and is_instance_valid(instruction_overlay):
+		instruction_overlay.queue_free()
+	_stop_instruction_overlay_tweens()
+
 	instruction_overlay = Control.new()
 	instruction_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
 	instruction_overlay.visible = false
 	instruction_overlay.process_mode = Node.PROCESS_MODE_ALWAYS
+	instruction_overlay.mouse_filter = Control.MOUSE_FILTER_STOP
 	hud_layer.add_child(instruction_overlay)
 	
 	var bg = ColorRect.new()
 	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
 	bg.color = Color(0, 0, 0, 0.85)
+	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	instruction_overlay.add_child(bg)
 	
 	var center = CenterContainer.new()
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
 	instruction_overlay.add_child(center)
-	
+
 	var vbox = VBoxContainer.new()
-	vbox.add_theme_constant_override("separation", 30)
+	vbox.add_theme_constant_override("separation", 24)
+	vbox.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	vbox.custom_minimum_size.x = min(
+		get_viewport_rect().size.x * 0.85, 900.0
+	)
 	center.add_child(vbox)
-	
-	# Game name with bounce animation
+
+	# Game name with gentle pulse animation
 	var name_label = Label.new()
 	name_label.text = game_name
 	name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	name_label.add_theme_font_size_override("font_size", 64)
+	name_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	name_label.add_theme_font_size_override("font_size", 48)
 	name_label.add_theme_color_override("font_color", Color(1, 0.9, 0.3))
 	name_label.add_theme_color_override("font_outline_color", Color.BLACK)
-	name_label.add_theme_constant_override("outline_size", 12)
+	name_label.add_theme_constant_override("outline_size", 10)
 	vbox.add_child(name_label)
-	
-	# Bounce animation
+
+	# Gentle pulse (no scale bounce — avoids overflow)
 	var bounce = create_tween().set_loops()
-	bounce.tween_property(name_label, "scale", Vector2(1.1, 1.1), 0.5)
-	bounce.tween_property(name_label, "scale", Vector2(1.0, 1.0), 0.5)
-	
+	_instruction_overlay_tweens.append(bounce)
+	bounce.tween_property(
+		name_label, "modulate",
+		Color(1.2, 1.1, 0.6), 0.6
+	).set_trans(Tween.TRANS_SINE)
+	bounce.tween_property(
+		name_label, "modulate",
+		Color.WHITE, 0.6
+	).set_trans(Tween.TRANS_SINE)
+
 	# Instruction
 	var instruction_label = Label.new()
 	instruction_label.text = game_instruction_text
 	instruction_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	instruction_label.add_theme_font_size_override("font_size", 40)
+	instruction_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	instruction_label.add_theme_font_size_override("font_size", 32)
 	instruction_label.add_theme_color_override("font_color", Color.WHITE)
 	instruction_label.add_theme_color_override("font_outline_color", Color.BLACK)
-	instruction_label.add_theme_constant_override("outline_size", 8)
+	instruction_label.add_theme_constant_override("outline_size", 6)
 	vbox.add_child(instruction_label)
 	
 	# Tap to start (blinking)
@@ -766,31 +970,57 @@ func _create_instruction_overlay():
 		else "TAP ANYWHERE TO START"
 	)
 	tap_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	tap_label.add_theme_font_size_override("font_size", 32)
+	tap_label.add_theme_font_size_override("font_size", 26)
 	tap_label.add_theme_color_override("font_color", Color(0.5, 1, 0.5))
 	tap_label.add_theme_color_override("font_outline_color", Color.BLACK)
-	tap_label.add_theme_constant_override("outline_size", 6)
+	tap_label.add_theme_constant_override("outline_size", 4)
 	tap_label.name = "TapLabel"
 	vbox.add_child(tap_label)
 	
 	# Blinking animation
 	var tween = create_tween().set_loops()
+	_instruction_overlay_tweens.append(tween)
 	tween.tween_property(tap_label, "modulate:a", 0.3, 0.5)
 	tween.tween_property(tap_label, "modulate:a", 1.0, 0.5)
 
 func _wait_for_input() -> void:
+	var mouse_was_down := Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
+	var touch_was_down := false
+	if InputMap.has_action("touch"):
+		touch_was_down = Input.is_action_pressed("touch")
+
 	while true:
 		await get_tree().process_frame
-		var touch_pressed = false
+		var mouse_down := Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
+		var mouse_just_pressed := mouse_down and not mouse_was_down
+		mouse_was_down = mouse_down
+
+		var touch_pressed := false
 		if InputMap.has_action("touch"):
-			touch_pressed = Input.is_action_just_pressed("touch")
+			var touch_down := Input.is_action_pressed("touch")
+			touch_pressed = touch_down and not touch_was_down
+			touch_was_down = touch_down
 
 		if (
 			Input.is_action_just_pressed("ui_accept")
-			or Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
+			or mouse_just_pressed
 			or touch_pressed
 		):
 			break
+
+func _hide_instruction_overlay() -> void:
+	_stop_instruction_overlay_tweens()
+	if instruction_overlay and is_instance_valid(instruction_overlay):
+		instruction_overlay.visible = false
+
+func _stop_instruction_overlay_tweens() -> void:
+	for t in _instruction_overlay_tweens:
+		if t and t.is_valid():
+			t.kill()
+	_instruction_overlay_tweens.clear()
+
+func _exit_tree() -> void:
+	_hide_instruction_overlay()
 
 func _play_intro_animation() -> void:
 	var scene = _resolve_cutscene_scene("intro")
@@ -933,14 +1163,6 @@ func _deduct_life():
 	if AudioManager:
 		AudioManager.play_life_lost()
 	
-	# Use find_child to locate LivesLabel regardless of nested container structure
-	var lives_lbl = hud_layer.find_child("LivesLabel", true, false) if hud_layer else null
-	if lives_lbl:
-		lives_lbl.text = "x" + str(lives)
-		# Flash red
-		var tween = create_tween()
-		tween.tween_property(lives_lbl, "modulate", Color(2, 0.5, 0.5), 0.15)
-		tween.tween_property(lives_lbl, "modulate", Color.WHITE, 0.15)
 	# Note: Game over is handled by GameManager.start_next_minigame() which
 	# checks session_lives <= 0 and shows the final score screen properly.
 
@@ -1047,7 +1269,7 @@ func _show_tally_screen(success: bool, _accuracy: float, _reaction_time: int):
 	await get_tree().create_timer(0.55).timeout
 
 func _resolve_narrative_outro_scene(_success: bool) -> PackedScene:
-	var key = _get_minigame_key()
+	var _key = _get_minigame_key()
 
 	# Try to use generic narrative scene (shows character outcome animation)
 	var fallback_narrative_path = "res://scenes/ui/cutscenes/CharacterOutcomeNarrative.tscn"
@@ -1115,6 +1337,9 @@ func _show_round_score_page(success: bool, accuracy: float, _reaction_time: int)
 	# ═══════════════════════════════════════════════════════════════════════
 	# DWTD-STYLE SCORING PAGE  — Water Drop Characters + Evaporation
 	# ═══════════════════════════════════════════════════════════════════════
+	if AudioManager:
+		AudioManager.play_music("scoring", 0.22)
+
 	var max_lives := 3
 	var current_lives := lives  # already decremented by _deduct_life() if failed
 	var accent: Color = Color(0.35, 0.85, 0.55) if success else Color(1.0, 0.45, 0.3)
@@ -1387,6 +1612,8 @@ func _show_round_score_page(success: bool, accuracy: float, _reaction_time: int)
 	out_tw.tween_property(page, "modulate:a", 0.0, 0.35)
 	await out_tw.finished
 	page.queue_free()
+	if AudioManager:
+		AudioManager.stop_music(0.15)
 
 func _resolve_cutscene_scene(kind: String) -> PackedScene:
 	var key = _get_minigame_key()
@@ -1485,6 +1712,9 @@ func _get_result_line_for_key(success: bool, key: String) -> String:
 	)
 
 func _show_failure_micro_cutscene() -> void:
+	if AudioManager:
+		AudioManager.play_music("outcome_fail", 0.18)
+
 	# Try to use SimpleCutscenePlayer
 	if animated_cutscene_player and animated_cutscene_player.has_method("play_cutscene"):
 		animated_cutscene_player.visible = true
@@ -1539,6 +1769,9 @@ func _show_failure_micro_cutscene() -> void:
 	cutscene.queue_free()
 
 func _show_success_micro_cutscene() -> void:
+	if AudioManager:
+		AudioManager.play_music("outcome_win", 0.18)
+
 	# Try to use SimpleCutscenePlayer
 	if animated_cutscene_player and animated_cutscene_player.has_method("play_cutscene"):
 		animated_cutscene_player.visible = true

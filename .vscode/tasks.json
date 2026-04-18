@@ -1,0 +1,64 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Godot: Run Project (Logs in Terminal)",
+      "type": "shell",
+      "command": "${config:godotTools.editorPath.godot4}",
+      "args": [
+        "--path",
+        "${workspaceFolder}"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true,
+        "focus": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Godot: Open Editor (Logs in Terminal)",
+      "type": "shell",
+      "command": "${config:godotTools.editorPath.godot4}",
+      "args": [
+        "--path",
+        "${workspaceFolder}",
+        "--editor"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true,
+        "focus": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Godot: Run Project (Verbose Debug Logs)",
+      "type": "shell",
+      "command": "${config:godotTools.editorPath.godot4}",
+      "args": [
+        "--path",
+        "${workspaceFolder}",
+        "--verbose"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true,
+        "focus": true
+      },
+      "problemMatcher": []
+    }
+  ]
+}

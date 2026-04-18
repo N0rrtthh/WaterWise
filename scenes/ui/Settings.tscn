@@ -83,11 +83,18 @@ theme_override_constants/margin_top = 40
 theme_override_constants/margin_right = 40
 theme_override_constants/margin_bottom = 40
 
-[node name="VBoxContainer" type="VBoxContainer" parent="CenterContainer/PanelCard/MarginContainer"]
+[node name="ScrollContainer" type="ScrollContainer" parent="CenterContainer/PanelCard/MarginContainer"]
 layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+follow_focus = true
+
+[node name="VBoxContainer" type="VBoxContainer" parent="CenterContainer/PanelCard/MarginContainer/ScrollContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
 theme_override_constants/separation = 20
 
-[node name="Title" type="Label" parent="CenterContainer/PanelCard/MarginContainer/VBoxContainer"]
+[node name="Title" type="Label" parent="CenterContainer/PanelCard/MarginContainer/ScrollContainer/VBoxContainer"]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.2, 0.2, 0.2, 1)
 theme_override_fonts/font = ExtResource("2_brick")
@@ -95,24 +102,24 @@ theme_override_font_sizes/font_size = 48
 text = "SETTINGS"
 horizontal_alignment = 1
 
-[node name="HSeparator" type="HSeparator" parent="CenterContainer/PanelCard/MarginContainer/VBoxContainer"]
+[node name="HSeparator" type="HSeparator" parent="CenterContainer/PanelCard/MarginContainer/ScrollContainer/VBoxContainer"]
 layout_mode = 2
 theme_override_constants/separation = 20
 
-[node name="GridContainer" type="GridContainer" parent="CenterContainer/PanelCard/MarginContainer/VBoxContainer"]
+[node name="GridContainer" type="GridContainer" parent="CenterContainer/PanelCard/MarginContainer/ScrollContainer/VBoxContainer"]
 layout_mode = 2
 theme_override_constants/h_separation = 30
 theme_override_constants/v_separation = 25
 columns = 2
 
-[node name="LanguageLabel" type="Label" parent="CenterContainer/PanelCard/MarginContainer/VBoxContainer/GridContainer"]
+[node name="LanguageLabel" type="Label" parent="CenterContainer/PanelCard/MarginContainer/ScrollContainer/VBoxContainer/GridContainer"]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.3, 0.3, 0.3, 1)
 theme_override_fonts/font = ExtResource("2_brick")
 theme_override_font_sizes/font_size = 28
 text = "Language"
 
-[node name="LanguageButton" type="Button" parent="CenterContainer/PanelCard/MarginContainer/VBoxContainer/GridContainer"]
+[node name="LanguageButton" type="Button" parent="CenterContainer/PanelCard/MarginContainer/ScrollContainer/VBoxContainer/GridContainer"]
 custom_minimum_size = Vector2(300, 60)
 layout_mode = 2
 size_flags_horizontal = 3
@@ -124,28 +131,28 @@ theme_override_styles/hover = SubResource("StyleBoxFlat_button_secondary")
 theme_override_styles/pressed = SubResource("StyleBoxFlat_button_secondary")
 text = "Filipino → English"
 
-[node name="VolumeLabel" type="Label" parent="CenterContainer/PanelCard/MarginContainer/VBoxContainer/GridContainer"]
+[node name="VolumeLabel" type="Label" parent="CenterContainer/PanelCard/MarginContainer/ScrollContainer/VBoxContainer/GridContainer"]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.3, 0.3, 0.3, 1)
 theme_override_fonts/font = ExtResource("2_brick")
 theme_override_font_sizes/font_size = 28
 text = "Volume"
 
-[node name="VolumeSlider" type="HSlider" parent="CenterContainer/PanelCard/MarginContainer/VBoxContainer/GridContainer"]
+[node name="VolumeSlider" type="HSlider" parent="CenterContainer/PanelCard/MarginContainer/ScrollContainer/VBoxContainer/GridContainer"]
 custom_minimum_size = Vector2(300, 0)
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 4
 value = 80.0
 
-[node name="ThemeLabel" type="Label" parent="CenterContainer/PanelCard/MarginContainer/VBoxContainer/GridContainer"]
+[node name="ThemeLabel" type="Label" parent="CenterContainer/PanelCard/MarginContainer/ScrollContainer/VBoxContainer/GridContainer"]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.3, 0.3, 0.3, 1)
 theme_override_fonts/font = ExtResource("2_brick")
 theme_override_font_sizes/font_size = 28
 text = "Theme"
 
-[node name="ThemeButton" type="Button" parent="CenterContainer/PanelCard/MarginContainer/VBoxContainer/GridContainer"]
+[node name="ThemeButton" type="Button" parent="CenterContainer/PanelCard/MarginContainer/ScrollContainer/VBoxContainer/GridContainer"]
 custom_minimum_size = Vector2(300, 60)
 layout_mode = 2
 size_flags_horizontal = 3
@@ -157,25 +164,25 @@ theme_override_styles/hover = SubResource("StyleBoxFlat_button_secondary")
 theme_override_styles/pressed = SubResource("StyleBoxFlat_button_secondary")
 text = "Light"
 
-[node name="FullscreenLabel" type="Label" parent="CenterContainer/PanelCard/MarginContainer/VBoxContainer/GridContainer"]
+[node name="FullscreenLabel" type="Label" parent="CenterContainer/PanelCard/MarginContainer/ScrollContainer/VBoxContainer/GridContainer"]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.3, 0.3, 0.3, 1)
 theme_override_fonts/font = ExtResource("2_brick")
 theme_override_font_sizes/font_size = 28
 text = "Fullscreen"
 
-[node name="FullscreenCheck" type="CheckButton" parent="CenterContainer/PanelCard/MarginContainer/VBoxContainer/GridContainer"]
+[node name="FullscreenCheck" type="CheckButton" parent="CenterContainer/PanelCard/MarginContainer/ScrollContainer/VBoxContainer/GridContainer"]
 layout_mode = 2
 size_flags_horizontal = 0
 theme_override_fonts/font = ExtResource("2_brick")
 theme_override_font_sizes/font_size = 20
 button_pressed = true
 
-[node name="HSeparator2" type="HSeparator" parent="CenterContainer/PanelCard/MarginContainer/VBoxContainer"]
+[node name="HSeparator2" type="HSeparator" parent="CenterContainer/PanelCard/MarginContainer/ScrollContainer/VBoxContainer"]
 layout_mode = 2
 theme_override_constants/separation = 20
 
-[node name="BackButton" type="Button" parent="CenterContainer/PanelCard/MarginContainer/VBoxContainer"]
+[node name="BackButton" type="Button" parent="CenterContainer/PanelCard/MarginContainer/ScrollContainer/VBoxContainer"]
 custom_minimum_size = Vector2(250, 70)
 layout_mode = 2
 size_flags_horizontal = 4
@@ -186,7 +193,7 @@ theme_override_styles/hover = SubResource("StyleBoxFlat_button_primary")
 theme_override_styles/pressed = SubResource("StyleBoxFlat_button_primary")
 text = "BACK"
 
-[node name="ExitButton" type="Button" parent="CenterContainer/PanelCard/MarginContainer/VBoxContainer"]
+[node name="ExitButton" type="Button" parent="CenterContainer/PanelCard/MarginContainer/ScrollContainer/VBoxContainer"]
 custom_minimum_size = Vector2(250, 70)
 layout_mode = 2
 size_flags_horizontal = 4
@@ -197,7 +204,7 @@ theme_override_styles/hover = SubResource("StyleBoxFlat_button_danger")
 theme_override_styles/pressed = SubResource("StyleBoxFlat_button_danger")
 text = "EXIT"
 
-[connection signal="pressed" from="CenterContainer/PanelCard/MarginContainer/VBoxContainer/GridContainer/LanguageButton" to="." method="_on_language_button_pressed"]
-[connection signal="pressed" from="CenterContainer/PanelCard/MarginContainer/VBoxContainer/GridContainer/ThemeButton" to="." method="_on_theme_button_pressed"]
-[connection signal="pressed" from="CenterContainer/PanelCard/MarginContainer/VBoxContainer/BackButton" to="." method="_on_back_pressed"]
-[connection signal="pressed" from="CenterContainer/PanelCard/MarginContainer/VBoxContainer/ExitButton" to="." method="_on_exit_pressed"]
+[connection signal="pressed" from="CenterContainer/PanelCard/MarginContainer/ScrollContainer/VBoxContainer/GridContainer/LanguageButton" to="." method="_on_language_button_pressed"]
+[connection signal="pressed" from="CenterContainer/PanelCard/MarginContainer/ScrollContainer/VBoxContainer/GridContainer/ThemeButton" to="." method="_on_theme_button_pressed"]
+[connection signal="pressed" from="CenterContainer/PanelCard/MarginContainer/ScrollContainer/VBoxContainer/BackButton" to="." method="_on_back_pressed"]
+[connection signal="pressed" from="CenterContainer/PanelCard/MarginContainer/ScrollContainer/VBoxContainer/ExitButton" to="." method="_on_exit_pressed"]
