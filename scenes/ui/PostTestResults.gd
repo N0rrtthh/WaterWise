@@ -16,7 +16,20 @@ extends Control
 @onready var gameplay_perf_label = $Panel/MarginContainer/VBoxContainer/CorrelationData/GameplayPerf
 @onready var test_score_label = $Panel/MarginContainer/VBoxContainer/CorrelationData/TestScore
 @onready var correlation_label = $Panel/MarginContainer/VBoxContainer/CorrelationData/Correlation
-@onready var interpretation_label = $Panel/MarginContainer/VBoxContainer/CorrelationData/Interpretation
+@onready var interpretation_label = (
+	$Panel/MarginContainer/VBoxContainer/CorrelationData/Interpretation
+)
+
+func _loc(key: String, fallback: String) -> String:
+	if Localization:
+		var translated = Localization.get_text(key)
+		if translated != key:
+			return translated
+	return fallback
+
+func _fmt_loc(key: String, fallback: String, values: Array) -> String:
+	var template = _loc(key, fallback)
+	return template % values
 
 func _ready() -> void:
 	await get_tree().process_frame
@@ -40,7 +53,7 @@ func _display_results() -> void:
 	
 	# Display grade
 	var grade = _calculate_grade(results["percentage"])
-	grade_label.text = grade["emoji"] + " " + grade["text"]
+	grade_label.text = grade["text"]
 	grade_label.modulate = grade["color"]
 	
 	# Display category breakdown
@@ -63,12 +76,37 @@ func _display_results() -> void:
 		behavioral_score.modulate = _get_score_color(breakdown["behavioral"])
 	
 	# Display correlation data
-	gameplay_perf_label.text = "Gameplay Performance: %d%%" % int(correlation["gameplay_performance"])
-	test_score_label.text = "Knowledge Score: %d%%" % int(correlation["posttest_knowledge"])
-	correlation_label.text = "Correlation (r): " + str(correlation["correlation_coefficient"]).pad_decimals(2)
+	gameplay_perf_label.text = _fmt_loc(
+		"posttest_gameplay_performance_line",
+		"%s: %d%%",
+		[
+			_loc("gameplay_performance", "Gameplay Performance"),
+			int(correlation["gameplay_performance"])
+		]
+	)
+	test_score_label.text = _fmt_loc(
+		"posttest_knowledge_score_line",
+		"%s: %d%%",
+		[
+			_loc("knowledge_score", "Knowledge Score"),
+			int(correlation["posttest_knowledge"])
+		]
+	)
+	correlation_label.text = _fmt_loc(
+		"posttest_correlation_line",
+		"%s: %s",
+		[
+			_loc("correlation", "Correlation (r)"),
+			str(correlation["correlation_coefficient"]).pad_decimals(2)
+		]
+	)
 	
 	# Interpretation
-	interpretation_label.text = "[CHECK] " + correlation["interpretation"]
+	interpretation_label.text = _fmt_loc(
+		"posttest_interpretation_line",
+		"[CHECK] %s",
+		[correlation["interpretation"]]
+	)
 	
 	# Color code correlation
 	var r = correlation["correlation_coefficient"]
@@ -81,23 +119,36 @@ func _display_results() -> void:
 
 func _calculate_grade(percentage: float) -> Dictionary:
 	if percentage >= 90:
-		return {"text": "EXCELLENT!", "emoji": "***", "color": Color(0.3, 1.0, 0.3)}
-	elif percentage >= 80:
-		return {"text": "VERY GOOD!", "emoji": "**", "color": Color(0.5, 1.0, 0.5)}
-	elif percentage >= 70:
-		return {"text": "GOOD", "emoji": "*", "color": Color(1.0, 0.9, 0.3)}
-	elif percentage >= 60:
-		return {"text": "PASSING", "emoji": "[OK]", "color": Color(1.0, 0.7, 0.3)}
-	else:
-		return {"text": "NEEDS IMPROVEMENT", "emoji": "[!]", "color": Color(1.0, 0.5, 0.5)}
+		return {
+			"text": _loc("excellent", "⭐⭐⭐ EXCELLENT!"),
+			"color": Color(0.3, 1.0, 0.3)
+		}
+	if percentage >= 80:
+		return {
+			"text": _loc("very_good", "⭐⭐ VERY GOOD!"),
+			"color": Color(0.5, 1.0, 0.5)
+		}
+	if percentage >= 70:
+		return {
+			"text": _loc("good", "⭐ GOOD"),
+			"color": Color(1.0, 0.9, 0.3)
+		}
+	if percentage >= 60:
+		return {
+			"text": _loc("passing", "✓ PASSING"),
+			"color": Color(1.0, 0.7, 0.3)
+		}
+	return {
+		"text": _loc("needs_improvement", "📚 NEEDS IMPROVEMENT"),
+		"color": Color(1.0, 0.5, 0.5)
+	}
 
 func _get_score_color(score: float) -> Color:
 	if score >= 80:
 		return Color(0.3, 1.0, 0.5)  # Green
-	elif score >= 60:
+	if score >= 60:
 		return Color(1.0, 0.9, 0.3)  # Yellow
-	else:
-		return Color(1.0, 0.5, 0.3)  # Orange
+	return Color(1.0, 0.5, 0.3)  # Orange
 
 func _animate_entrance() -> void:
 	# Fade in animation
@@ -115,7 +166,7 @@ func _on_export_button_pressed() -> void:
 		
 		# Show confirmation
 		var label = Label.new()
-		label.text = "✅ Data exported successfully!"
+		label.text = _loc("data_exported", "✅ Data exported successfully!")
 		label.position = Vector2(400, 50)
 		label.modulate = Color(0.3, 1.0, 0.5)
 		add_child(label)

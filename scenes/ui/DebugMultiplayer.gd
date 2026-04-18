@@ -18,6 +18,21 @@ extends Control
 
 var update_timer: float = 0.0
 
+func _loc(key: String, fallback: String) -> String:
+	if Localization:
+		var translated = Localization.get_text(key)
+		if translated != key:
+			return translated
+	return fallback
+
+func _fmt_loc(key: String, fallback: String, values: Array) -> String:
+	var pattern = _loc(key, fallback)
+	if values.is_empty():
+		return pattern
+	if values.size() == 1:
+		return pattern % values[0]
+	return pattern % values
+
 func _ready() -> void:
 	# Set default values
 	ip_input.text = "127.0.0.1"
@@ -34,7 +49,7 @@ func _ready() -> void:
 	if GameManager:
 		GameManager.game_state_changed.connect(_on_game_state_changed)
 	
-	_update_status("Ready to connect")
+	_update_status(_loc("debug_ready_connect", "Ready to connect"))
 
 func _process(delta: float) -> void:
 	# Update debug info every 0.5 seconds
@@ -45,10 +60,15 @@ func _process(delta: float) -> void:
 
 func _on_host_pressed() -> void:
 	var port: int = int(port_input.text)
-	_update_status("Creating server on port " + str(port) + "...")
+	_update_status(_fmt_loc("debug_creating_server_port", "Creating server on port %d...", [port]))
 	
 	if GameManager.host_game(port):
-		_update_status("✅ Server created! Waiting for players...")
+		_update_status(
+			_loc(
+				"debug_server_created_waiting",
+				"✅ Server created! Waiting for players..."
+			)
+		)
 		host_button.disabled = true
 		join_button.disabled = true
 		start_game_button.visible = true
@@ -57,15 +77,20 @@ func _on_host_pressed() -> void:
 		# Listen for peer connections
 		multiplayer.peer_connected.connect(_on_peer_connected_debug)
 	else:
-		_update_status("❌ Failed to create server! Check console.")
+		_update_status(
+			_loc(
+				"debug_server_create_failed",
+				"❌ Failed to create server! Check console."
+			)
+		)
 
 func _on_join_pressed() -> void:
 	var ip: String = ip_input.text
 	var port: int = int(port_input.text)
-	_update_status("Connecting to " + ip + ":" + str(port) + "...")
+	_update_status(_fmt_loc("debug_connecting_to", "Connecting to %s:%d...", [ip, port]))
 	
 	if GameManager.join_game(ip, port):
-		_update_status("🔄 Connecting...")
+		_update_status(_loc("debug_connecting_short", "🔄 Connecting..."))
 		host_button.disabled = true
 		join_button.disabled = true
 		debug_panel.visible = true
@@ -73,18 +98,28 @@ func _on_join_pressed() -> void:
 		# Wait for connection success
 		await get_tree().create_timer(1.0).timeout
 		if GameManager.is_multiplayer_connected:
-			_update_status("✅ Connected! Waiting for host to start...")
+			_update_status(
+				_loc(
+					"debug_connected_wait_host",
+					"✅ Connected! Waiting for host to start..."
+				)
+			)
 		else:
-			_update_status("❌ Connection failed! Check IP/Port.")
+			_update_status(
+				_loc(
+					"debug_connection_failed_ip_port",
+					"❌ Connection failed! Check IP/Port."
+				)
+			)
 	else:
-		_update_status("❌ Failed to connect! Check console.")
+		_update_status(_loc("debug_connect_failed_console", "❌ Failed to connect! Check console."))
 
 func _on_peer_connected_debug(peer_id: int) -> void:
-	_update_status("✅ Player 2 connected! Ready to start.")
+	_update_status(_loc("debug_player2_connected_ready", "✅ Player 2 connected! Ready to start."))
 	print("🎮 [DEBUG] Peer connected: ", peer_id)
 
 func _on_start_game_pressed() -> void:
-	_update_status("🎮 Starting multiplayer game...")
+	_update_status(_loc("debug_starting_multiplayer", "🎮 Starting multiplayer game..."))
 	
 	# Set game mode to multiplayer
 	GameManager.set_game_mode(GameManager.GameMode.MULTIPLAYER_COOP)
@@ -97,7 +132,7 @@ func _on_game_state_changed(new_state: String) -> void:
 	print("🎮 [DEBUG] Game state changed to: ", new_state)
 
 func _update_status(text: String) -> void:
-	status_label.text = "Status: " + text
+	status_label.text = _loc("debug_status_prefix", "Status: ") + text
 	print("📡 [DEBUG MENU] " + text)
 
 func _update_debug_info() -> void:
@@ -120,16 +155,32 @@ func _update_debug_info() -> void:
 	
 	info += "🎯 G-COUNTER STATE:\n"
 	info += "  G-Counter: " + str(GameManager.g_counter) + "\n"
-	info += "  Global Score: " + str(GameManager.get_global_score()) + " / " + str(GameManager.LEVEL_QUOTA) + "\n"
+	info += (
+		"  Global Score: "
+		+ str(GameManager.get_global_score())
+		+ " / "
+		+ str(GameManager.LEVEL_QUOTA)
+		+ "\n"
+	)
 	info += "  My Score: " + str(GameManager.g_counter.get(multiplayer.get_unique_id(), 0)) + "\n\n"
 	
 	info += "📊 ROLLING WINDOW:\n"
 	info += "  Window: " + str(GameManager.rolling_window) + "\n"
 	info += "  Difficulty Multiplier: %.2f×\n" % GameManager.difficulty_multiplier
-	info += "  Current Difficulty: " + GameManager._get_current_difficulty() + "\n\n"
+	info += (
+		"  Current Difficulty: "
+		+ _classify_difficulty(GameManager.difficulty_multiplier)
+		+ "\n\n"
+	)
 	
 	info += "❤️ TEAM STATUS:\n"
-	info += "  Lives: " + "❤️".repeat(GameManager.team_lives) + " (" + str(GameManager.team_lives) + ")\n"
+	info += (
+		"  Lives: "
+		+ "❤️".repeat(GameManager.team_lives)
+		+ " ("
+		+ str(GameManager.team_lives)
+		+ ")\n"
+	)
 	info += "  Game Mode: " + GameManager.GameMode.keys()[GameManager.current_game_mode] + "\n\n"
 	
 	info += "═══════════════════════════════════════\n"
@@ -138,8 +189,18 @@ func _update_debug_info() -> void:
 	
 	debug_text.text = info
 
+
+func _classify_difficulty(multiplier: float) -> String:
+	if multiplier >= 2.0:
+		return "Insane"
+	if multiplier >= 1.5:
+		return "Hard"
+	if multiplier >= 1.0:
+		return "Medium"
+	return "Easy"
+
 func _input(event: InputEvent) -> void:
 	# Press F3 to copy debug info
 	if event.is_action_pressed("ui_accept") and Input.is_key_pressed(KEY_F3):
 		DisplayServer.clipboard_set(debug_text.text)
-		_update_status("📋 Debug info copied to clipboard!")
+		_update_status(_loc("debug_copied_clipboard", "📋 Debug info copied to clipboard!"))

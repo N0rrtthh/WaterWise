@@ -51,6 +51,29 @@ var decorations_data = [
 	},
 ]
 
+const MINIGAME_NAME_KEYS: Dictionary = {
+	"catch_rain": "catch_the_rain",
+	"pipe_puzzle": "minigame_pipe_puzzle",
+	"water_sorting": "minigame_water_sorting",
+	"leak_fix": "minigame_leak_fix",
+	"water_quiz": "minigame_water_quiz",
+	"bucket_relay": "minigame_bucket_relay",
+	"fun_games": "minigame_fun_games",
+}
+
+const ACCESSORY_NAME_KEYS: Dictionary = {
+	"character_default": "shop_accessory_character_hat",
+	"sun_hat": "accessory_sun_hat",
+	"cool_shades": "accessory_cool_shades",
+	"party_cap": "accessory_party_cap",
+	"leaf_crown": "accessory_leaf_crown",
+	"safety_helmet": "accessory_safety_helmet",
+}
+
+const DECORATION_NAME_KEYS: Dictionary = {
+	"boat": "shop_decor_sailboat",
+}
+
 var current_tab = "characters"
 var waterpark_layer: Node2D
 var grid_container: GridContainer
@@ -59,13 +82,21 @@ var tab_minigames: Button
 var tab_accessories: Button
 var tab_decorations: Button
 var main_panel: PanelContainer
+var title_label: Label
 var currency_label: Label
+var back_button: Button
 var _selected_accessory_id: String = "character_default"
+var _pool_floats: Array[Node2D] = []
+var _palm_leaves: Array[Polygon2D] = []
+var _waterpark_ambient_tweens: Array[Tween] = []
+var _feedback_tweens: Dictionary = {}
 
 func _ready() -> void:
 	_sync_from_save_manager()
 	_setup_waterpark_background()
 	_setup_ui()
+	_setup_interaction_polish()
+	_start_waterpark_ambient_motion()
 	_update_display()
 
 	if Localization:
@@ -212,6 +243,7 @@ func _draw_palm_tree(pos: Vector2) -> void:
 		leaf.color = Color(0.2, 0.7, 0.3)
 		leaf.position = pos
 		waterpark_layer.add_child(leaf)
+		_palm_leaves.append(leaf)
 
 func _draw_umbrella(pos: Vector2, color: Color) -> void:
 	# Pole
@@ -234,6 +266,10 @@ func _draw_umbrella(pos: Vector2, color: Color) -> void:
 	waterpark_layer.add_child(canopy)
 
 func _draw_pool_float(pos: Vector2, color: Color) -> void:
+	var float_root = Node2D.new()
+	float_root.position = pos
+	waterpark_layer.add_child(float_root)
+
 	var float_ring = Polygon2D.new()
 	var outer_points = []
 	var inner_points = []
@@ -243,8 +279,161 @@ func _draw_pool_float(pos: Vector2, color: Color) -> void:
 		inner_points.insert(0, Vector2(cos(angle) * 12, sin(angle) * 8))
 	float_ring.polygon = PackedVector2Array(outer_points)
 	float_ring.color = color
-	float_ring.position = pos
-	waterpark_layer.add_child(float_ring)
+	float_root.add_child(float_ring)
+	_pool_floats.append(float_root)
+
+
+func _setup_interaction_polish() -> void:
+	_refresh_interaction_targets()
+
+
+func _refresh_interaction_targets() -> void:
+	if not main_panel:
+		return
+	_attach_feedback_recursive(main_panel)
+
+
+func _attach_feedback_recursive(node: Node) -> void:
+	for child in node.get_children():
+		if child is Control:
+			_bind_control_feedback(child as Control)
+		_attach_feedback_recursive(child)
+
+
+func _bind_control_feedback(control: Control) -> void:
+	if not control:
+		return
+	if bool(control.get_meta("_shop_feedback_bound", false)):
+		return
+
+	if (
+		not (control is Button)
+		and not (control is CheckButton)
+		and not (control is CheckBox)
+	):
+		return
+
+	control.set_meta("_shop_feedback_bound", true)
+	control.pivot_offset = control.size * 0.5
+
+	var hover_scale := 1.03
+	if control == back_button:
+		hover_scale = 1.045
+
+	control.mouse_entered.connect(_on_control_hover_entered.bind(control, hover_scale))
+	control.mouse_exited.connect(_on_control_hover_exited.bind(control))
+	control.focus_entered.connect(_on_control_hover_entered.bind(control, hover_scale))
+	control.focus_exited.connect(_on_control_hover_exited.bind(control))
+
+	if control is BaseButton:
+		var base_btn := control as BaseButton
+		base_btn.button_down.connect(_on_control_pressed.bind(control))
+		base_btn.button_up.connect(_on_control_released.bind(control, hover_scale))
+
+
+func _on_control_hover_entered(control: Control, hover_scale: float) -> void:
+	_animate_control_scale(control, Vector2(hover_scale, hover_scale), 0.11)
+
+
+func _on_control_hover_exited(control: Control) -> void:
+	_animate_control_scale(control, Vector2.ONE, 0.11)
+
+
+func _on_control_pressed(control: Control) -> void:
+	_animate_control_scale(control, Vector2(0.97, 0.97), 0.06)
+
+
+func _on_control_released(control: Control, hover_scale: float) -> void:
+	if not control:
+		return
+	var target := Vector2.ONE
+	if control.get_global_rect().has_point(get_global_mouse_position()):
+		target = Vector2(hover_scale, hover_scale)
+	_animate_control_scale(control, target, 0.10)
+
+
+func _animate_control_scale(control: Control, target: Vector2, duration: float) -> void:
+	if not control or not is_instance_valid(control):
+		return
+
+	var key = control.get_instance_id()
+	if _feedback_tweens.has(key):
+		var prev = _feedback_tweens[key] as Tween
+		if prev and prev.is_valid():
+			prev.kill()
+
+	var tw = create_tween().set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	tw.tween_property(control, "scale", target, duration)
+	_feedback_tweens[key] = tw
+
+
+func _start_waterpark_ambient_motion() -> void:
+	for tw in _waterpark_ambient_tweens:
+		if tw and tw.is_valid():
+			tw.kill()
+	_waterpark_ambient_tweens.clear()
+
+	for float_root in _pool_floats:
+		if not float_root:
+			continue
+		var base_pos = float_root.position
+		var sway = randf_range(10.0, 20.0)
+		var rise = randf_range(2.0, 5.0)
+		var dur = randf_range(2.8, 4.2)
+
+		var tw = create_tween().set_loops()
+		tw.tween_property(
+			float_root,
+			"position",
+			base_pos + Vector2(sway, -rise),
+			dur
+		).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+		tw.tween_property(
+			float_root,
+			"position",
+			base_pos,
+			dur
+		).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+		_waterpark_ambient_tweens.append(tw)
+
+	for leaf in _palm_leaves:
+		if not leaf:
+			continue
+		var base_rot = leaf.rotation
+		var tw_leaf = create_tween().set_loops()
+		tw_leaf.tween_property(
+			leaf,
+			"rotation",
+			base_rot + deg_to_rad(randf_range(3.0, 6.0)),
+			randf_range(1.8, 2.4)
+		).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+		tw_leaf.tween_property(
+			leaf,
+			"rotation",
+			base_rot - deg_to_rad(randf_range(3.0, 6.0)),
+			randf_range(1.8, 2.4)
+		).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+		_waterpark_ambient_tweens.append(tw_leaf)
+
+
+func _animate_grid_reveal() -> void:
+	if not grid_container:
+		return
+
+	var idx := 0
+	for child in grid_container.get_children():
+		if not (child is Control):
+			continue
+		var card = child as Control
+		card.modulate.a = 0.0
+		card.scale = Vector2(0.94, 0.94)
+		var tw = create_tween()
+		tw.tween_interval(float(idx) * 0.03)
+		tw.tween_property(card, "modulate:a", 1.0, 0.14)
+		tw.parallel().tween_property(card, "scale", Vector2.ONE, 0.18).set_trans(
+			Tween.TRANS_BACK
+		).set_ease(Tween.EASE_OUT)
+		idx += 1
 
 func _setup_ui() -> void:
 	# Main UI container with semi-transparent panel
@@ -282,12 +471,12 @@ func _setup_ui() -> void:
 	title_row.add_theme_constant_override("separation", 20)
 	vbox.add_child(title_row)
 	
-	var title = Label.new()
-	title.text = "🛍️ SHOP"
-	title.add_theme_font_size_override("font_size", 42)
-	title.add_theme_color_override("font_color", Color(0.2, 0.2, 0.3))
-	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	title_row.add_child(title)
+	title_label = Label.new()
+	title_label.text = _loc("shop_title", "🛍️ SHOP")
+	title_label.add_theme_font_size_override("font_size", 42)
+	title_label.add_theme_color_override("font_color", Color(0.2, 0.2, 0.3))
+	title_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	title_row.add_child(title_label)
 	
 	# Currency display
 	currency_label = Label.new()
@@ -302,19 +491,19 @@ func _setup_ui() -> void:
 	tab_row.alignment = BoxContainer.ALIGNMENT_CENTER
 	vbox.add_child(tab_row)
 	
-	tab_characters = _create_tab_button("👤 Characters", true)
+	tab_characters = _create_tab_button(_loc("shop_tab_characters", "👤 Characters"), true)
 	tab_characters.pressed.connect(_on_characters_tab)
 	tab_row.add_child(tab_characters)
 	
-	tab_minigames = _create_tab_button("🎮 Minigames", false)
+	tab_minigames = _create_tab_button(_loc("shop_tab_minigames", "🎮 Minigames"), false)
 	tab_minigames.pressed.connect(_on_minigames_tab)
 	tab_row.add_child(tab_minigames)
 
-	tab_accessories = _create_tab_button("🧢 Accessories", false)
+	tab_accessories = _create_tab_button(_loc("shop_tab_accessories", "🧢 Accessories"), false)
 	tab_accessories.pressed.connect(_on_accessories_tab)
 	tab_row.add_child(tab_accessories)
 
-	tab_decorations = _create_tab_button("🏠 Decor", false)
+	tab_decorations = _create_tab_button(_loc("shop_tab_decor", "🏠 Decor"), false)
 	tab_decorations.pressed.connect(_on_decorations_tab)
 	tab_row.add_child(tab_decorations)
 	
@@ -337,9 +526,9 @@ func _setup_ui() -> void:
 	scroll.add_child(grid_container)
 	
 	# Back button
-	var back_btn = Button.new()
-	back_btn.text = "⬅️ BACK"
-	back_btn.custom_minimum_size = Vector2(200, 60)
+	back_button = Button.new()
+	back_button.text = _loc("back", "⬅️ BACK")
+	back_button.custom_minimum_size = Vector2(200, 60)
 	var back_style = StyleBoxFlat.new()
 	back_style.bg_color = Color(0.2, 0.6, 0.95)
 	back_style.corner_radius_top_left = 15
@@ -348,13 +537,13 @@ func _setup_ui() -> void:
 	back_style.corner_radius_bottom_right = 15
 	back_style.border_width_bottom = 6
 	back_style.border_color = Color(0.1, 0.4, 0.7)
-	back_btn.add_theme_stylebox_override("normal", back_style)
-	back_btn.add_theme_stylebox_override("hover", back_style)
-	back_btn.add_theme_stylebox_override("pressed", back_style)
-	back_btn.add_theme_font_size_override("font_size", 24)
-	back_btn.add_theme_color_override("font_color", Color.WHITE)
-	back_btn.pressed.connect(_on_back_pressed)
-	vbox.add_child(back_btn)
+	back_button.add_theme_stylebox_override("normal", back_style)
+	back_button.add_theme_stylebox_override("hover", back_style)
+	back_button.add_theme_stylebox_override("pressed", back_style)
+	back_button.add_theme_font_size_override("font_size", 24)
+	back_button.add_theme_color_override("font_color", Color.WHITE)
+	back_button.pressed.connect(_on_back_pressed)
+	vbox.add_child(back_button)
 
 func _create_tab_button(text: String, active: bool) -> Button:
 	var btn = Button.new()
@@ -413,10 +602,12 @@ func _set_tab_visual(
 	if active:
 		button.add_theme_stylebox_override("normal", active_style)
 		button.add_theme_stylebox_override("hover", active_style)
+		button.add_theme_stylebox_override("pressed", active_style)
 		button.add_theme_color_override("font_color", Color.WHITE)
 	else:
 		button.add_theme_stylebox_override("normal", inactive_style)
 		button.add_theme_stylebox_override("hover", inactive_style)
+		button.add_theme_stylebox_override("pressed", inactive_style)
 		button.add_theme_color_override("font_color", Color(0.3, 0.3, 0.3))
 
 func _update_display() -> void:
@@ -434,6 +625,10 @@ func _update_display() -> void:
 		_show_decorations()
 	else:
 		_show_accessories()
+
+	await get_tree().process_frame
+	_animate_grid_reveal()
+	_refresh_interaction_targets()
 
 func _show_characters() -> void:
 	for char_data in characters_data:
@@ -489,7 +684,7 @@ func _create_character_card(data: Dictionary) -> PanelContainer:
 	
 	# Name
 	var name_label = Label.new()
-	name_label.text = data.name
+	name_label.text = _get_character_name(str(data.id), str(data.name))
 	name_label.add_theme_font_size_override("font_size", 18)
 	name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	if not data.unlocked:
@@ -499,7 +694,7 @@ func _create_character_card(data: Dictionary) -> PanelContainer:
 	# Cost/Status
 	if data.unlocked:
 		var status = Label.new()
-		status.text = "✅ OWNED"
+		status.text = _loc("shop_owned", "✅ OWNED")
 		status.add_theme_font_size_override("font_size", 14)
 		status.add_theme_color_override("font_color", Color(0.3, 0.7, 0.4))
 		status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -614,7 +809,7 @@ func _create_minigame_card(data: Dictionary) -> PanelContainer:
 	
 	# Name
 	var name_label = Label.new()
-	name_label.text = data.name
+	name_label.text = _get_minigame_name(str(data.id), str(data.name))
 	name_label.add_theme_font_size_override("font_size", 16)
 	name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	if not data.unlocked:
@@ -624,7 +819,7 @@ func _create_minigame_card(data: Dictionary) -> PanelContainer:
 	# Cost/Status
 	if data.unlocked:
 		var status = Label.new()
-		status.text = "✅ UNLOCKED"
+		status.text = _loc("shop_unlocked", "✅ UNLOCKED")
 		status.add_theme_font_size_override("font_size", 14)
 		status.add_theme_color_override("font_color", Color(0.3, 0.7, 0.4))
 		status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -681,7 +876,7 @@ func _create_accessory_card(data: Dictionary) -> PanelContainer:
 	vbox.add_child(icon)
 
 	var name_label = Label.new()
-	name_label.text = data.name
+	name_label.text = _get_accessory_name(str(data.id), str(data.name))
 	name_label.add_theme_font_size_override("font_size", 15)
 	name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	if not data.unlocked:
@@ -690,7 +885,7 @@ func _create_accessory_card(data: Dictionary) -> PanelContainer:
 
 	if data.unlocked:
 		var status = Label.new()
-		status.text = "✅ OWNED"
+		status.text = _loc("shop_owned", "✅ OWNED")
 		status.add_theme_font_size_override("font_size", 14)
 		status.add_theme_color_override("font_color", Color(0.25, 0.7, 0.35))
 		status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -856,7 +1051,7 @@ func _update_currency_display() -> void:
 func _show_insufficient_funds() -> void:
 	# Create a quick popup
 	var popup = Label.new()
-	popup.text = "❌ Not enough drops!"
+	popup.text = _loc("shop_not_enough_drops", "❌ Not enough drops!")
 	popup.add_theme_font_size_override("font_size", 28)
 	popup.add_theme_color_override("font_color", Color(0.9, 0.3, 0.3))
 	popup.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -914,7 +1109,7 @@ func _create_decoration_card(data: Dictionary) -> PanelContainer:
 	vbox.add_child(icon)
 
 	var name_label = Label.new()
-	name_label.text = data.name
+	name_label.text = _get_decoration_name(str(data.id), str(data.name))
 	name_label.add_theme_font_size_override("font_size", 16)
 	name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	if not data.unlocked:
@@ -926,7 +1121,7 @@ func _create_decoration_card(data: Dictionary) -> PanelContainer:
 	if data.unlocked:
 		# Toggle on/off
 		var toggle = CheckButton.new()
-		toggle.text = "Show"
+		toggle.text = _loc("settings_show", "Show")
 		toggle.button_pressed = bool(data.get("enabled", false))
 		toggle.add_theme_font_size_override("font_size", 14)
 		toggle.toggled.connect(
@@ -1010,4 +1205,54 @@ func _on_back_pressed() -> void:
 		get_tree().change_scene_to_file("res://scenes/ui/InitialScreen.tscn")
 
 func _on_language_changed(_new_lang: String) -> void:
-	pass  # Add translations if needed
+	_refresh_localized_ui()
+	_update_display()
+
+
+func _loc(key: String, fallback: String) -> String:
+	if Localization:
+		var translated = Localization.get_text(key)
+		if translated != key:
+			return translated
+	return fallback
+
+
+func _refresh_localized_ui() -> void:
+	if title_label:
+		title_label.text = _loc("shop_title", "🛍️ SHOP")
+	if tab_characters:
+		tab_characters.text = _loc("shop_tab_characters", "👤 Characters")
+	if tab_minigames:
+		tab_minigames.text = _loc("shop_tab_minigames", "🎮 Minigames")
+	if tab_accessories:
+		tab_accessories.text = _loc("shop_tab_accessories", "🧢 Accessories")
+	if tab_decorations:
+		tab_decorations.text = _loc("shop_tab_decor", "🏠 Decor")
+	if back_button:
+		back_button.text = _loc("back", "⬅️ BACK")
+
+
+func _get_character_name(char_id: String, fallback: String) -> String:
+	var key = "character_name_%s" % char_id
+	return _loc(key, fallback)
+
+
+func _get_minigame_name(game_id: String, fallback: String) -> String:
+	var key := str(MINIGAME_NAME_KEYS.get(game_id, ""))
+	if key.is_empty():
+		return fallback
+	return _loc(key, fallback)
+
+
+func _get_accessory_name(accessory_id: String, fallback: String) -> String:
+	var key := str(ACCESSORY_NAME_KEYS.get(accessory_id, ""))
+	if key.is_empty():
+		return fallback
+	return _loc(key, fallback)
+
+
+func _get_decoration_name(dec_id: String, fallback: String) -> String:
+	var key := str(DECORATION_NAME_KEYS.get(dec_id, ""))
+	if key.is_empty():
+		return fallback
+	return _loc(key, fallback)

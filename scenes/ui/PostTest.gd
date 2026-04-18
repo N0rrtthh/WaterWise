@@ -22,8 +22,20 @@ var current_question_index: int = 0
 var start_time: float = 0.0
 var option_buttons: Array[Button] = []
 
+func _loc(key: String, fallback: String) -> String:
+	if Localization:
+		var translated = Localization.get_text(key)
+		if translated != key:
+			return translated
+	return fallback
+
+func _fmt_loc(key: String, fallback: String, values: Array) -> String:
+	var template = _loc(key, fallback)
+	return template % values
+
 func _ready() -> void:
 	await get_tree().process_frame
+	title_label.text = _loc("knowledge_assessment", "📝 Knowledge Assessment")
 	option_buttons = [option_a_button, option_b_button, option_c_button, option_d_button]
 	
 	# Get questions from AdaptiveDifficulty
@@ -50,7 +62,11 @@ func _display_question(index: int) -> void:
 	var question = questions[index]
 	
 	# Update UI
-	question_number_label.text = "Question %d of %d" % [index + 1, questions.size()]
+	question_number_label.text = _fmt_loc(
+		"question_of",
+		"Question %d of %d",
+		[index + 1, questions.size()]
+	)
 	question_text_label.text = question["question"]
 	
 	# Set options
@@ -102,7 +118,11 @@ func _update_timer() -> void:
 	var elapsed = Time.get_unix_time_from_system() - start_time
 	var minutes = int(elapsed / 60)
 	var seconds = int(elapsed) % 60
-	timer_label.text = "⏱️ Time: %d:%02d" % [minutes, seconds]
+	timer_label.text = _fmt_loc(
+		"posttest_timer",
+		"⏱️ Time: %d:%02d",
+		[minutes, seconds]
+	)
 
 func _play_correct_sound() -> void:
 	if AudioManager:
