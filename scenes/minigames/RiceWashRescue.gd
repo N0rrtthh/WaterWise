@@ -155,8 +155,10 @@ func _process(delta):
 	
 	# Player controls basin
 	if Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
-		var mouse_x = get_viewport().get_mouse_position().x
-		basin_node.position.x = lerp(basin_node.position.x, mouse_x, 15.0 * delta)
+		var viewport = get_viewport()
+		if viewport:
+			var mouse_x = viewport.get_mouse_position().x
+			basin_node.position.x = lerp(basin_node.position.x, mouse_x, 15.0 * delta)
 	
 	basin_node.position.x = clamp(basin_node.position.x, 100, screen_w - 100)
 	

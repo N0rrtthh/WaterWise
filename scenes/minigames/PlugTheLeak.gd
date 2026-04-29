@@ -159,7 +159,9 @@ func _process(delta):
 	super._process(delta)
 	if not game_active: return
 	
-	var mouse_pos = get_viewport().get_mouse_position()
+	var viewport = get_viewport()
+	if viewport == null: return
+	var mouse_pos = viewport.get_mouse_position()
 	var is_holding = Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
 	
 	for pipe in pipes:

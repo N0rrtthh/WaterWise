@@ -273,4 +273,6 @@ func _process(delta):
 	if not game_active: return
 	
 	if selected_veggie and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
-		selected_veggie.position = get_viewport().get_mouse_position() + drag_offset
+		var viewport = get_viewport()
+		if viewport:
+			selected_veggie.position = viewport.get_mouse_position() + drag_offset
