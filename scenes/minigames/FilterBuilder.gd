@@ -240,7 +240,10 @@ func _is_primary_pressing() -> bool:
 	return touch_active or Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
 
 func _get_pointer_position() -> Vector2:
-	return touch_pos if touch_active else get_viewport().get_mouse_position()
+	if touch_active:
+		return touch_pos
+	var viewport = get_viewport()
+	return viewport.get_mouse_position() if viewport else Vector2.ZERO
 
 func _handle_drag():
 	var pointer_pos = _get_pointer_position()

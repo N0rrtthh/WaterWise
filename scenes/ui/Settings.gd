@@ -29,7 +29,7 @@ const GRID_PATH := SETTINGS_VBOX_PATH + "/GridContainer"
 const ProceduralBackground = preload("res://scripts/ProceduralBackground.gd")
 
 # Accessibility controls (dynamically added)
-var accessibility_section: VBoxContainer
+var accessibility_section: GridContainer
 var colorblind_check: CheckBox
 var large_targets_check: CheckBox
 var audio_cues_check: CheckBox

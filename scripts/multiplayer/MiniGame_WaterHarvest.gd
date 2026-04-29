@@ -278,8 +278,10 @@ func _process(delta: float) -> void:
 	
 	# Mode 1: Move bucket with mouse
 	if my_mode == PlayerMode.MODE_1_COLLECTOR and bucket:
-		var mouse_x = get_viewport().get_mouse_position().x
-		bucket.position.x = clampf(mouse_x, 50, screen_size.x - 50)
+		var viewport = get_viewport()
+		if viewport:
+			var mouse_x = viewport.get_mouse_position().x
+			bucket.position.x = clampf(mouse_x, 50, screen_size.x - 50)
 
 func _on_timer_sync_timeout() -> void:
 	if not _is_host() or not game_active or is_paused:
