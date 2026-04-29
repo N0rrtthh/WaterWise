@@ -155,7 +155,9 @@ func _process(delta):
 	_handle_drawing()
 
 func _handle_drawing():
-	var mouse_pos = get_viewport().get_mouse_position()
+	var viewport = get_viewport()
+	if viewport == null: return
+	var mouse_pos = viewport.get_mouse_position()
 	var canvas = get_node("Canvas")
 	var player_line = canvas.get_node("DrawLine")
 	

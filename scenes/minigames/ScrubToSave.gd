@@ -160,7 +160,9 @@ func _process(delta):
 	_update_dirt_visual()
 
 func _handle_scrubbing():
-	var mouse_pos = get_viewport().get_mouse_position()
+	var viewport = get_viewport()
+	if viewport == null: return
+	var mouse_pos = viewport.get_mouse_position()
 	var sponge = get_node("Sponge")
 	
 	if Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):

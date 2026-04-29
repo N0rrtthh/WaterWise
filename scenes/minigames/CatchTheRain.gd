@@ -122,7 +122,9 @@ func _process(delta):
 	if not game_active: return
 	
 	# Player Input - Follow mouse/touch
-	var target_x = get_viewport().get_mouse_position().x
+	var viewport = get_viewport()
+	if viewport == null: return
+	var target_x = viewport.get_mouse_position().x
 	target_x = clamp(target_x, 70.0, get_viewport_rect().size.x - 70.0)
 	drum_node.position.x = lerp(drum_node.position.x, target_x, 12.0 * delta)
 	
