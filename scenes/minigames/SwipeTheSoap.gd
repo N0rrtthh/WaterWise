@@ -163,7 +163,9 @@ func _process(delta):
 func _handle_swipe():
 	if current_soap == null: return
 	
-	var mouse_pos = get_viewport().get_mouse_position()
+	var viewport = get_viewport()
+	if viewport == null: return
+	var mouse_pos = viewport.get_mouse_position()
 	
 	if Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
 		if not is_swiping:

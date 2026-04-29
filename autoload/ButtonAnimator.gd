@@ -94,9 +94,12 @@ func _on_pressed(button: BaseButton) -> void:
 	if not is_instance_valid(button):
 		return
 	var base = _button_base_scales.get(button, Vector2.ONE)
-	var is_hovered = button.get_global_rect().has_point(
-		button.get_viewport().get_mouse_position()
-	)
+	var viewport = button.get_viewport()
+	var is_hovered = false
+	if viewport != null:
+		is_hovered = button.get_global_rect().has_point(
+			viewport.get_mouse_position()
+		)
 	var settle = base * (HOVER_SCALE if is_hovered else 1.0)
 	var tw = _begin_tween(button)
 

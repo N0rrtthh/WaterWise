@@ -649,10 +649,12 @@ func _process(delta: float) -> void:
 	
 	# Mode 1: Move bucket with mouse X position (smooth interpolation)
 	if _is_mode_1() and bucket:
-		var mouse_x: float = get_viewport().get_mouse_position().x
-		var target_x: float = clampf(mouse_x, 50, screen_size.x - 50)
-		# Smooth movement instead of instant snap
-		bucket.position.x = lerp(bucket.position.x, target_x, delta * 15.0)
+		var viewport = get_viewport()
+		if viewport:
+			var mouse_x: float = viewport.get_mouse_position().x
+			var target_x: float = clampf(mouse_x, 50, screen_size.x - 50)
+			# Smooth movement instead of instant snap
+			bucket.position.x = lerp(bucket.position.x, target_x, delta * 15.0)
 
 func _on_timer_sync_timeout() -> void:
 	if not _is_host() or not game_active:

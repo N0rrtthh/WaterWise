@@ -433,8 +433,10 @@ func _process(delta: float) -> void:
 		return
 	
 	if is_player_one and bucket:
-		var mouse_x: float = get_viewport().get_mouse_position().x
-		bucket.position.x = clampf(mouse_x, 50, screen_size.x - 50)
+		var viewport = get_viewport()
+		if viewport:
+			var mouse_x: float = viewport.get_mouse_position().x
+			bucket.position.x = clampf(mouse_x, 50, screen_size.x - 50)
 
 func _update_score_display() -> void:
 	var global_score: int = GameManager.get_global_score() if GameManager else local_score
