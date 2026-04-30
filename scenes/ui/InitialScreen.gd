@@ -1551,12 +1551,12 @@ func _load_game_entry_and_start() -> void:
 
 func _start_session_flow() -> void:
 	if GameManager:
-		if GameManager.has_method("start_session"):
-			GameManager.start_session()
-		elif GameManager.has_method("start_new_session"):
+		if GameManager.has_method("start_new_session"):
 			GameManager.start_new_session()
 			if GameManager.has_method("start_next_minigame"):
 				GameManager.start_next_minigame()
+		elif GameManager.has_method("start_session"):
+			GameManager.start_session()
 	else:
 		get_tree().change_scene_to_file("res://scenes/minigames/CatchTheRain.tscn")
 

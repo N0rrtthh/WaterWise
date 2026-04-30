@@ -54,7 +54,7 @@ func _on_game_start() -> void:
 	_log("🚿 Waiting for water from partner...")
 
 func _create_water_indicator() -> void:
-	"""Show available water from P1"""
+	# Show available water from P1
 	var panel = PanelContainer.new()
 	panel.position = Vector2(20, 100)
 	panel.size = Vector2(200, 100)
@@ -85,7 +85,7 @@ func _update_water_display() -> void:
 		water_label.text = "💧 x %d" % available_water
 
 func _spawn_plants() -> void:
-	"""Spawn plants that need watering"""
+	# Spawn plants that need watering
 	for i in range(12):  # Spawn 12 plants
 		_spawn_plant()
 
@@ -186,7 +186,7 @@ func _try_water_plant(plant: Area2D) -> void:
 		label.text = "🥀 Dry"
 
 func _check_wilted_plants() -> void:
-	"""Check for plants that wilted (not watered in time)"""
+	# Check for plants that wilted (not watered in time)
 	var current_time = Time.get_ticks_msec()
 	for plant in plants:
 		if not is_instance_valid(plant):
@@ -210,7 +210,7 @@ func _check_wilted_plants() -> void:
 						NetworkManager.lose_life()
 
 func _on_resource_received(from_player: int, resource_type: String, amount: int, _quality: float) -> void:
-	"""Receive dirty water from Player 1"""
+	# Receive dirty water from Player 1
 	if resource_type == "dirty_water":
 		available_water += amount
 		_update_water_display()

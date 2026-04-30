@@ -70,7 +70,7 @@ func _ready() -> void:
 	_start_round()
 
 func _update_role_display() -> void:
-	"""Show player's role based on host/client status"""
+	# Show player's role based on host/client status
 	if role_label:
 		if GameManager.is_host:
 			role_label.text = "🌧️ Collector - Catch the Drops!"
@@ -78,7 +78,7 @@ func _update_role_display() -> void:
 			role_label.text = "🍃 User - Destroy the Leaves!"
 
 func _start_round() -> void:
-	"""Initialize and start the game round"""
+	# Initialize and start the game round
 	local_score = 0
 	round_start_time = Time.get_ticks_msec()
 	is_game_active = true
@@ -102,7 +102,7 @@ func _start_round() -> void:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func _on_spawn_timer_timeout() -> void:
-	"""Spawn objects based on player role"""
+	# Spawn objects based on player role
 	if not is_game_active:
 		return
 	
@@ -111,7 +111,7 @@ func _on_spawn_timer_timeout() -> void:
 		_spawn_objects_as_host()
 
 func _spawn_objects_as_host() -> void:
-	"""Host spawns both Drops and Leaves, syncs to clients"""
+	# Host spawns both Drops and Leaves, syncs to clients
 	var screen_width: float = get_viewport_rect().size.x
 	
 	# Spawn a Drop (for Host to catch)
@@ -124,7 +124,7 @@ func _spawn_objects_as_host() -> void:
 
 @rpc("authority", "call_local", "reliable")
 func _spawn_drop(x_pos: float) -> void:
-	"""Spawn a water drop at given x position"""
+	# Spawn a water drop at given x position
 	if not drop_scene:
 		print("⚠️ Drop scene not loaded!")
 		return
@@ -148,7 +148,7 @@ func _spawn_drop(x_pos: float) -> void:
 
 @rpc("authority", "call_local", "reliable")
 func _spawn_leaf(x_pos: float) -> void:
-	"""Spawn a leaf at given x position"""
+	# Spawn a leaf at given x position
 	if not leaf_scene:
 		print("⚠️ Leaf scene not loaded!")
 		return
@@ -185,7 +185,7 @@ func _input(event: InputEvent) -> void:
 		_handle_tap(event.position)
 
 func _handle_tap(tap_position: Vector2) -> void:
-	"""Process tap based on player role"""
+	# Process tap based on player role
 	if GameManager.is_host:
 		# Host tries to catch drops
 		_try_catch_drop(tap_position)
@@ -194,7 +194,7 @@ func _handle_tap(tap_position: Vector2) -> void:
 		_try_destroy_leaf(tap_position)
 
 func _try_catch_drop(tap_pos: Vector2) -> void:
-	"""Host attempts to catch a water drop"""
+	# Host attempts to catch a water drop
 	var drops: Array = drop_container.get_children() if drop_container else get_tree().get_nodes_in_group("drops")
 	
 	for drop in drops:
@@ -210,7 +210,7 @@ func _try_catch_drop(tap_pos: Vector2) -> void:
 			return
 
 func _try_destroy_leaf(tap_pos: Vector2) -> void:
-	"""Client attempts to destroy a leaf"""
+	# Client attempts to destroy a leaf
 	var leaves: Array = leaf_container.get_children() if leaf_container else get_tree().get_nodes_in_group("leaves")
 	
 	for leaf in leaves:
@@ -230,7 +230,7 @@ func _try_destroy_leaf(tap_pos: Vector2) -> void:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func _on_drop_collected(_drop: Node = null) -> void:
-	"""Host caught a drop - add to G-Counter"""
+	# Host caught a drop - add to G-Counter
 	if not GameManager.is_host:
 		return  # Only host handles drop collection
 	
@@ -242,7 +242,7 @@ func _on_drop_collected(_drop: Node = null) -> void:
 	print("💧 Drop caught! Local: ", local_score)
 
 func _on_leaf_destroyed(_leaf: Node = null) -> void:
-	"""Client destroyed a leaf - add to G-Counter"""
+	# Client destroyed a leaf - add to G-Counter
 	if GameManager.is_host:
 		return  # Only client handles leaf destruction
 	
@@ -254,19 +254,19 @@ func _on_leaf_destroyed(_leaf: Node = null) -> void:
 	print("🍃 Leaf destroyed! Local: ", local_score)
 
 func _on_drop_missed(_drop: Node = null) -> void:
-	"""A drop was missed - team loses life"""
+	# A drop was missed - team loses life
 	if GameManager.is_host:
 		GameManager.report_damage.rpc()  # Only host reports damage
 	print("❌ Drop missed!")
 
 func _on_leaf_missed(_leaf: Node = null) -> void:
-	"""A leaf was missed - team loses life"""
+	# A leaf was missed - team loses life
 	if not GameManager.is_host:
 		GameManager.report_damage.rpc()  # Client reports their miss
 	print("❌ Leaf missed!")
 
 func _on_life_lost(remaining: int) -> void:
-	"""Update UI when team loses a life"""
+	# Update UI when team loses a life
 	_update_ui()
 	
 	# Visual feedback
@@ -278,7 +278,7 @@ func _on_life_lost(remaining: int) -> void:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func _on_team_won() -> void:
-	"""Team reached the quota!"""
+	# Team reached the quota!
 	is_game_active = false
 	spawn_timer.stop()
 	
@@ -293,7 +293,7 @@ func _on_team_won() -> void:
 	_show_result(true)
 
 func _on_team_lost() -> void:
-	"""Team ran out of lives!"""
+	# Team ran out of lives!
 	is_game_active = false
 	spawn_timer.stop()
 	
@@ -305,7 +305,7 @@ func _on_team_lost() -> void:
 	_show_result(false)
 
 func _show_result(is_victory: bool) -> void:
-	"""Display end-of-round result"""
+	# Display end-of-round result
 	# Clear remaining objects
 	for child in drop_container.get_children():
 		child.queue_free()
@@ -326,7 +326,7 @@ func _show_result(is_victory: bool) -> void:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func _update_ui() -> void:
-	"""Refresh all UI elements"""
+	# Refresh all UI elements
 	if score_label:
 		var global_score: int = GameManager.get_global_score()
 		score_label.text = "Score: %d / %d" % [global_score, GameManager.LEVEL_QUOTA]
@@ -339,7 +339,7 @@ func _update_ui() -> void:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func _exit_tree() -> void:
-	"""Disconnect signals when scene is removed"""
+	# Disconnect signals when scene is removed
 	if GameManager.team_won.is_connected(_on_team_won):
 		GameManager.team_won.disconnect(_on_team_won)
 	if GameManager.team_lost.is_connected(_on_team_lost):

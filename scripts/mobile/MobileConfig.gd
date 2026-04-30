@@ -56,7 +56,7 @@ var visual_indicator_scale: float = 1.3
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func load_from_file(path: String) -> bool:
-	"""Load configuration from file using ConfigFile API"""
+	# Load configuration from file using ConfigFile API
 	var config = ConfigFile.new()
 	var err = config.load(path)
 	
@@ -96,7 +96,7 @@ func load_from_file(path: String) -> bool:
 	return true
 
 func save_to_file(path: String) -> bool:
-	"""Save current configuration to file for persistence"""
+	# Save current configuration to file for persistence
 	var config = ConfigFile.new()
 	
 	# Save scaling factors

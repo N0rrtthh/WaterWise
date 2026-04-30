@@ -25,7 +25,7 @@ func get_controls_text() -> String:
 	return "⬅️ ➡️ Arrows or Mouse\n🪣 Move bucket\n💧 Catch raindrops"
 
 func _on_multiplayer_ready() -> void:
-	"""Setup game when multiplayer is ready"""
+	# Setup game when multiplayer is ready
 	game_name = "Catch the Rain"
 	connection_type = "resource_transfer"
 	
@@ -48,12 +48,12 @@ func _on_multiplayer_ready() -> void:
 	_log("Game ready - Catch raindrops to send water to partner!")
 
 func _on_game_start() -> void:
-	"""Called when game starts (after countdown)"""
+	# Called when game starts (after countdown)
 	spawn_timer.start()
 	_log("Catching rain started!")
 
 func _create_bucket() -> void:
-	"""Create the player's bucket"""
+	# Create the player's bucket
 	bucket = Area2D.new()
 	bucket.position = Vector2(get_viewport_rect().size.x / 2, get_viewport_rect().size.y - 100)
 	add_child(bucket)
@@ -75,7 +75,7 @@ func _create_bucket() -> void:
 	bucket.area_entered.connect(_on_bucket_collision)
 
 func _spawn_raindrop() -> void:
-	"""Spawn a falling raindrop"""
+	# Spawn a falling raindrop
 	if not game_active:
 		return
 	
@@ -130,7 +130,7 @@ func _process(delta: float) -> void:
 				child.queue_free()
 
 func _on_bucket_collision(area: Area2D) -> void:
-	"""Raindrop caught!"""
+	# Raindrop caught!
 	if not area.has_meta("type"):
 		return
 	
@@ -148,7 +148,7 @@ func _on_bucket_collision(area: Area2D) -> void:
 		_log("💧 Caught raindrop! Total: %d" % drops_caught)
 
 func _on_drop_missed() -> void:
-	"""Raindrop missed!"""
+	# Raindrop missed!
 	drops_missed += 1
 	_log("❌ Missed raindrop! Missed: %d" % drops_missed)
 	
@@ -158,7 +158,7 @@ func _on_drop_missed() -> void:
 		end_game(false)
 
 func _play_catch_effect(pos: Vector2) -> void:
-	"""Show catch effect"""
+	# Show catch effect
 	var particles = CPUParticles2D.new()
 	particles.position = pos
 	particles.amount = 20
@@ -179,7 +179,7 @@ func _play_catch_effect(pos: Vector2) -> void:
 	particles.queue_free()
 
 func _on_game_over() -> void:
-	"""Game over handling"""
+	# Game over handling
 	spawn_timer.stop()
 	_log("Game over! Caught: %d, Missed: %d" % [drops_caught, drops_missed])
 	super._on_game_over()
