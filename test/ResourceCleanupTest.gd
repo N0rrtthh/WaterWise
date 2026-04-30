@@ -30,7 +30,7 @@ func after_each():
 # ============================================================================
 
 func test_cleanup_frees_tweens():
-	"""Test that cleanup method kills and frees all active tweens"""
+	# Test that cleanup method kills and frees all active tweens
 	# Create a simple character for testing
 	var character = WaterDropletCharacter.new()
 	cutscene_player.add_child(character)
@@ -60,7 +60,7 @@ func test_cleanup_frees_tweens():
 
 
 func test_cleanup_frees_particles():
-	"""Test that cleanup method stops and returns particles to pool"""
+	# Test that cleanup method stops and returns particles to pool
 	# Create character
 	var character = WaterDropletCharacter.new()
 	cutscene_player.add_child(character)
@@ -85,7 +85,7 @@ func test_cleanup_frees_particles():
 
 
 func test_cleanup_frees_text_overlays():
-	"""Test that cleanup method removes temporary text overlay nodes"""
+	# Test that cleanup method removes temporary text overlay nodes
 	# Create character
 	var character = WaterDropletCharacter.new()
 	cutscene_player.add_child(character)
@@ -110,7 +110,7 @@ func test_cleanup_frees_text_overlays():
 
 
 func test_cleanup_clears_timer_references():
-	"""Test that cleanup method clears scheduled timer references"""
+	# Test that cleanup method clears scheduled timer references
 	# Create character
 	var character = WaterDropletCharacter.new()
 	cutscene_player.add_child(character)
@@ -133,7 +133,7 @@ func test_cleanup_clears_timer_references():
 
 
 func test_cleanup_frees_character():
-	"""Test that cleanup method frees the character node"""
+	# Test that cleanup method frees the character node
 	# Create character
 	var character = WaterDropletCharacter.new()
 	cutscene_player.add_child(character)
@@ -154,7 +154,7 @@ func test_cleanup_frees_character():
 # ============================================================================
 
 func test_cleanup_clears_caches_on_high_memory():
-	"""Test that cleanup clears caches when memory usage is high"""
+	# Test that cleanup clears caches when memory usage is high
 	# Pre-populate caches
 	AnimatedCutscenePlayer._animation_cache["TestGame"] = {}
 	AnimatedCutscenePlayer._texture_cache["test_texture.png"] = null
@@ -174,7 +174,7 @@ func test_cleanup_clears_caches_on_high_memory():
 
 
 func test_memory_stats_returns_valid_data():
-	"""Test that get_memory_stats returns valid memory information"""
+	# Test that get_memory_stats returns valid memory information
 	var stats = AnimatedCutscenePlayer.get_memory_stats()
 	
 	# Verify all expected keys exist
@@ -199,7 +199,7 @@ func test_memory_stats_returns_valid_data():
 # ============================================================================
 
 func test_particle_pooling_reuses_instances():
-	"""Test that object pooling reuses particle instances"""
+	# Test that object pooling reuses particle instances
 	# Get a particle from pool
 	var particle1 = AnimatedCutscenePlayer._get_pooled_particle(CutsceneTypes.ParticleType.SPARKLES)
 	assert_not_null(particle1, "Should get a particle from pool")
@@ -214,7 +214,7 @@ func test_particle_pooling_reuses_instances():
 
 
 func test_particle_pooling_respects_max_size():
-	"""Test that object pool respects maximum size per type"""
+	# Test that object pool respects maximum size per type
 	var particles = []
 	
 	# Fill the pool beyond max size
@@ -234,7 +234,7 @@ func test_particle_pooling_respects_max_size():
 
 
 func test_particle_pooling_resets_state():
-	"""Test that pooled particles have their state reset"""
+	# Test that pooled particles have their state reset
 	# Get a particle and modify its state
 	var particle = AnimatedCutscenePlayer._get_pooled_particle(CutsceneTypes.ParticleType.SPARKLES)
 	if particle:
@@ -251,7 +251,7 @@ func test_particle_pooling_resets_state():
 
 
 func test_clear_caches_frees_pooled_particles():
-	"""Test that clear_caches frees all pooled particles"""
+	# Test that clear_caches frees all pooled particles
 	# Create and pool some particles
 	var particles = []
 	for i in range(3):
@@ -277,7 +277,7 @@ func test_clear_caches_frees_pooled_particles():
 # ============================================================================
 
 func test_adaptive_density_reduces_particles_on_low_fps():
-	"""Test that adaptive density reduces particles when FPS is low"""
+	# Test that adaptive density reduces particles when FPS is low
 	# This test verifies the ParticleEffectManager integration
 	# We can't easily simulate low FPS, but we can verify the method exists and works
 	
@@ -294,7 +294,7 @@ func test_adaptive_density_reduces_particles_on_low_fps():
 
 
 func test_adaptive_density_reduces_particles_on_high_memory():
-	"""Test that adaptive density reduces particles when memory is high"""
+	# Test that adaptive density reduces particles when memory is high
 	# Similar to above, we verify the integration works
 	var particle = GPUParticles2D.new()
 	add_child_autofree(particle)
@@ -314,7 +314,7 @@ func test_adaptive_density_reduces_particles_on_high_memory():
 # ============================================================================
 
 func test_full_cutscene_cleanup_integration():
-	"""Integration test: Full cutscene playback and cleanup"""
+	# Integration test: Full cutscene playback and cleanup
 	# This test would require a full cutscene setup
 	# For now, we verify the cleanup method can be called safely
 	

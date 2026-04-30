@@ -217,20 +217,20 @@ func _save_shown_tutorials() -> void:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func should_show_tutorial(game_id: String) -> bool:
-	"""Check if tutorial should be shown for this game"""
+	# Check if tutorial should be shown for this game
 	var save_mgr = _get_save_manager()
 	if not save_mgr:
 		return true
 	return game_id not in shown_tutorials and save_mgr.get_setting("show_hints", true)
 
 func mark_tutorial_shown(game_id: String) -> void:
-	"""Mark tutorial as shown (won't show again)"""
+	# Mark tutorial as shown (won't show again)
 	if game_id not in shown_tutorials:
 		shown_tutorials.append(game_id)
 		_save_shown_tutorials()
 
 func get_tutorial(game_id: String) -> Dictionary:
-	"""Get tutorial data for a specific game"""
+	# Get tutorial data for a specific game
 	var lang := "en"
 	if Localization and not Localization.is_english():
 		lang = "tl"
@@ -241,7 +241,7 @@ func get_tutorial(game_id: String) -> Dictionary:
 	return {}
 
 func reset_tutorials() -> void:
-	"""Reset all tutorials to show again"""
+	# Reset all tutorials to show again
 	shown_tutorials.clear()
 	_save_shown_tutorials()
 
@@ -250,7 +250,7 @@ func reset_tutorials() -> void:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func create_tutorial_popup(game_id: String, parent: Node) -> Control:
-	"""Create and return a tutorial popup for the given game"""
+	# Create and return a tutorial popup for the given game
 	var tutorial_data = get_tutorial(game_id)
 	if tutorial_data.is_empty():
 		return null
@@ -402,7 +402,7 @@ var gameplay_hints: Dictionary = {
 }
 
 func get_contextual_hint(hint_type: String) -> String:
-	"""Get a hint based on player performance"""
+	# Get a hint based on player performance
 	var lang := "en"
 	if Localization and not Localization.is_english():
 		lang = "tl"
@@ -415,7 +415,7 @@ func get_contextual_hint(hint_type: String) -> String:
 	return ""
 
 func show_hint_popup(parent: Node, hint_text: String, duration: float = 3.0) -> void:
-	"""Show a temporary hint popup"""
+	# Show a temporary hint popup
 	var label = Label.new()
 	label.text = "💡 " + hint_text
 	label.add_theme_font_size_override("font_size", 24)

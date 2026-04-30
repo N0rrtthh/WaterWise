@@ -211,7 +211,7 @@ func _ready() -> void:
 	_log("")
 
 func _update_display() -> void:
-	"""Update all displays"""
+	# Update all displays
 	p1_label.text = str(p1_score)
 	p2_label.text = str(p2_score)
 	
@@ -227,12 +227,12 @@ func _update_display() -> void:
 		quota_label.text = "🏆 QUOTA REACHED!"
 
 func _log(text: String) -> void:
-	"""Add to log"""
+	# Add to log
 	log_label.text += text + "\n"
 	print(text)
 
 func _on_p1_score() -> void:
-	"""Player 1 scores"""
+	# Player 1 scores
 	p1_score += 5
 	_update_display()
 	_log("[color=cyan]💧 Player 1 scored 5 points → Total: %d[/color]" % p1_score)
@@ -243,7 +243,7 @@ func _on_p1_score() -> void:
 		_log("")
 
 func _on_p2_score() -> void:
-	"""Player 2 scores"""
+	# Player 2 scores
 	p2_score += 5
 	_update_display()
 	_log("[color=orange]💧 Player 2 scored 5 points → Total: %d[/color]" % p2_score)
@@ -254,7 +254,7 @@ func _on_p2_score() -> void:
 		_log("")
 
 func _on_reset() -> void:
-	"""Reset scores"""
+	# Reset scores
 	p1_score = 0
 	p2_score = 0
 	log_label.text = ""
@@ -264,5 +264,5 @@ func _on_reset() -> void:
 	_log("")
 
 func _on_back() -> void:
-	"""Return to launcher"""
+	# Return to launcher
 	get_tree().change_scene_to_file("res://test/DemoLauncher.tscn")

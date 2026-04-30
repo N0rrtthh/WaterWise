@@ -185,6 +185,10 @@ func _connect_multiplayer_signals() -> void:
 			NetworkManager.player_connected.connect(self, "_on_network_player_connected")
 		if not NetworkManager.player_disconnected.is_connected(self, "_on_network_player_disconnected"):
 			NetworkManager.player_disconnected.connect(self, "_on_network_player_disconnected")
+		if not NetworkManager.both_players_ready.is_connected(self, "_on_both_players_ready"):
+			NetworkManager.both_players_ready.connect(self, "_on_both_players_ready")
+		if not NetworkManager.game_started.is_connected(self, "_on_game_started"):
+			NetworkManager.game_started.connect(self, "_on_game_started")
 
 func _is_connected() -> bool:
 	return (
@@ -414,6 +418,45 @@ func _sync_ready_map(ready_map: Dictionary) -> void:
 	ready_status_by_peer = ready_map.duplicate(true)
 	_update_player_list()
 	_update_start_button_state()
+
+func _on_both_players_ready() -> void:
+	print("✅ Both players ready!")
+	
+	if NetworkManager and NetworkManager.is_server():
+		start_game_button.disabled = false
+
+func _load_level_set_games(level_set: Dictionary) -> void:
+	# Load the correct game scene for EACH PLAYER based on level set
+	# P1 and P2 load DIFFERENT scenes with interconnected gameplay
+	var p1_scene: String = level_set["player1_game"]
+	var p2_scene: String = level_set["player2_game"]
+	
+	print("🎮 Loading INTERCONNECTED multiplayer games:")
+	print("   P1 (%s): %s" % [level_set["player1_role"], p1_scene])
+	print("   P2 (%s): %s" % [level_set["player2_role"], p2_scene])
+	
+	# Validate both scenes exist
+	if not ResourceLoader.exists(p1_scene):
+		push_error("❌ P1 game scene not found: " + p1_scene)
+		_show_error("P1 game scene not found!")
+		return
+	
+	if not ResourceLoader.exists(p2_scene):
+		push_error("❌ P2 game scene not found: " + p2_scene)
+		_show_error("P2 game scene not found!")
+		return
+	
+	# Use NetworkManager to load DIFFERENT scenes for each player
+	if NetworkManager:
+		NetworkManager.start_multiplayer_game_pair(p1_scene, p2_scene)
+	else:
+		push_error("❌ NetworkManager not available!")
+		_show_error("Network error!")
+
+func _on_game_started(scenario_id: String, _roles: Dictionary) -> void:
+	print("🎮 Game started: " + scenario_id)
+	# Scene change is handled by NetworkManager via RPC
+	pass
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # PLAYER LIST UPDATE

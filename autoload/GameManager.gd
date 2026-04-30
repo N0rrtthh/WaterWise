@@ -89,6 +89,7 @@ const SLOW_THRESHOLD: float = 30.0  # seconds
 
 var team_lives: int = 3
 const MAX_TEAM_LIVES: int = 3
+const LEVEL_QUOTA: int = 20
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # MULTIPLAYER (ENet)
@@ -1186,7 +1187,7 @@ func complete_minigame(
 		"accuracy": accuracy,
 		"reaction_time": reaction_time,
 		"mistakes": mistakes,
-		"difficulty": _get_current_difficulty()
+		"difficulty": get_current_difficulty()
 	}
 	
 	# Log event for dev-mode performance analysis
@@ -1196,7 +1197,7 @@ func complete_minigame(
 			"accuracy": accuracy,
 			"reaction_time_ms": reaction_time,
 			"mistakes": mistakes,
-			"difficulty": _get_current_difficulty(),
+			"difficulty": get_current_difficulty(),
 			"round_score": round_score,
 			"session_score": session_score,
 			"lives": session_lives,
@@ -1207,13 +1208,12 @@ func complete_minigame(
 	change_state(GameState.MINIGAME_RESULTS)
 	current_minigame_index += 1
 
-
 func add_session_droplets(amount: int) -> void:
 	if amount <= 0:
 		return
 	session_droplets_earned += amount
 
-func _get_current_difficulty() -> String:
+func get_current_difficulty() -> String:
 	# Dynamic difficulty classification that works with uncapped values
 	if difficulty_multiplier >= 2.0:
 		return "Extreme"  # New tier for very high speeds

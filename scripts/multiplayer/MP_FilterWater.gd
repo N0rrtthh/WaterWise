@@ -22,18 +22,18 @@ func get_controls_text() -> String:
 	return "🖱️ Click particles\n💧 Filter water\n⏸ Pause game"
 
 func _on_multiplayer_ready() -> void:
-	"""Setup game when multiplayer is ready"""
+	# Setup game when multiplayer is ready
 	game_name = "Filter Water"
 	connection_type = "resource_transfer"
 	
 	_log("Game ready - Filter water sent by partner!")
 
 func _on_game_start() -> void:
-	"""Called when game starts (after countdown)"""
+	# Called when game starts (after countdown)
 	_log("Filtering started - waiting for water from partner...")
 
 func _on_resource_received(_from_player: int, resource_type: String, amount: int, quality: float) -> void:
-	"""Receive water from Player 1"""
+	# Receive water from Player 1
 	if resource_type == "clean_water":
 		water_queue.append({
 			"amount": amount,
@@ -46,7 +46,7 @@ func _on_resource_received(_from_player: int, resource_type: String, amount: int
 		_spawn_dirt_particles(amount * PARTICLES_PER_WATER)
 
 func _spawn_dirt_particles(count: int) -> void:
-	"""Spawn dirt particles that need to be clicked"""
+	# Spawn dirt particles that need to be clicked
 	for i in range(count):
 		var particle = Area2D.new()
 		particle.position = Vector2(
@@ -75,13 +75,13 @@ func _spawn_dirt_particles(count: int) -> void:
 		dirt_particles.append(particle)
 
 func _on_particle_clicked(_viewport: Node, event: InputEvent, _shape_idx: int, particle: Area2D) -> void:
-	"""Particle clicked - filter it!"""
+	# Particle clicked - filter it!
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
 		if particle.has_meta("type") and particle.get_meta("type") == "dirt":
 			_filter_particle(particle)
 
 func _filter_particle(particle: Area2D) -> void:
-	"""Filter a dirt particle"""
+	# Filter a dirt particle
 	filtered_count += 1
 	add_score(5)
 	
@@ -97,7 +97,7 @@ func _filter_particle(particle: Area2D) -> void:
 	_check_water_unit_complete()
 
 func _check_water_unit_complete() -> void:
-	"""Check if enough particles filtered to complete a water unit"""
+	# Check if enough particles filtered to complete a water unit
 	if water_queue.is_empty():
 		return
 	
@@ -135,7 +135,7 @@ func _process(delta: float) -> void:
 				particle.set_meta("velocity", velocity)
 
 func _play_filter_effect(pos: Vector2) -> void:
-	"""Show filter effect"""
+	# Show filter effect
 	var particles = CPUParticles2D.new()
 	particles.position = pos
 	particles.amount = 15
@@ -156,6 +156,6 @@ func _play_filter_effect(pos: Vector2) -> void:
 	particles.queue_free()
 
 func _on_game_over() -> void:
-	"""Game over handling"""
+	# Game over handling
 	_log("Game over! Filtered: %d units" % filtered_count)
 	super._on_game_over()
