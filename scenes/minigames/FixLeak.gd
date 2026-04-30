@@ -174,6 +174,34 @@ func _process(delta: float) -> void:
 		_update_leaks(delta)
 		_check_win_condition()
 
+
+func _input(event: InputEvent) -> void:
+	if not game_active:
+		return
+
+	var click_pos: Vector2
+	if event is InputEventMouseButton:
+		var mb = event as InputEventMouseButton
+		if not (mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT):
+			return
+		click_pos = mb.position
+	elif event is InputEventScreenTouch:
+		var touch = event as InputEventScreenTouch
+		if not touch.pressed:
+			return
+		click_pos = touch.position
+	else:
+		return
+
+	for leak in leaks:
+		if not is_instance_valid(leak):
+			continue
+		if leak.get_meta("fixed", false):
+			continue
+		if leak.position.distance_to(click_pos) <= 60.0:
+			_on_leak_clicked(leak)
+			break
+
 func _update_leaks(delta: float) -> void:
 	for leak in leaks:
 		if leak.get_meta("fixed", false):
