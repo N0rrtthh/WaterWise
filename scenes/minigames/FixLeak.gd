@@ -42,8 +42,21 @@ func _apply_difficulty_settings() -> void:
 		show_hints = false
 
 func _on_game_start() -> void:
+	print("[FixLeak] Game start: Spawning leaks...")
 	_spawn_leaks()
+	print("[FixLeak] Leaks spawned: %d" % leaks.size())
 	_create_tools()
+	# Failsafe: If leaks not clickable or not spawning, force end after 10s
+	var failsafe_timer = Timer.new()
+	failsafe_timer.wait_time = 10.0
+	failsafe_timer.one_shot = true
+	failsafe_timer.timeout.connect(func():
+		if fixed_leaks < num_leaks and game_active:
+			print("[FixLeak] Failsafe triggered: Forcing game end (fail)")
+			end_game(false)
+	)
+	add_child(failsafe_timer)
+	failsafe_timer.start()
 
 func _spawn_leaks() -> void:
 	var viewport_size = get_viewport_rect().size
@@ -191,6 +204,7 @@ func _on_leak_clicked(leak: Node2D) -> void:
 	# Fix the leak!
 	leak.set_meta("fixed", true)
 	fixed_leaks += 1
+	print("[FixLeak] Leak fixed! Total fixed: %d/%d" % [fixed_leaks, num_leaks])
 	
 	# Visual feedback
 	var drip = leak.get_meta("drip") as ColorRect
@@ -213,6 +227,10 @@ func _on_leak_clicked(leak: Node2D) -> void:
 	# Juice effects
 	JuiceEffects.bounce_scale(leak, 1.3, 0.3)
 	JuiceEffects.particle_burst(self, leak.position, Color.GREEN, 15)
+	# If all leaks fixed, force win immediately (extra safety)
+	if fixed_leaks >= num_leaks and game_active:
+		print("[FixLeak] All leaks fixed! Forcing win.")
+		end_game(true)
 
 func _check_win_condition() -> void:
 	if fixed_leaks >= num_leaks:

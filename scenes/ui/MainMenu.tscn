@@ -1,10 +1,9 @@
-[gd_scene load_steps=26 format=3 uid="uid://dr001a2b3cd4"]
+[gd_scene format=3 uid="uid://dr001a2b3cd4"]
 
 [ext_resource type="Script" uid="uid://dp58cevmfgymc" path="res://scenes/ui/MainMenu.gd" id="1_mainmenu"]
 [ext_resource type="Shader" uid="uid://cljn5fo1wq1w4" path="res://shaders/grid.gdshader" id="2_grid"]
 [ext_resource type="Shader" uid="uid://boqv2sk3gmhpx" path="res://shaders/wave_menu.gdshader" id="3_wave"]
 [ext_resource type="Script" uid="uid://c0q6hyd8gc7dm" path="res://scripts/Bobbing.gd" id="4_bobbing"]
-[ext_resource type="FontFile" uid="uid://bs7drrspc0ykk" path="res://fonts/Cubao_Free_Wide.otf" id="5_cubao"]
 [ext_resource type="FontFile" uid="uid://6gq30qbnrhfs" path="res://fonts/NTBrickSans.otf" id="6_brick"]
 [ext_resource type="Texture2D" uid="uid://dawvvxdjbur85" path="res://characters/main char__gltf/Body_ad8e0317-4609-421e-8a52-831a51ebd9a6.png" id="7_body"]
 [ext_resource type="Texture2D" uid="uid://yrb0t2h8ugw7" path="res://characters/main char__gltf/Left_Arm_0403c52f-ddcf-4d31-ba77-454b6ed6a78f.png" id="8_left_arm"]
@@ -101,7 +100,20 @@ shadow_color = Color(0, 0, 0, 0.2)
 shadow_size = 4
 shadow_offset = Vector2(0, 4)
 
-[node name="MainMenu" type="Control"]
+[sub_resource type="Animation" id="Animation_ff4wq"]
+resource_name = "Intro"
+length = 2.2
+
+[sub_resource type="Animation" id="Animation_nqw28"]
+resource_name = "Outro"
+
+[sub_resource type="AnimationLibrary" id="AnimationLibrary_7uy2f"]
+_data = {
+&"Intro": SubResource("Animation_ff4wq"),
+&"Outro": SubResource("Animation_nqw28")
+}
+
+[node name="MainMenu" type="Control" unique_id=1239886344]
 layout_mode = 3
 anchors_preset = 15
 anchor_right = 1.0
@@ -110,7 +122,7 @@ grow_horizontal = 2
 grow_vertical = 2
 script = ExtResource("1_mainmenu")
 
-[node name="Background" type="ColorRect" parent="."]
+[node name="Background" type="ColorRect" parent="." unique_id=838062948]
 z_index = -1
 layout_mode = 1
 anchors_preset = 15
@@ -121,7 +133,7 @@ grow_vertical = 2
 rotation = 0.003962005
 color = Color(0.231373, 0.321569, 0.462745, 1)
 
-[node name="GridOverlay" type="ColorRect" parent="."]
+[node name="GridOverlay" type="ColorRect" parent="." unique_id=1616482451]
 z_index = -1
 material = SubResource("ShaderMaterial_grid")
 layout_mode = 1
@@ -131,7 +143,7 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 
-[node name="Decorations" type="Control" parent="."]
+[node name="Decorations" type="Control" parent="." unique_id=41190613]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -140,102 +152,102 @@ grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
 
-[node name="TapSystem" type="Node2D" parent="Decorations"]
+[node name="TapSystem" type="Node2D" parent="Decorations" unique_id=267738776]
 position = Vector2(150, 500)
 
-[node name="Pipe" type="ColorRect" parent="Decorations/TapSystem"]
+[node name="Pipe" type="ColorRect" parent="Decorations/TapSystem" unique_id=271598526]
 offset_left = -150.0
 offset_top = -20.0
 offset_right = 50.0
 offset_bottom = 20.0
 color = Color(0.5, 0.5, 0.5, 1)
 
-[node name="Spout" type="ColorRect" parent="Decorations/TapSystem"]
+[node name="Spout" type="ColorRect" parent="Decorations/TapSystem" unique_id=375678179]
 offset_left = 10.0
 offset_top = -10.0
 offset_right = 50.0
 offset_bottom = 60.0
 color = Color(0.5, 0.5, 0.5, 1)
 
-[node name="Handle" type="ColorRect" parent="Decorations/TapSystem"]
+[node name="Handle" type="ColorRect" parent="Decorations/TapSystem" unique_id=1984302462]
 offset_left = 15.0
 offset_top = -40.0
 offset_right = 45.0
 offset_bottom = -10.0
 color = Color(0.6, 0.6, 0.6, 1)
 
-[node name="WaterStream" type="ColorRect" parent="Decorations/TapSystem"]
+[node name="WaterStream" type="ColorRect" parent="Decorations/TapSystem" unique_id=478349396]
 offset_left = 20.0
 offset_top = 60.0
 offset_right = 40.0
 offset_bottom = 600.0
 color = Color(0.560784, 0.870588, 0.964706, 0.8)
 
-[node name="Character" type="Node2D" parent="Decorations"]
+[node name="Character" type="Node2D" parent="Decorations" unique_id=128614636]
 z_index = -1
 position = Vector2(1550, 750)
 rotation = 0.34722215
 scale = Vector2(1.6698632, 1.6698632)
 script = ExtResource("4_bobbing")
 
-[node name="Body" type="Sprite2D" parent="Decorations/Character"]
+[node name="Body" type="Sprite2D" parent="Decorations/Character" unique_id=544460297]
 z_index = 1
 scale = Vector2(0.6, 0.6)
 texture = ExtResource("7_body")
 
-[node name="LeftLeg" type="Sprite2D" parent="Decorations/Character"]
+[node name="LeftLeg" type="Sprite2D" parent="Decorations/Character" unique_id=1094390660]
 position = Vector2(-30, 120)
 scale = Vector2(0.6, 0.6)
 texture = ExtResource("15_leg_l")
 
-[node name="RightLeg" type="Sprite2D" parent="Decorations/Character"]
+[node name="RightLeg" type="Sprite2D" parent="Decorations/Character" unique_id=1268691833]
 position = Vector2(30, 120)
 scale = Vector2(0.6, 0.6)
 texture = ExtResource("16_leg_r")
 
-[node name="LeftArm" type="Sprite2D" parent="Decorations/Character"]
+[node name="LeftArm" type="Sprite2D" parent="Decorations/Character" unique_id=511401662]
 position = Vector2(-64.667435, -1.5963669)
 rotation = -4.1049232
 scale = Vector2(0.6, 0.6)
 texture = ExtResource("8_left_arm")
 offset = Vector2(-25.472778, 64.3938)
 
-[node name="RightArm" type="Sprite2D" parent="Decorations/Character"]
+[node name="RightArm" type="Sprite2D" parent="Decorations/Character" unique_id=1589536368]
 position = Vector2(60.966976, -5.892965)
 rotation = -2.3599048
 scale = Vector2(0.6, 0.6)
 texture = ExtResource("9_right_arm")
 offset = Vector2(27.729614, 63.836304)
 
-[node name="EyeLeft" type="Sprite2D" parent="Decorations/Character"]
+[node name="EyeLeft" type="Sprite2D" parent="Decorations/Character" unique_id=965731774]
 z_index = 3
 position = Vector2(-30, -20)
 scale = Vector2(0.8, 0.8)
 texture = ExtResource("10_eye_l")
 
-[node name="PupilLeft" type="Sprite2D" parent="Decorations/Character/EyeLeft"]
+[node name="PupilLeft" type="Sprite2D" parent="Decorations/Character/EyeLeft" unique_id=1221480186]
 z_index = 1
 position = Vector2(0.9659629, -9.590716)
 texture = ExtResource("13_pupil_l")
 
-[node name="EyeRight" type="Sprite2D" parent="Decorations/Character"]
+[node name="EyeRight" type="Sprite2D" parent="Decorations/Character" unique_id=1974852928]
 z_index = 3
 position = Vector2(30, -20)
 scale = Vector2(0.8, 0.8)
 texture = ExtResource("11_eye_r")
 
-[node name="PupilRight" type="Sprite2D" parent="Decorations/Character/EyeRight"]
+[node name="PupilRight" type="Sprite2D" parent="Decorations/Character/EyeRight" unique_id=868308220]
 z_index = 1
 position = Vector2(-0.13246012, -11.214429)
 texture = ExtResource("14_pupil_r")
 
-[node name="Mouth" type="Sprite2D" parent="Decorations/Character"]
+[node name="Mouth" type="Sprite2D" parent="Decorations/Character" unique_id=1591387280]
 z_index = 1
 position = Vector2(0.112148285, 26.707453)
 scale = Vector2(0.7, 0.7)
 texture = ExtResource("12_mouth")
 
-[node name="WaterLayer" type="Control" parent="."]
+[node name="WaterLayer" type="Control" parent="." unique_id=135271770]
 layout_mode = 1
 anchors_preset = 12
 anchor_top = 1.0
@@ -246,7 +258,7 @@ grow_horizontal = 2
 grow_vertical = 0
 mouse_filter = 2
 
-[node name="BackWave" type="ColorRect" parent="WaterLayer"]
+[node name="BackWave" type="ColorRect" parent="WaterLayer" unique_id=1680769501]
 material = SubResource("ShaderMaterial_wave_back")
 layout_mode = 1
 anchors_preset = 15
@@ -255,7 +267,7 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 
-[node name="FrontWave" type="ColorRect" parent="WaterLayer"]
+[node name="FrontWave" type="ColorRect" parent="WaterLayer" unique_id=47033277]
 material = SubResource("ShaderMaterial_wave_front")
 layout_mode = 1
 anchors_preset = 15
@@ -264,7 +276,7 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 
-[node name="UI" type="CenterContainer" parent="."]
+[node name="UI" type="CenterContainer" parent="." unique_id=361631213]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -272,15 +284,15 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 
-[node name="VBoxContainer" type="VBoxContainer" parent="UI"]
+[node name="VBoxContainer" type="VBoxContainer" parent="UI" unique_id=1806041077]
 layout_mode = 2
 theme_override_constants/separation = 60
 
-[node name="TitleContainer" type="VBoxContainer" parent="UI/VBoxContainer"]
+[node name="TitleContainer" type="VBoxContainer" parent="UI/VBoxContainer" unique_id=1906151654]
 layout_mode = 2
 theme_override_constants/separation = -50
 
-[node name="Title" type="Label" parent="UI/VBoxContainer/TitleContainer"]
+[node name="Title" type="Label" parent="UI/VBoxContainer/TitleContainer" unique_id=1390973726]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.25, 0.6, 1, 1)
 theme_override_constants/outline_size = 8
@@ -289,7 +301,7 @@ theme_override_font_sizes/font_size = 112
 text = "WATERVILLE"
 horizontal_alignment = 1
 
-[node name="Subtitle" type="Label" parent="UI/VBoxContainer/TitleContainer"]
+[node name="Subtitle" type="Label" parent="UI/VBoxContainer/TitleContainer" unique_id=1771388125]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.894118, 0.45098, 0.133333, 1)
 theme_override_constants/outline_size = 4
@@ -298,7 +310,7 @@ theme_override_font_sizes/font_size = 48
 text = "every drop counts"
 horizontal_alignment = 1
 
-[node name="PlayButton" type="Button" parent="UI/VBoxContainer"]
+[node name="PlayButton" type="Button" parent="UI/VBoxContainer" unique_id=1041329765]
 custom_minimum_size = Vector2(400, 70)
 layout_mode = 2
 size_flags_horizontal = 4
@@ -309,7 +321,7 @@ theme_override_styles/pressed = SubResource("StyleBoxFlat_play_pressed")
 theme_override_styles/hover = SubResource("StyleBoxFlat_play_hover")
 text = "▶️ PLAY"
 
-[node name="QuitButton" type="Button" parent="UI/VBoxContainer"]
+[node name="QuitButton" type="Button" parent="UI/VBoxContainer" unique_id=341750013]
 custom_minimum_size = Vector2(400, 70)
 layout_mode = 2
 size_flags_horizontal = 4
@@ -321,25 +333,28 @@ theme_override_styles/pressed = SubResource("StyleBoxFlat_quit_pressed")
 theme_override_styles/hover = SubResource("StyleBoxFlat_quit_hover")
 text = "EXIT"
 
-[node name="LoadingContainer" type="VBoxContainer" parent="UI/VBoxContainer"]
+[node name="LoadingContainer" type="VBoxContainer" parent="UI/VBoxContainer" unique_id=1441797777]
 visible = false
 layout_mode = 2
 theme_override_constants/separation = 20
 
-[node name="ProgressBar" type="ProgressBar" parent="UI/VBoxContainer/LoadingContainer"]
+[node name="ProgressBar" type="ProgressBar" parent="UI/VBoxContainer/LoadingContainer" unique_id=433928625]
 custom_minimum_size = Vector2(400, 30)
 layout_mode = 2
 size_flags_horizontal = 4
 theme_override_styles/fill = SubResource("StyleBoxFlat_play_normal")
 show_percentage = false
 
-[node name="LoadingLabel" type="Label" parent="UI/VBoxContainer/LoadingContainer"]
+[node name="LoadingLabel" type="Label" parent="UI/VBoxContainer/LoadingContainer" unique_id=1479248934]
 layout_mode = 2
 theme_override_colors/font_color = Color(1, 1, 1, 1)
 theme_override_fonts/font = ExtResource("6_brick")
 theme_override_font_sizes/font_size = 24
 text = "Loading..."
 horizontal_alignment = 1
+
+[node name="AnimationPlayer" type="AnimationPlayer" parent="." unique_id=592281669]
+libraries/ = SubResource("AnimationLibrary_7uy2f")
 
 [connection signal="pressed" from="UI/VBoxContainer/PlayButton" to="." method="_on_play_button_pressed"]
 [connection signal="pressed" from="UI/VBoxContainer/QuitButton" to="." method="_on_quit_button_pressed"]
