@@ -147,14 +147,31 @@ func _reparent_action_buttons() -> void:
 		action_bar.z_index = 20
 		add_child(action_bar)
 
-	var btn_row = action_bar.get_node_or_null("ButtonRow") as HBoxContainer
+	var button_column = action_bar.get_node_or_null("ButtonColumn") as VBoxContainer
+	if not button_column:
+		button_column = VBoxContainer.new()
+		button_column.name = "ButtonColumn"
+		button_column.add_theme_constant_override("separation", 0)
+		button_column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		button_column.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		action_bar.add_child(button_column)
+
+	var button_spacer = button_column.get_node_or_null("BottomSpacer") as Control
+	if not button_spacer:
+		button_spacer = Control.new()
+		button_spacer.name = "BottomSpacer"
+		button_spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		button_spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		button_column.add_child(button_spacer)
+
+	var btn_row = button_column.get_node_or_null("ButtonRow") as HBoxContainer
 	if not btn_row:
 		btn_row = HBoxContainer.new()
 		btn_row.name = "ButtonRow"
-		btn_row.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
 		btn_row.alignment = BoxContainer.ALIGNMENT_CENTER
 		btn_row.add_theme_constant_override("separation", 20)
-		action_bar.add_child(btn_row)
+		btn_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		button_column.add_child(btn_row)
 
 	# Move buttons out of scroll and into the row
 	if back_button.get_parent() != btn_row:
@@ -233,8 +250,7 @@ func _update_action_button_bar_layout() -> void:
 		row_height = max(row_height, back_button.custom_minimum_size.y)
 	if exit_button:
 		row_height = max(row_height, exit_button.custom_minimum_size.y)
-	btn_row.offset_top = -row_height
-	btn_row.offset_bottom = 0.0
+	btn_row.custom_minimum_size = Vector2(btn_row.custom_minimum_size.x, row_height)
 
 	# Keep panel content in a dedicated safe zone above the fixed action bar.
 	var center_cont = get_node_or_null("CenterContainer") as Control
