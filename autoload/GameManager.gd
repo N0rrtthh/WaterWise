@@ -1005,10 +1005,14 @@ func _show_story_then_continue() -> void:
 		_story_transition_active = false
 		_launch_next_minigame_internal()
 		return
-	scene_root.add_child(story_scene)
+	var story_layer := CanvasLayer.new()
+	story_layer.name = "StoryScreenLayer"
+	story_layer.layer = 200
+	story_layer.add_child(story_scene)
+	scene_root.add_child(story_layer)
 	story_scene.story_finished.connect(func():
-		if is_instance_valid(story_scene):
-			story_scene.queue_free()
+		if is_instance_valid(story_layer):
+			story_layer.queue_free()
 		_story_transition_active = false
 		_launch_next_minigame_internal()
 	, CONNECT_ONE_SHOT)
