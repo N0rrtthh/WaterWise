@@ -148,22 +148,22 @@ func _ready() -> void:
 	print("💻 Your local IP: " + local_ip)
 
 func _connect_button_signals() -> void:
-	if not host_button.pressed.is_connected(_on_host_pressed):
-		host_button.pressed.connect(_on_host_pressed)
-	if not join_button.pressed.is_connected(_on_join_pressed):
-		join_button.pressed.connect(_on_join_pressed)
-	if not back_button.pressed.is_connected(_on_back_pressed):
-		back_button.pressed.connect(_on_back_pressed)
-	if not connect_button.pressed.is_connected(_on_connect_pressed):
-		connect_button.pressed.connect(_on_connect_pressed)
-	if not cancel_button.pressed.is_connected(_on_cancel_pressed):
-		cancel_button.pressed.connect(_on_cancel_pressed)
-	if not ready_checkbox.toggled.is_connected(_on_ready_toggled):
-		ready_checkbox.toggled.connect(_on_ready_toggled)
-	if not start_game_button.pressed.is_connected(_on_start_game_pressed):
-		start_game_button.pressed.connect(_on_start_game_pressed)
-	if not disconnect_button.pressed.is_connected(_on_disconnect_pressed):
-		disconnect_button.pressed.connect(_on_disconnect_pressed)
+	if not host_button.pressed.is_connected(self, "_on_host_pressed"):
+		host_button.pressed.connect(self, "_on_host_pressed")
+	if not join_button.pressed.is_connected(self, "_on_join_pressed"):
+		join_button.pressed.connect(self, "_on_join_pressed")
+	if not back_button.pressed.is_connected(self, "_on_back_pressed"):
+		back_button.pressed.connect(self, "_on_back_pressed")
+	if not connect_button.pressed.is_connected(self, "_on_connect_pressed"):
+		connect_button.pressed.connect(self, "_on_connect_pressed")
+	if not cancel_button.pressed.is_connected(self, "_on_cancel_pressed"):
+		cancel_button.pressed.connect(self, "_on_cancel_pressed")
+	if not ready_checkbox.toggled.is_connected(self, "_on_ready_toggled"):
+		ready_checkbox.toggled.connect(self, "_on_ready_toggled")
+	if not start_game_button.pressed.is_connected(self, "_on_start_game_pressed"):
+		start_game_button.pressed.connect(self, "_on_start_game_pressed")
+	if not disconnect_button.pressed.is_connected(self, "_on_disconnect_pressed"):
+		disconnect_button.pressed.connect(self, "_on_disconnect_pressed")
 
 func _connect_multiplayer_signals() -> void:
 	if not multiplayer.peer_connected.is_connected(_on_player_connected):
@@ -176,6 +176,15 @@ func _connect_multiplayer_signals() -> void:
 		multiplayer.connection_failed.connect(_on_connection_failed)
 	if not multiplayer.server_disconnected.is_connected(_on_server_disconnected):
 		multiplayer.server_disconnected.connect(_on_server_disconnected)
+
+	# Also listen to NetworkManager autoload signals if available to keep ready state authoritative
+	if NetworkManager:
+		if not NetworkManager.player_ready_changed.is_connected(self, "_on_network_player_ready_changed"):
+			NetworkManager.player_ready_changed.connect(self, "_on_network_player_ready_changed")
+		if not NetworkManager.player_connected.is_connected(self, "_on_network_player_connected"):
+			NetworkManager.player_connected.connect(self, "_on_network_player_connected")
+		if not NetworkManager.player_disconnected.is_connected(self, "_on_network_player_disconnected"):
+			NetworkManager.player_disconnected.connect(self, "_on_network_player_disconnected")
 
 func _is_connected() -> bool:
 	return (
@@ -208,10 +217,14 @@ func _update_start_button_state() -> void:
 func _sync_local_ready(ready_value: bool) -> void:
 	is_ready = ready_value
 	ready_checkbox.button_pressed = ready_value
-	if multiplayer.multiplayer_peer != null:
-		var my_id := multiplayer.get_unique_id()
-		ready_status_by_peer[my_id] = ready_value
-		rpc("_sync_ready_state", my_id, ready_value)
+	# Prefer authoritative NetworkManager for ready sync if available
+	if NetworkManager and NetworkManager.has_method("set_ready"):
+		NetworkManager.set_ready(ready_value)
+	else:
+		if multiplayer.multiplayer_peer != null:
+			var my_id := multiplayer.get_unique_id()
+			ready_status_by_peer[my_id] = ready_value
+			rpc("_sync_ready_state", my_id, ready_value)
 	_update_player_list()
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -235,6 +248,7 @@ func _show_waiting_panel() -> void:
 	mode_selection_panel.visible = false
 	join_panel.visible = false
 	waiting_panel.visible = true
+	_pull_network_ready_map()
 	_update_player_list()
 	_update_start_button_state()
 
@@ -284,6 +298,28 @@ func _on_cancel_pressed() -> void:
 func _on_ready_toggled(toggled: bool) -> void:
 	_sync_local_ready(toggled)
 
+
+func _on_network_player_ready_changed(peer_id: int, ready: bool) -> void:
+	# Update local map when NetworkManager reports a ready change
+	ready_status_by_peer[peer_id] = ready
+	_update_player_list()
+	_update_start_button_state()
+
+
+func _on_network_player_connected(peer_id: int, player_num: int) -> void:
+	# Ensure new peer entry exists
+	if not ready_status_by_peer.has(peer_id):
+		ready_status_by_peer[peer_id] = false
+	_update_player_list()
+	_update_start_button_state()
+
+
+func _on_network_player_disconnected(peer_id: int) -> void:
+	if ready_status_by_peer.has(peer_id):
+		ready_status_by_peer.erase(peer_id)
+	_update_player_list()
+	_update_start_button_state()
+
 func _on_start_game_pressed() -> void:
 	print("🔘 Start button pressed!")
 	
@@ -332,6 +368,7 @@ func _on_player_connected(peer_id: int) -> void:
 	if _is_host():
 		ready_status_by_peer[peer_id] = false
 		rpc_id(peer_id, "_sync_ready_map", ready_status_by_peer)
+	_pull_network_ready_map()
 	_update_player_list()
 	_update_start_button_state()
 
@@ -347,6 +384,7 @@ func _on_connected_to_server() -> void:
 	_show_waiting_panel()
 	status_label.text = _t("player_connected")
 	_sync_local_ready(false)
+	_pull_network_ready_map()
 	_update_player_list()
 	_update_start_button_state()
 
@@ -438,6 +476,21 @@ func _validate_ip(ip: String) -> bool:
 			return false
 	
 	return true
+
+
+func _pull_network_ready_map() -> void:
+	# If NetworkManager is present, populate local ready map from its authoritative player data
+	if NetworkManager and typeof(NetworkManager.players) == TYPE_DICTIONARY:
+		# NetworkManager stores player info in `players` dictionary
+		for peer_id in NetworkManager.players.keys():
+			var pdata = NetworkManager.players[peer_id]
+			ready_status_by_peer[peer_id] = bool(pdata.get("ready", false))
+	elif GameManager and GameManager.has_method("get_connected_multiplayer_peer_ids"):
+		# Fallback: initialize map with peer ids from GameManager
+		var peers = GameManager.get_connected_multiplayer_peer_ids()
+		for id in peers:
+			if not ready_status_by_peer.has(id):
+				ready_status_by_peer[id] = false
 
 func _show_error(message: String) -> void:
 	# Show error message in the waiting panel area.
