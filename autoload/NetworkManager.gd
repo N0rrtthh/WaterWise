@@ -56,6 +56,7 @@ var grace_period_active: bool = false
 # Game session
 var current_scenario_id: String = ""
 var game_in_progress: bool = false
+var _ready_signal_emitted: bool = false
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # G-COUNTER CRDT (Conflict-Free Replicated Data Type)
@@ -189,7 +190,10 @@ func _check_all_players_ready() -> void:
 			all_ready = false
 			break
 	
-	if all_ready and players.size() >= 1: # Allow single player testing if needed, but usually 2
+	if all_ready and players.size() >= MAX_PLAYERS:
+		if _ready_signal_emitted:
+			return
+		_ready_signal_emitted = true
 		_log("🚀 All players ready! Starting countdown...")
 		both_players_ready.emit()
 		start_countdown()
@@ -363,6 +367,7 @@ func disconnect_multiplayer() -> void:
 	game_in_progress = false
 	local_player_id = 0
 	remote_player_id = 0
+	_ready_signal_emitted = false
 	
 	_log("🔌 Disconnected from multiplayer")
 
@@ -412,7 +417,9 @@ func _check_all_ready() -> void:
 			return
 	
 	_log("✅ All players ready!")
-	both_players_ready.emit()
+	if not _ready_signal_emitted:
+		_ready_signal_emitted = true
+		both_players_ready.emit()
 
 func are_all_players_ready() -> bool:
 	# Check if all players are ready
@@ -678,12 +685,13 @@ func _request_return_to_lobby() -> void:
 
 @rpc("authority", "call_local", "reliable")
 func _execute_return_to_lobby() -> void:
-	# Fully tear down the connection so the lobby loads in a clean state
-	disconnect_multiplayer()
-	# Ensure the game is not paused so lobby inputs work
+	# Change scene first, then tear down connection with call_deferred
+	# so the lobby scene can initialize before the peer is destroyed
+	game_in_progress = false
 	if get_tree().paused:
 		get_tree().paused = false
 	get_tree().change_scene_to_file("res://scenes/ui/MultiplayerLobby.tscn")
+	call_deferred("disconnect_multiplayer")
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # RPC FUNCTIONS - PERFORMANCE DATA
@@ -879,7 +887,11 @@ func _start_transfer_timer(water_data: Dictionary) -> void:
 	var timer = Timer.new()
 	timer.one_shot = true
 	timer.wait_time = current_flow_speed
-	timer.timeout.connect(func(): _on_water_arrives(water_data))
+	timer.timeout.connect(func():
+		transfer_timers.erase(timer)
+		timer.queue_free()
+		_on_water_arrives(water_data)
+	)
 	add_child(timer)
 	transfer_timers.append(timer)
 	timer.start()
@@ -897,7 +909,7 @@ func _on_water_arrives(water_data: Dictionary) -> void:
 		# Local testing
 		_receive_water_for_consumption(water_data)
 
-@rpc("authority", "reliable")
+@rpc("any_peer", "reliable")
 func _notify_water_arrived(water_data: Dictionary) -> void:
 	# RPC: Notify consumer that water has arrived
 	if local_player_id == 2:  # Only consumer receives this
@@ -1222,7 +1234,7 @@ func start_round() -> void:
 	round_completion_status.clear()
 	_log("🎮 Round started")
 
-func report_player_completion(success: bool, score: int) -> void:
+func report_player_completion(success: bool, score: int, accuracy: float = -1.0, reaction_time_ms: int = -1) -> void:
 	# Report that local player has completed their game
 	if not round_in_progress:
 		round_in_progress = true
@@ -1230,7 +1242,9 @@ func report_player_completion(success: bool, score: int) -> void:
 	var my_id = multiplayer.get_unique_id()
 	round_completion_status[my_id] = {
 		"success": success,
-		"score": score
+		"score": score,
+		"accuracy": accuracy,
+		"reaction_time_ms": reaction_time_ms
 	}
 	
 	var status_str = "Success" if success else "Failed"
@@ -1238,17 +1252,19 @@ func report_player_completion(success: bool, score: int) -> void:
 		% [my_id, status_str, score])
 	
 	# Notify other players
-	rpc("_sync_player_completion", my_id, success, score)
+	rpc("_sync_player_completion", my_id, success, score, accuracy, reaction_time_ms)
 	
 	# Check if both completed
 	_check_both_completed()
 
 @rpc("any_peer", "reliable")
-func _sync_player_completion(peer_id: int, success: bool, score: int) -> void:
+func _sync_player_completion(peer_id: int, success: bool, score: int, accuracy: float = -1.0, reaction_time_ms: int = -1) -> void:
 	# Receive completion report from remote player
 	round_completion_status[peer_id] = {
 		"success": success,
-		"score": score
+		"score": score,
+		"accuracy": accuracy,
+		"reaction_time_ms": reaction_time_ms
 	}
 	var status_str = "Success" if success else "Failed"
 	_log("📡 Player %d completed (%s, score: %d)"
@@ -1298,8 +1314,46 @@ func _check_both_completed() -> void:
 		# Calculate difficulty adjustment with rolling window
 		_apply_rolling_window_adjustment(p1_success, p2_success, p1_score, p2_score)
 		
+		# ── CoopAdaptation algorithm feed ──────────────────────────────
+		# Resolve accuracy (use passed value, or fallback to score/100)
+		var p1_acc: float = p1_data.get("accuracy", -1.0)
+		var p2_acc: float = p2_data.get("accuracy", -1.0)
+		if p1_acc < 0.0: p1_acc = clamp(float(p1_score) / 100.0, 0.0, 1.0)
+		if p2_acc < 0.0: p2_acc = clamp(float(p2_score) / 100.0, 0.0, 1.0)
+		# Resolve reaction time in seconds (fallback: 15s midpoint)
+		var p1_rt_ms: int = p1_data.get("reaction_time_ms", -1)
+		var p2_rt_ms: int = p2_data.get("reaction_time_ms", -1)
+		var p1_time_s: float = float(p1_rt_ms) / 1000.0 if p1_rt_ms > 0 else 15.0
+		var p2_time_s: float = float(p2_rt_ms) / 1000.0 if p2_rt_ms > 0 else 15.0
+		var team_success: bool = p1_success and p2_success
+		var coop = get_node_or_null("/root/CoopAdaptation")
+		if coop and coop.has_method("add_game_result"):
+			coop.add_game_result(
+				{"accuracy": p1_acc, "time": p1_time_s, "errors": 0},
+				{"accuracy": p2_acc, "time": p2_time_s, "errors": 0},
+				team_success
+			)
+			_log("🧠 CoopAdaptation fed: P1 Φ(acc=%.2f, t=%.1fs) P2 Φ(acc=%.2f, t=%.1fs) team=%s"
+				% [p1_acc, p1_time_s, p2_acc, p2_time_s, str(team_success)])
 		# Increment rounds
 		rounds_survived += 1
+	
+	# Award droplets to local player for MP round
+	var save_mgr = get_node_or_null("/root/SaveManager")
+	var gm = get_node_or_null("/root/GameManager")
+	var my_id_check = multiplayer.get_unique_id()
+	var my_data: Dictionary = {}
+	for pid in round_completion_status:
+		if pid == my_id_check:
+			my_data = round_completion_status[pid]
+			break
+	var my_score: int = my_data.get("score", 0)
+	if my_score > 0 and save_mgr and save_mgr.has_method("add_droplets"):
+		var earned: int = max(1, my_score / 10)
+		save_mgr.add_droplets(earned)
+		if gm and gm.has_method("add_session_droplets"):
+			gm.add_session_droplets(earned)
+		_log("💧 MP droplets awarded: %d (from score %d)" % [earned, my_score])
 	
 	# Emit signal
 	both_players_completed.emit(p1_success, p2_success, p1_score, p2_score)

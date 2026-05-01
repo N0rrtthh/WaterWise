@@ -80,7 +80,12 @@ func _create_water_indicator() -> void:
 	vbox.add_child(info)
 
 func _update_water_display() -> void:
-	var water_label = get_node_or_null("PanelContainer/VBoxContainer/WaterLabel")
+	# Find the WaterLabel dynamically since the PanelContainer path may vary
+	var water_label = null
+	for child in get_children():
+		if child is PanelContainer:
+			water_label = child.find_child("WaterLabel", true, false)
+			break
 	if water_label:
 		water_label.text = "💧 x %d" % available_water
 

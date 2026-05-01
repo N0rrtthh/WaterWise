@@ -443,225 +443,149 @@ func _add_failure_character_animation(
 func _get_narrative_for_key(key: String, is_success: bool) -> Dictionary:
 	var narratives = {
 		"FilterBuilder": {
-			"win": {
-				"character": "💧→🧪→😋",
-				"context": "Built perfect filter stack\nClean water! Delicious! ✨"
-			},
-			"lose": {
-				"character": "💧→❌→🤮",
-				"context": "Wrong layer order\nMurky water! Blech! 💧"
-			}
+			"win": {"character": "💧", "context": "Built perfect filter stack\nClean water! Delicious! ✨"},
+			"lose": {"character": "🤮", "context": "Wrong layer order\nMurky water! Blech!"}
 		},
 		"FixLeak": {
-			"win": {
-				"character": "💦→🔧→✋",
-				"context": "Sealed the leak instantly\nWater stops flowing! ✨"
-			},
-			"lose": {
-				"character": "💦➡️💦➡️💦",
-				"context": "Leak keeps spraying\nWater keeps wasting! 💧"
-			}
+			"win": {"character": "🔧", "context": "Sealed the leak instantly\nWater stops flowing! ✨"},
+			"lose": {"character": "💦", "context": "Leak keeps spraying\nWater keeps wasting!"}
 		},
 		"CatchTheRain": {
-			"win": {
-				"character": "🌧️→🪣→😊",
-				"context": "Rain captured perfectly\nTank filling up! ✨"
-			},
-			"lose": {
-				"character": "🌧️→💨→😞",
-				"context": "Rain escaped everywhere\nTank stays empty! 💧"
-			}
+			"win": {"character": "🌧️", "context": "Rain captured perfectly\nDrum filling up! ✨"},
+			"lose": {"character": "😞", "context": "Rain escaped everywhere\nDrum stays empty!"}
 		},
 		"RiceWashRescue": {
-			"win": {
-				"character": "🍚💧→♻️→😋",
-				"context": "Rice water saved for reuse\nZero waste! ✨"
-			},
-			"lose": {
-				"character": "🍚💧→🌊→😱",
-				"context": "Rice water lost to drain\nWater wasted! 💧"
-			}
+			"win": {"character": "🍚", "context": "Rice water saved for reuse\nZero waste! ✨"},
+			"lose": {"character": "😱", "context": "Rice water lost to drain\nWater wasted!"}
 		},
 		"VegetableBath": {
-			"win": {
-				"character": "🥬💧→♻️→😊",
-				"context": "Veggie rinse captured\nWater reused! ✨"
-			},
-			"lose": {
-				"character": "🥬💧→🌊→😭",
-				"context": "Too much rinse water used\nWasted away! 💧"
-			}
+			"win": {"character": "🥬", "context": "Veggie rinse captured\nWater reused! ✨"},
+			"lose": {"character": "😭", "context": "Too much rinse water used\nWasted away!"}
 		},
 		"GreywaterSorter": {
-			"win": {
-				"character": "💧→✓→🏠",
-				"context": "Greywater sorted correctly\nReady to reuse! ✨"
-			},
-			"lose": {
-				"character": "💧→❌→🏠",
-				"context": "Streams got contaminated\nCan't reuse it! 💧"
-			}
+			"win": {"character": "♻️", "context": "Greywater sorted correctly\nReady to reuse! ✨"},
+			"lose": {"character": "❌", "context": "Streams got contaminated\nCan't reuse it!"}
 		},
 		"WringItOut": {
-			"win": {
-				"character": "🧽💧→👊→💧",
-				"context": "Every drop saved from sponge\nNothing wasted! ✨"
-			},
-			"lose": {
-				"character": "🧽💧→😅→💧💧",
-				"context": "Sponge still dripping\nDrops lost! 💧"
-			}
+			"win": {"character": "🧽", "context": "Every drop saved from sponge\nNothing wasted! ✨"},
+			"lose": {"character": "😅", "context": "Sponge still dripping\nDrops lost!"}
 		},
 		"ThirstyPlant": {
-			"win": {
-				"character": "🌱🍗→💧→🌿",
-				"context": "Plant watered perfectly\nHappy and thriving! ✨"
-			},
-			"lose": {
-				"character": "🌱🍗→❌→🥀",
-				"context": "Over/under watered\nPlant unhappy! 💧"
-			}
+			"win": {"character": "🌿", "context": "Plant watered perfectly\nHappy and thriving! ✨"},
+			"lose": {"character": "🥀", "context": "Over/under watered\nPlant unhappy!"}
 		},
 		"MudPieMaker": {
-			"win": {
-				"character": "💧🌍→🥧→😋",
-				"context": "Mud mix ratio perfect\nZero waste! ✨"
-			},
-			"lose": {
-				"character": "💧🌍→❌→🤨",
-				"context": "Wrong consistency\nMessed up! 💧"
-			}
+			"win": {"character": "🥧", "context": "Mud mix ratio perfect\nZero waste! ✨"},
+			"lose": {"character": "🤨", "context": "Wrong consistency\nMessed up!"}
 		},
 		"CoverTheDrum": {
-			"win": {
-				"character": "🛢️🔓→🔒→✓",
-				"context": "Drum covered in time\nWater protected! ✨"
-			},
-			"lose": {
-				"character": "🛢️🔓→😱→❌",
-				"context": "Drum got contaminated\nToo late! 💧"
-			}
+			"win": {"character": "🛢️", "context": "Drum covered in time\nWater protected! ✨"},
+			"lose": {"character": "🦟", "context": "Drum got contaminated\nToo late!"}
 		},
 		"SpotTheSpeck": {
-			"win": {
-				"character": "💧🔍→✓→😊",
-				"context": "All specks spotted and removed\nCrystal clear! ✨"
-			},
-			"lose": {
-				"character": "💧🔍→😔→❌",
-				"context": "A speck got through\nImpure water! 💧"
-			}
+			"win": {"character": "🔍", "context": "All specks spotted and removed\nCrystal clear! ✨"},
+			"lose": {"character": "😔", "context": "A speck got through\nImpure water!"}
 		},
 		"RainwaterHarvesting": {
-			"win": {
-				"character": "☔→🪣→😊",
-				"context": "Rainwater harvested perfectly\nTankfilled! ✨"
-			},
-			"lose": {
-				"character": "☔→💨→😞",
-				"context": "Harvest timing missed\nTank empty! 💧"
-			}
+			"win": {"character": "☔", "context": "Rainwater harvested perfectly\nTank filled! ✨"},
+			"lose": {"character": "😞", "context": "Harvest timing missed\nTank empty!"}
 		},
 		"WaterPlant": {
-			"win": {
-				"character": "🚰🌱→💧💧→🌿",
-				"context": "Watering rhythm locked in\nPlant thriving! ✨"
-			},
-			"lose": {
-				"character": "🚰🌱→❌→🥀",
-				"context": "Pattern timing off\nPlant wilting! 💧"
-			}
+			"win": {"character": "🌱", "context": "Watering rhythm locked in\nPlant thriving! ✨"},
+			"lose": {"character": "🥀", "context": "Pattern timing off\nPlant wilting!"}
 		},
 		"PlugTheLeak": {
-			"win": {
-				"character": "💦→🔧→✋",
-				"context": "Pipe plugged under pressure\nFixed! ✨"
-			},
-			"lose": {
-				"character": "💦→❌→💦",
-				"context": "Plug didn't hold\nStill leaking! 💧"
-			}
+			"win": {"character": "🔧", "context": "Pipe plugged under pressure\nFixed! ✨"},
+			"lose": {"character": "💦", "context": "Plug didn't hold\nStill leaking!"}
 		},
 		"SwipeTheSoap": {
-			"win": {
-				"character": "🧼💧→⏱️→✓",
-				"context": "Soap swipe efficient and fast\nWater saved! ✨"
-			},
-			"lose": {
-				"character": "🧼💧→⏱️❌→💧",
-				"context": "Swipe took too long\nWater wasted! 💧"
-			}
+			"win": {"character": "🧼", "context": "Soap swipe efficient and fast\nWater saved! ✨"},
+			"lose": {"character": "⏱️", "context": "Swipe took too long\nWater wasted!"}
 		},
 		"QuickShower": {
-			"win": {
-				"character": "🚿⏱️→✓→😊",
-				"context": "Shower sprint complete\nSuper quick! ✨"
-			},
-			"lose": {
-				"character": "🚿⏱️→❌→😴",
-				"context": "Shower ran way too long\nToo slow! 💧"
-			}
+			"win": {"character": "🚿", "context": "Shower sprint complete\nSuper quick! ✨"},
+			"lose": {"character": "😴", "context": "Shower ran way too long\nToo slow!"}
 		},
 		"ToiletTankFix": {
-			"win": {
-				"character": "🚽⚙️→💧→✓",
-				"context": "Tank calibrated perfectly\nNo excess flush! ✨"
-			},
-			"lose": {
-				"character": "🚽⚙️→❌→🌊",
-				"context": "Tank still overflowing\nWater wasted! 💧"
-			}
+			"win": {"character": "🚽", "context": "Tank calibrated perfectly\nNo excess flush! ✨"},
+			"lose": {"character": "🌊", "context": "Tank still overflowing\nWater wasted!"}
 		},
 		"TracePipePath": {
-			"win": {
-				"character": "🧭💧→✓→😊",
-				"context": "Pipe path traced cleanly\nFlow optimized! ✨"
-			},
-			"lose": {
-				"character": "🧭💧→❌→😕",
-				"context": "Pipe route got lost\nFlow blocked! 💧"
-			}
+			"win": {"character": "🧭", "context": "Pipe path traced cleanly\nFlow optimized! ✨"},
+			"lose": {"character": "😕", "context": "Pipe route got lost\nFlow blocked!"}
 		},
 		"ScrubToSave": {
-			"win": {
-				"character": "🧽💧→⏱️→😊",
-				"context": "Scrub pattern water-wise\nSpotless and dry! ✨"
-			},
-			"lose": {
-				"character": "🧽💧→❌→💧",
-				"context": "Scrub wasted water\nStill soaking! 💧"
-			}
+			"win": {"character": "🧽", "context": "Scrub pattern water-wise\nSpotless and dry! ✨"},
+			"lose": {"character": "💧", "context": "Scrub wasted water\nStill soaking!"}
 		},
 		"BucketBrigade": {
-			"win": {
-				"character": "🪣👥→✓→😊",
-				"context": "Relay team nailed handoff\nWater delivered! ✨"
-			},
-			"lose": {
-				"character": "🪣👥→💦→😞",
-				"context": "Relay dropped the buckets\nWater spilled! 💧"
-			}
+			"win": {"character": "🪣", "context": "Relay team nailed handoff\nWater delivered! ✨"},
+			"lose": {"character": "💦", "context": "Relay dropped the buckets\nWater spilled!"}
 		},
 		"TimingTap": {
-			"win": {
-				"character": "🎯💧→⏱️→✓",
-				"context": "Tap timing perfect\nZero extra drip! ✨"
-			},
-			"lose": {
-				"character": "🎯💧→❌→💧",
-				"context": "Timing missed the beat\nDripping away! 💧"
-			}
+			"win": {"character": "🎯", "context": "Tap timing perfect\nZero extra drip! ✨"},
+			"lose": {"character": "💧", "context": "Timing missed the beat\nDripping away!"}
 		},
 		"TurnOffTap": {
-			"win": {
-				"character": "🚰➡️✋→😊",
-				"context": "Tap cut off right on cue\nOn the dot! ✨"
-			},
-			"lose": {
-				"character": "🚰➡️➡️➡️",
-				"context": "Tap stayed running\nWater wasted! 💧"
-			}
-		}
+			"win": {"character": "✋", "context": "Tap cut off right on cue\nOn the dot! ✨"},
+			"lose": {"character": "🚰", "context": "Tap stayed running\nWater wasted!"}
+		},
+		"DropletDash": {
+			"win": {"character": "💧", "context": "Every drop caught!\nThe glass is full! ✨"},
+			"lose": {"character": "👋", "context": "Last drop waves goodbye\nGlass stays empty!"}
+		},
+		"WaterMemory": {
+			"win": {"character": "🧠", "context": "All pairs matched!\nNever waste water again! ✨"},
+			"lose": {"character": "❓", "context": "Memory failed!\nTry to remember next time!"}
+		},
+		"CloudCatcher": {
+			"win": {"character": "☁️", "context": "All clouds collected!\nSky is grateful! ✨"},
+			"lose": {"character": "😢", "context": "Clouds drifted away\nWater uncaptured!"}
+		},
+		"MP_CatchRainAquarium": {
+			"win": {"character": "🐠", "context": "Tank filled perfectly!\nThe fish look smug! ✨"},
+			"lose": {"character": "🐟", "context": "Aquarium flooded\nFish heard about you!"}
+		},
+		"MP_CollectDishWater": {
+			"win": {"character": "🍽️", "context": "Dishes clean, water saved\nEco-icons achieved! ✨"},
+			"lose": {"character": "😤", "context": "Overflow! Tiles soaked\nBlame begins!"}
+		},
+		"MP_CollectLaundryWater": {
+			"win": {"character": "👕", "context": "Rinse water redirected!\nSustainability! ✨"},
+			"lose": {"character": "💦", "context": "Buffer overflowed\nMore problems created!"}
+		},
+		"MP_CollectShowerWater": {
+			"win": {"character": "🚿", "context": "Every warm-up litre saved!\nCrisis fixed! ✨"},
+			"lose": {"character": "🛁", "context": "Bucket dropped!\nBathroom is a puddle!"}
+		},
+		"MP_FillAquarium": {
+			"win": {"character": "🐡", "context": "Perfect water level!\nGoldfish says thank you! ✨"},
+			"lose": {"character": "😤", "context": "Tank overflowed\nGoldfish shakes its head!"}
+		},
+		"MP_FilterWater": {
+			"win": {"character": "✨", "context": "Crystal clear output!\nYou made something beautiful! ✨"},
+			"lose": {"character": "🤮", "context": "More brown than before\nScience has failed!"}
+		},
+		"MP_FlushToilets": {
+			"win": {"character": "💪", "context": "Perfect low flush!\nThe toilet is satisfied! ✨"},
+			"lose": {"character": "😅", "context": "Quarter tank flush\nSituation escalates!"}
+		},
+		"MP_MopFloor": {
+			"win": {"character": "🧹", "context": "Spotless floor!\nZero fresh water used! ✨"},
+			"lose": {"character": "🤦", "context": "Dirt spread evenly\nUniformly worse!"}
+		},
+		"MP_WashCar": {
+			"win": {"character": "🚗", "context": "Shiny car, zero hose!\nNeighbor is impressed! ✨"},
+			"lose": {"character": "🤔", "context": "Dirt smeared everywhere\nAbstract art achieved!"}
+		},
+		"MP_WashVegetables": {
+			"win": {"character": "🥗", "context": "Veggies clean!\nDinner and planet win! ✨"},
+			"lose": {"character": "😞", "context": "Clean tray is dirty\nNo salad tonight!"}
+		},
+		"MP_WaterPlants": {
+			"win": {"character": "🦋", "context": "Every plant watered!\nA butterfly appears! ✨"},
+			"lose": {"character": "🌵", "context": "A cactus drowned\nA CACTUS!"}
+		},
 	}
 
 	var key_narrative = narratives.get(key, {})

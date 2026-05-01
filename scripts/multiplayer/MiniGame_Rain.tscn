@@ -41,10 +41,11 @@ polygon = PackedVector2Array(-60, -30, -50, 0, 50, 0, 60, -30)
 layer = 10
 
 [node name="TopBar" type="HBoxContainer" parent="UI"]
-offset_left = 20.0
-offset_top = 10.0
-offset_right = 1900.0
+offset_left = 0.0
+offset_top = 0.0
+offset_right = 1920.0
 offset_bottom = 70.0
+theme_override_constants/separation = 20
 
 [node name="LivesLabel" type="Label" parent="UI/TopBar"]
 layout_mode = 2
@@ -80,10 +81,10 @@ text = "Your Role: Collector"
 
 [node name="QuotaBar" type="ProgressBar" parent="UI"]
 layout_mode = 0
-offset_left = 860.0
+offset_left = 660.0
 offset_top = 1000.0
-offset_right = 1060.0
-offset_bottom = 1050.0
+offset_right = 1260.0
+offset_bottom = 1040.0
 max_value = 20.0
 value = 0.0
 show_percentage = false

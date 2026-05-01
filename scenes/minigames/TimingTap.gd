@@ -14,6 +14,7 @@ var containers_filled: int = 0
 var target_containers: int = 5
 var fill_rate: float = 50.0
 var is_holding: bool = false
+var _touch_holding: bool = false  # Track finger-hold for mobile
 
 func _apply_difficulty_settings() -> void:
 	# Get progressive difficulty settings
@@ -181,12 +182,16 @@ func _setup_container():
 	var target_label = container_node.get_node("TargetLabel")
 	target_label.position = Vector2(58, y_pos - 12)
 
+func _input(event: InputEvent) -> void:
+	if event is InputEventScreenTouch:
+		_touch_holding = event.pressed
+
 func _process(delta):
 	super._process(delta)
 	if not game_active: return
 	
 	var was_holding = is_holding
-	is_holding = Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
+	is_holding = Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) or _touch_holding
 	
 	var stream = faucet_node.get_node("Stream")
 	

@@ -41,6 +41,7 @@ var particles_check: CheckBox
 var dev_mode_check: CheckBox
 var dev_profiler_check: CheckBox
 var dev_algorithm_check: CheckBox
+var dev_stats_button: Button
 
 var _feedback_tweens: Dictionary = {}
 var _panel_ambient_tween: Tween
@@ -154,6 +155,7 @@ func _reparent_action_buttons() -> void:
 		button_column.add_theme_constant_override("separation", 0)
 		button_column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		button_column.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		button_column.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		action_bar.add_child(button_column)
 
 	var button_spacer = button_column.get_node_or_null("BottomSpacer") as Control
@@ -171,6 +173,7 @@ func _reparent_action_buttons() -> void:
 		btn_row.alignment = BoxContainer.ALIGNMENT_CENTER
 		btn_row.add_theme_constant_override("separation", 20)
 		btn_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		btn_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		button_column.add_child(btn_row)
 
 	# Move buttons out of scroll and into the row
@@ -683,6 +686,14 @@ func _setup_dev_mode_section() -> void:
 	note.modulate = Color(1, 1, 1, 1)
 	vbox.add_child(note)
 
+	dev_stats_button = Button.new()
+	dev_stats_button.text = "📊 Dev Stats & Export Log"
+	dev_stats_button.custom_minimum_size = Vector2(0, 60)
+	dev_stats_button.add_theme_font_size_override("font_size", 20)
+	dev_stats_button.disabled = not dev_mode_enabled
+	dev_stats_button.pressed.connect(_on_dev_stats_pressed)
+	vbox.add_child(dev_stats_button)
+
 	_apply_dev_mode_visibility(dev_mode_enabled)
 
 func _get_accessibility_setting(key: String, default_val: bool = false) -> bool:
@@ -776,6 +787,13 @@ func _apply_dev_mode_visibility(enabled: bool) -> void:
 		dev_profiler_check.disabled = not enabled
 	if dev_algorithm_check:
 		dev_algorithm_check.disabled = not enabled
+	if dev_stats_button:
+		dev_stats_button.disabled = not enabled
+
+func _on_dev_stats_pressed() -> void:
+	if AudioManager:
+		AudioManager.play_click()
+	get_tree().change_scene_to_file("res://scenes/ui/DevStats.tscn")
 
 func _sync_dev_overlay_state() -> void:
 	var dev_mode_enabled = _get_dev_setting("dev_mode", false)

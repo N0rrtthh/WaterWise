@@ -1326,3 +1326,206 @@ func _log_difficulty_change(change_data: Dictionary) -> void:
 		print("🎪 CHAOS EFFECTS: %s" % str(settings["chaos_effects"]))
 	
 	print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# POST-TEST (Summative Assessment)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+var _posttest_active: bool = false
+var _posttest_start_time: float = 0.0
+var _posttest_answers: Dictionary = {}  # {question_id: answered_index}
+
+const _POSTTEST_QUESTIONS: Array = [
+	{
+		"id": "q_leaking_tap",
+		"category": "conceptual",
+		"question": "How much water can a dripping tap waste per day?",
+		"options": ["1 liter", "5 liters", "15 liters", "50 liters"],
+		"correct_answer": 2
+	},
+	{
+		"id": "q_best_bath",
+		"category": "behavioral",
+		"question": "What is the most water-efficient way to bathe?",
+		"options": [
+			"Long hot bath",
+			"5-minute shower",
+			"20-minute shower",
+			"Filling the tub halfway"
+		],
+		"correct_answer": 1
+	},
+	{
+		"id": "q_greywater",
+		"category": "application",
+		"question": "Which water is safe to reuse for watering plants?",
+		"options": [
+			"Toilet flush water",
+			"Water from washing vegetables",
+			"Water from sewage",
+			"Water mixed with bleach"
+		],
+		"correct_answer": 1
+	},
+	{
+		"id": "q_rainwater",
+		"category": "application",
+		"question": "How can rainwater best be collected for household use?",
+		"options": [
+			"Let it run into the drain",
+			"Collect it in a covered barrel",
+			"Mix it with saltwater",
+			"Use it only for cooking"
+		],
+		"correct_answer": 1
+	},
+	{
+		"id": "q_water_cycle",
+		"category": "conceptual",
+		"question": "What process returns evaporated water back to Earth as rain?",
+		"options": ["Water cycle", "Water recycling", "Hydration loop", "Aquifer refill"],
+		"correct_answer": 0
+	},
+	{
+		"id": "q_brushing_teeth",
+		"category": "behavioral",
+		"question": "When should you turn off the tap while brushing your teeth?",
+		"options": [
+			"Never",
+			"Only when done",
+			"While brushing",
+			"Only when applying toothpaste"
+		],
+		"correct_answer": 2
+	},
+	{
+		"id": "q_dual_flush",
+		"category": "application",
+		"question": "Which toilet feature saves the most water per flush?",
+		"options": [
+			"Dual-flush button",
+			"Older single-flush",
+			"Flushing twice",
+			"Not flushing at all"
+		],
+		"correct_answer": 0
+	},
+	{
+		"id": "q_plant_watering",
+		"category": "behavioral",
+		"question": "When is the best time to water plants to reduce evaporation loss?",
+		"options": [
+			"Midday in direct sunlight",
+			"Early morning or evening",
+			"During heavy rain",
+			"Midnight only"
+		],
+		"correct_answer": 1
+	},
+	{
+		"id": "q_pipe_leak",
+		"category": "retention",
+		"question": "What should you do when you discover a leaking pipe at home?",
+		"options": [
+			"Ignore it",
+			"Cover it with tape permanently",
+			"Report and repair it promptly",
+			"Open other taps wider"
+		],
+		"correct_answer": 2
+	},
+	{
+		"id": "q_water_scarcity",
+		"category": "retention",
+		"question": "Why is water conservation important in the Philippines?",
+		"options": [
+			"Water is too expensive to waste",
+			"Some communities lack clean water access",
+			"Water makes floors slippery",
+			"Water is only used for electricity"
+		],
+		"correct_answer": 1
+	}
+]
+
+func start_posttest() -> void:
+	_posttest_active = true
+	_posttest_start_time = Time.get_unix_time_from_system()
+	_posttest_answers.clear()
+
+func get_posttest_questions() -> Array:
+	return _POSTTEST_QUESTIONS.duplicate(true)
+
+func submit_posttest_answer(question_id: String, answer_index: int) -> void:
+	_posttest_answers[question_id] = answer_index
+
+func get_posttest_results() -> Dictionary:
+	var correct: int = 0
+	var total: int = _POSTTEST_QUESTIONS.size()
+	var categories: Dictionary = {
+		"conceptual": {"correct": 0, "total": 0},
+		"application": {"correct": 0, "total": 0},
+		"retention": {"correct": 0, "total": 0},
+		"behavioral": {"correct": 0, "total": 0}
+	}
+
+	for q in _POSTTEST_QUESTIONS:
+		var cat: String = str(q.get("category", "conceptual"))
+		if not categories.has(cat):
+			categories[cat] = {"correct": 0, "total": 0}
+		categories[cat]["total"] += 1
+		if _posttest_answers.has(q["id"]):
+			if _posttest_answers[q["id"]] == q["correct_answer"]:
+				correct += 1
+				categories[cat]["correct"] += 1
+
+	var percentage := (float(correct) / float(total)) * 100.0 if total > 0 else 0.0
+
+	var breakdown: Dictionary = {}
+	for cat in categories:
+		var cat_total: int = categories[cat]["total"]
+		breakdown[cat] = (
+			(float(categories[cat]["correct"]) / float(cat_total)) * 100.0
+			if cat_total > 0 else 0.0
+		)
+
+	return {
+		"correct_answers": correct,
+		"total_questions": total,
+		"percentage": percentage,
+		"category_breakdown": breakdown
+	}
+
+func calculate_correlation() -> Dictionary:
+	## Compute correlation between in-game performance and posttest knowledge score.
+	var gameplay_perf := 0.0
+	if performance_history.size() > 0:
+		var acc_sum := 0.0
+		for p in performance_history:
+			acc_sum += float(p.get("accuracy", 0.0))
+		gameplay_perf = (acc_sum / float(performance_history.size())) * 100.0
+
+	var results := get_posttest_results()
+	var posttest_knowledge: float = results["percentage"]
+
+	# Approximate Pearson-r via normalized deviation with both values on [0,1].
+	var gp_norm := gameplay_perf / 100.0
+	var pk_norm := posttest_knowledge / 100.0
+	var r := 0.0
+	if gameplay_perf > 0.0 or posttest_knowledge > 0.0:
+		r = clampf(1.0 - absf(gp_norm - pk_norm) * 2.0, -1.0, 1.0)
+
+	var interpretation: String
+	if absf(r) >= 0.7:
+		interpretation = "Strong correlation between gameplay and water conservation knowledge"
+	elif absf(r) >= 0.4:
+		interpretation = "Moderate correlation between gameplay and knowledge"
+	else:
+		interpretation = "Low correlation — more practice recommended"
+
+	return {
+		"gameplay_performance": gameplay_perf,
+		"posttest_knowledge": posttest_knowledge,
+		"correlation_coefficient": r,
+		"interpretation": interpretation
+	}

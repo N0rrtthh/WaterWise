@@ -373,10 +373,7 @@ func _spawn_drop_synced() -> void:
 	var spawn_id: int = Time.get_ticks_msec()  # Unique ID for this drop
 	var is_acid: bool = randf() < 0.15  # 15% chance of acid drop
 	
-	# Spawn locally
-	_create_drop_at(spawn_x, spawn_id, is_acid)
-	
-	# Sync to all clients
+	# call_local ensures host also creates the drop
 	rpc("_create_drop_at", spawn_x, spawn_id, is_acid)
 
 @rpc("authority", "call_local", "reliable")
@@ -423,10 +420,7 @@ func _spawn_dirt_synced() -> void:
 	var spawn_y: float = randf_range(100, screen_size.y - 200)
 	var spawn_id: int = Time.get_ticks_msec() + 1000  # Offset to avoid collision with drops
 	
-	# Spawn locally
-	_create_dirt_at(spawn_y, spawn_id)
-	
-	# Sync to all clients
+	# call_local ensures host also creates the dirt
 	rpc("_create_dirt_at", spawn_y, spawn_id)
 
 @rpc("authority", "call_local", "reliable")

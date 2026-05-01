@@ -39,6 +39,7 @@ GCounter="*res://autoload/GCounter.gd"
 PerformanceProfiler="*res://autoload/PerformanceProfiler.gd"
 NetworkFaultSimulator="*res://autoload/NetworkFaultSimulator.gd"
 ButtonAnimator="*res://autoload/ButtonAnimator.gd"
+SessionLogger="*res://autoload/SessionLogger.gd"
 
 [display]
 

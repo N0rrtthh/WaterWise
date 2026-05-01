@@ -148,22 +148,22 @@ func _ready() -> void:
 	print("💻 Your local IP: " + local_ip)
 
 func _connect_button_signals() -> void:
-	if not host_button.pressed.is_connected(self, "_on_host_pressed"):
-		host_button.pressed.connect(self, "_on_host_pressed")
-	if not join_button.pressed.is_connected(self, "_on_join_pressed"):
-		join_button.pressed.connect(self, "_on_join_pressed")
-	if not back_button.pressed.is_connected(self, "_on_back_pressed"):
-		back_button.pressed.connect(self, "_on_back_pressed")
-	if not connect_button.pressed.is_connected(self, "_on_connect_pressed"):
-		connect_button.pressed.connect(self, "_on_connect_pressed")
-	if not cancel_button.pressed.is_connected(self, "_on_cancel_pressed"):
-		cancel_button.pressed.connect(self, "_on_cancel_pressed")
-	if not ready_checkbox.toggled.is_connected(self, "_on_ready_toggled"):
-		ready_checkbox.toggled.connect(self, "_on_ready_toggled")
-	if not start_game_button.pressed.is_connected(self, "_on_start_game_pressed"):
-		start_game_button.pressed.connect(self, "_on_start_game_pressed")
-	if not disconnect_button.pressed.is_connected(self, "_on_disconnect_pressed"):
-		disconnect_button.pressed.connect(self, "_on_disconnect_pressed")
+	if not host_button.pressed.is_connected(_on_host_pressed):
+		host_button.pressed.connect(_on_host_pressed)
+	if not join_button.pressed.is_connected(_on_join_pressed):
+		join_button.pressed.connect(_on_join_pressed)
+	if not back_button.pressed.is_connected(_on_back_pressed):
+		back_button.pressed.connect(_on_back_pressed)
+	if not connect_button.pressed.is_connected(_on_connect_pressed):
+		connect_button.pressed.connect(_on_connect_pressed)
+	if not cancel_button.pressed.is_connected(_on_cancel_pressed):
+		cancel_button.pressed.connect(_on_cancel_pressed)
+	if not ready_checkbox.toggled.is_connected(_on_ready_toggled):
+		ready_checkbox.toggled.connect(_on_ready_toggled)
+	if not start_game_button.pressed.is_connected(_on_start_game_pressed):
+		start_game_button.pressed.connect(_on_start_game_pressed)
+	if not disconnect_button.pressed.is_connected(_on_disconnect_pressed):
+		disconnect_button.pressed.connect(_on_disconnect_pressed)
 
 func _connect_multiplayer_signals() -> void:
 	if not multiplayer.peer_connected.is_connected(_on_player_connected):
@@ -179,16 +179,16 @@ func _connect_multiplayer_signals() -> void:
 
 	# Also listen to NetworkManager autoload signals if available to keep ready state authoritative
 	if NetworkManager:
-		if not NetworkManager.player_ready_changed.is_connected(self, "_on_network_player_ready_changed"):
-			NetworkManager.player_ready_changed.connect(self, "_on_network_player_ready_changed")
-		if not NetworkManager.player_connected.is_connected(self, "_on_network_player_connected"):
-			NetworkManager.player_connected.connect(self, "_on_network_player_connected")
-		if not NetworkManager.player_disconnected.is_connected(self, "_on_network_player_disconnected"):
-			NetworkManager.player_disconnected.connect(self, "_on_network_player_disconnected")
-		if not NetworkManager.both_players_ready.is_connected(self, "_on_both_players_ready"):
-			NetworkManager.both_players_ready.connect(self, "_on_both_players_ready")
-		if not NetworkManager.game_started.is_connected(self, "_on_game_started"):
-			NetworkManager.game_started.connect(self, "_on_game_started")
+		if not NetworkManager.player_ready_changed.is_connected(_on_network_player_ready_changed):
+			NetworkManager.player_ready_changed.connect(_on_network_player_ready_changed)
+		if not NetworkManager.player_connected.is_connected(_on_network_player_connected):
+			NetworkManager.player_connected.connect(_on_network_player_connected)
+		if not NetworkManager.player_disconnected.is_connected(_on_network_player_disconnected):
+			NetworkManager.player_disconnected.connect(_on_network_player_disconnected)
+		if not NetworkManager.both_players_ready.is_connected(_on_both_players_ready):
+			NetworkManager.both_players_ready.connect(_on_both_players_ready)
+		if not NetworkManager.game_started.is_connected(_on_game_started):
+			NetworkManager.game_started.connect(_on_game_started)
 
 func _is_connected() -> bool:
 	return (

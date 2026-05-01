@@ -205,14 +205,37 @@ func _spawn_drop():
 	drop.position = pot_node.position + Vector2(randf_range(-30, 30), 55)
 	add_child(drop)
 	
+	# Outer glow ring for visibility
+	var glow = Polygon2D.new()
+	var glow_pts = PackedVector2Array()
+	for i in range(10):
+		var angle = i * TAU / 10
+		glow_pts.append(Vector2(cos(angle) * 18, sin(angle) * 22))
+	glow.polygon = glow_pts
+	glow.color = Color(0.3, 0.7, 1.0, 0.35)
+	drop.add_child(glow)
+	
+	# Main drop body — vivid blue, fully opaque
 	var visual = Polygon2D.new()
 	var points = PackedVector2Array()
-	for i in range(8):
-		var angle = i * TAU / 8
-		points.append(Vector2(cos(angle) * 12, sin(angle) * 15))
+	# Teardrop shape instead of circle
+	points.append(Vector2(0, -18))  # Top point
+	for i in range(1, 10):
+		var angle = -PI * 0.5 + PI * float(i) / 9.0
+		points.append(Vector2(cos(angle) * 14, sin(angle) * 14 + 4))
 	visual.polygon = points
-	visual.color = Color(0.9, 0.9, 0.95, 0.8)
+	visual.color = Color(0.15, 0.55, 1.0, 1.0)
 	drop.add_child(visual)
+	
+	# White highlight dot for 3D look
+	var highlight = Polygon2D.new()
+	var hl_pts = PackedVector2Array()
+	for i in range(6):
+		var angle = i * TAU / 6
+		hl_pts.append(Vector2(cos(angle) * 3.5, sin(angle) * 3.5) + Vector2(-4, -4))
+	highlight.polygon = hl_pts
+	highlight.color = Color(1, 1, 1, 0.85)
+	drop.add_child(highlight)
 	
 	water_drops.append(drop)
 

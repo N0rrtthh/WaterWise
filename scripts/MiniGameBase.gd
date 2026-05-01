@@ -615,10 +615,15 @@ func _create_mud_splatter() -> void:
 	tween.finished.connect(splatter.queue_free)
 
 func _spawn_buzzing_fly() -> void:
-	# Create an annoying fly that moves around
-	var fly = Sprite2D.new()
-	fly.modulate = Color.BLACK
-	# Would use actual fly sprite
+	# Create an annoying fly emoji that moves around
+	var fly = Label.new()
+	fly.text = "🪰"
+	fly.add_theme_font_size_override("font_size", 40)
+	fly.z_index = 10
+	fly.position = Vector2(
+		randf_range(50, get_viewport_rect().size.x - 50),
+		randf_range(50, get_viewport_rect().size.y - 50)
+	)
 	add_child(fly)
 	
 	var move_timer = Timer.new()
@@ -969,6 +974,19 @@ func _create_instruction_overlay():
 		Color.WHITE, 0.6
 	).set_trans(Tween.TRANS_SINE)
 
+	# Atmospheric intro narrative (game-specific flavor text)
+	var _intro_text: String = _get_narratives().get(_get_minigame_key(), {}).get("intro", "")
+	if not _intro_text.is_empty():
+		var intro_label := Label.new()
+		intro_label.text = _intro_text
+		intro_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		intro_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		intro_label.add_theme_font_size_override("font_size", 22)
+		intro_label.add_theme_color_override("font_color", Color(0.8, 0.95, 1.0, 0.88))
+		intro_label.add_theme_color_override("font_outline_color", Color.BLACK)
+		intro_label.add_theme_constant_override("outline_size", 4)
+		vbox.add_child(intro_label)
+
 	# Instruction
 	var instruction_label = Label.new()
 	instruction_label.text = game_instruction_text
@@ -1059,41 +1077,150 @@ func _create_pause_menu():
 	pause_menu.visible = false
 	pause_menu.process_mode = Node.PROCESS_MODE_ALWAYS
 	hud_layer.add_child(pause_menu)
-	
+
+	# ── Frosted glass backdrop ───────────────────────────────────────
 	var bg = ColorRect.new()
 	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
-	bg.color = Color(0, 0, 0, 0.7)
+	bg.color = Color(0.04, 0.08, 0.14, 0.82)
 	pause_menu.add_child(bg)
-	
+
+	# Subtle vignette border glow
+	var vignette = ColorRect.new()
+	vignette.set_anchors_preset(Control.PRESET_FULL_RECT)
+	vignette.color = Color(0.0, 0.0, 0.0, 0.0)
+	vignette.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	pause_menu.add_child(vignette)
+
 	var center = CenterContainer.new()
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
 	pause_menu.add_child(center)
-	
+
+	# ── Main card panel ──────────────────────────────────────────────
+	var card = PanelContainer.new()
+	var card_style = StyleBoxFlat.new()
+	card_style.bg_color = Color(0.08, 0.14, 0.22, 0.92)
+	card_style.corner_radius_top_left = 32
+	card_style.corner_radius_top_right = 32
+	card_style.corner_radius_bottom_left = 32
+	card_style.corner_radius_bottom_right = 32
+	card_style.border_width_top = 2
+	card_style.border_width_bottom = 2
+	card_style.border_width_left = 2
+	card_style.border_width_right = 2
+	card_style.border_color = Color(0.3, 0.65, 0.9, 0.4)
+	card_style.shadow_color = Color(0, 0, 0, 0.35)
+	card_style.shadow_size = 12
+	card_style.content_margin_left = 60
+	card_style.content_margin_right = 60
+	card_style.content_margin_top = 44
+	card_style.content_margin_bottom = 44
+	card.add_theme_stylebox_override("panel", card_style)
+	center.add_child(card)
+
 	var vbox = VBoxContainer.new()
-	vbox.add_theme_constant_override("separation", 20)
-	center.add_child(vbox)
-	
+	vbox.add_theme_constant_override("separation", 24)
+	vbox.alignment = BoxContainer.ALIGNMENT_CENTER
+	card.add_child(vbox)
+
+	# ── Water drop icon ──────────────────────────────────────────────
+	var drop_icon = Label.new()
+	drop_icon.text = "💧"
+	drop_icon.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	drop_icon.add_theme_font_size_override("font_size", 56)
+	vbox.add_child(drop_icon)
+
+	# Gentle pulse on the drop icon
+	var pulse = create_tween().set_loops()
+	pulse.tween_property(drop_icon, "modulate", Color(0.8, 0.9, 1.2), 0.8).set_trans(Tween.TRANS_SINE)
+	pulse.tween_property(drop_icon, "modulate", Color.WHITE, 0.8).set_trans(Tween.TRANS_SINE)
+
+	# ── Title ────────────────────────────────────────────────────────
 	var label = Label.new()
 	label.text = "PAUSED"
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	label.add_theme_font_size_override("font_size", 48)
+	label.add_theme_font_size_override("font_size", 44)
+	label.add_theme_color_override("font_color", Color(0.85, 0.92, 1.0))
+	label.add_theme_color_override("font_outline_color", Color(0.1, 0.2, 0.35, 0.6))
+	label.add_theme_constant_override("outline_size", 4)
 	vbox.add_child(label)
-	
+
+	# ── Current score display ────────────────────────────────────────
+	var score_info = Label.new()
+	score_info.name = "PauseScoreLabel"
+	score_info.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	score_info.add_theme_font_size_override("font_size", 20)
+	score_info.add_theme_color_override("font_color", Color(0.6, 0.75, 0.88))
+	var _session_score = GameManager.session_score if GameManager else 0
+	score_info.text = "Current Score: %d" % _session_score
+	vbox.add_child(score_info)
+
+	# ── Spacer ───────────────────────────────────────────────────────
+	var spacer = Control.new()
+	spacer.custom_minimum_size.y = 8
+	vbox.add_child(spacer)
+
+	# ── RESUME Button ────────────────────────────────────────────────
 	var resume_btn = Button.new()
-	resume_btn.text = "RESUME"
-	resume_btn.custom_minimum_size = Vector2(200, 60)
+	resume_btn.text = "▶  RESUME"
+	resume_btn.custom_minimum_size = Vector2(260, 64)
+	var resume_style = StyleBoxFlat.new()
+	resume_style.bg_color = Color(0.2, 0.6, 0.4, 0.92)
+	resume_style.corner_radius_top_left = 32
+	resume_style.corner_radius_top_right = 32
+	resume_style.corner_radius_bottom_left = 32
+	resume_style.corner_radius_bottom_right = 32
+	resume_style.border_width_top = 2
+	resume_style.border_width_bottom = 2
+	resume_style.border_width_left = 2
+	resume_style.border_width_right = 2
+	resume_style.border_color = Color(0.35, 0.85, 0.55, 0.5)
+	resume_btn.add_theme_stylebox_override("normal", resume_style)
+	var resume_hover = resume_style.duplicate()
+	resume_hover.bg_color = Color(0.25, 0.7, 0.48, 0.95)
+	resume_btn.add_theme_stylebox_override("hover", resume_hover)
+	var resume_press = resume_style.duplicate()
+	resume_press.bg_color = Color(0.15, 0.5, 0.35, 0.95)
+	resume_btn.add_theme_stylebox_override("pressed", resume_press)
+	resume_btn.add_theme_font_size_override("font_size", 24)
+	resume_btn.add_theme_color_override("font_color", Color.WHITE)
 	resume_btn.pressed.connect(_on_resume_pressed)
 	vbox.add_child(resume_btn)
-	
+
+	# ── QUIT Button ──────────────────────────────────────────────────
 	var exit_btn = Button.new()
-	exit_btn.text = "EXIT"
-	exit_btn.custom_minimum_size = Vector2(200, 60)
+	exit_btn.text = "✕  QUIT GAME"
+	exit_btn.custom_minimum_size = Vector2(260, 64)
+	var exit_style = StyleBoxFlat.new()
+	exit_style.bg_color = Color(0.55, 0.2, 0.2, 0.85)
+	exit_style.corner_radius_top_left = 32
+	exit_style.corner_radius_top_right = 32
+	exit_style.corner_radius_bottom_left = 32
+	exit_style.corner_radius_bottom_right = 32
+	exit_style.border_width_top = 2
+	exit_style.border_width_bottom = 2
+	exit_style.border_width_left = 2
+	exit_style.border_width_right = 2
+	exit_style.border_color = Color(0.9, 0.4, 0.4, 0.4)
+	exit_btn.add_theme_stylebox_override("normal", exit_style)
+	var exit_hover = exit_style.duplicate()
+	exit_hover.bg_color = Color(0.65, 0.25, 0.25, 0.92)
+	exit_btn.add_theme_stylebox_override("hover", exit_hover)
+	var exit_press = exit_style.duplicate()
+	exit_press.bg_color = Color(0.45, 0.15, 0.15, 0.92)
+	exit_btn.add_theme_stylebox_override("pressed", exit_press)
+	exit_btn.add_theme_font_size_override("font_size", 22)
+	exit_btn.add_theme_color_override("font_color", Color(1, 0.85, 0.85))
 	exit_btn.pressed.connect(_on_exit_pressed)
 	vbox.add_child(exit_btn)
 
 func _on_pause_pressed():
 	get_tree().paused = true
 	pause_menu.visible = true
+	# Update current score display
+	var score_lbl = pause_menu.find_child("PauseScoreLabel", true, false)
+	if score_lbl:
+		var _session_score = GameManager.session_score if GameManager else 0
+		score_lbl.text = "Current Score: %d" % _session_score
 	if AudioManager:
 		AudioManager.play_pause()
 
@@ -1105,9 +1232,184 @@ func _on_resume_pressed():
 
 func _on_exit_pressed():
 	get_tree().paused = false
+	pause_menu.visible = false
+	game_active = false
+	timer_running = false
+
+	# Stop all timers/effects
+	if _game_timer and is_instance_valid(_game_timer):
+		_game_timer.stop()
+	for t in _chaos_timers:
+		if is_instance_valid(t):
+			t.stop()
+			t.queue_free()
+	_chaos_timers.clear()
+	controls_reversed = false
+
+	# Save whatever score we have so far
+	if GameManager:
+		var elapsed = (Time.get_ticks_msec() - game_start_time) / 1000.0
+		var accuracy = float(correct_actions) / max(1, total_actions)
+		GameManager.complete_minigame(
+			game_name,
+			accuracy,
+			int(elapsed * 1000),
+			mistakes_made,
+			current_score,
+			max_combo
+		)
+
+	# Show quit tally screen with current progress before exiting
+	await _show_quit_tally_screen()
+
 	if GameManager:
 		GameManager.mark_welcome_shown()
 	get_tree().change_scene_to_file("res://scenes/ui/InitialScreen.tscn")
+
+## DWTD-style quit tally — shows your session score before leaving
+func _show_quit_tally_screen() -> void:
+	if AudioManager:
+		AudioManager.play_music("scoring", 0.22)
+
+	var session_total: int = GameManager.session_score if GameManager else 0
+	var rounds_played: int = GameManager.round_scores.size() if GameManager else 0
+	var _lives: int = GameManager.session_lives if GameManager else lives
+
+	# ── Full-screen page ──────────────────────────────────────────────
+	var page = Control.new()
+	page.set_anchors_preset(Control.PRESET_FULL_RECT)
+	page.process_mode = Node.PROCESS_MODE_ALWAYS
+	page.modulate.a = 0.0
+	hud_layer.add_child(page)
+
+	# Dark background
+	var bg = ColorRect.new()
+	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	bg.color = Color(0.06, 0.1, 0.16, 0.96)
+	page.add_child(bg)
+
+	# Top accent
+	var accent_bar = ColorRect.new()
+	accent_bar.set_anchors_preset(Control.PRESET_TOP_WIDE)
+	accent_bar.custom_minimum_size.y = 6
+	accent_bar.color = Color(0.9, 0.5, 0.3)
+	page.add_child(accent_bar)
+
+	# Layout
+	var outer = MarginContainer.new()
+	outer.set_anchors_preset(Control.PRESET_FULL_RECT)
+	outer.add_theme_constant_override("margin_left", 48)
+	outer.add_theme_constant_override("margin_right", 48)
+	outer.add_theme_constant_override("margin_top", 36)
+	outer.add_theme_constant_override("margin_bottom", 36)
+	page.add_child(outer)
+
+	var vbox = VBoxContainer.new()
+	vbox.alignment = BoxContainer.ALIGNMENT_CENTER
+	vbox.add_theme_constant_override("separation", 22)
+	outer.add_child(vbox)
+
+	# ── "GAME OVER" title ─────────────────────────────────────────────
+	var title = Label.new()
+	title.text = "SESSION ENDED"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 42)
+	title.add_theme_color_override("font_color", Color(0.9, 0.65, 0.4))
+	title.add_theme_color_override("font_outline_color", Color(0.0, 0.0, 0.0, 0.5))
+	title.add_theme_constant_override("outline_size", 3)
+	vbox.add_child(title)
+
+	# ── Water drops row (lives) ───────────────────────────────────────
+	var drops_row = HBoxContainer.new()
+	drops_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	drops_row.add_theme_constant_override("separation", 32)
+	vbox.add_child(drops_row)
+
+	for i in range(3):
+		var drop = Label.new()
+		drop.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		drop.add_theme_font_size_override("font_size", 64)
+		drop.text = "💧"
+		if i >= _lives:
+			drop.modulate = Color(0.4, 0.4, 0.4, 0.5)
+		drops_row.add_child(drop)
+
+	# ── Score display ─────────────────────────────────────────────────
+	var score_display = Label.new()
+	score_display.text = str(session_total)
+	score_display.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	score_display.add_theme_font_size_override("font_size", 72)
+	score_display.add_theme_color_override("font_color", Color.WHITE)
+	vbox.add_child(score_display)
+
+	var score_cap = Label.new()
+	score_cap.text = "TOTAL SCORE"
+	score_cap.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	score_cap.add_theme_font_size_override("font_size", 16)
+	score_cap.add_theme_color_override("font_color", Color(0.55, 0.55, 0.55))
+	vbox.add_child(score_cap)
+
+	# ── Stat pills ────────────────────────────────────────────────────
+	var pills = HBoxContainer.new()
+	pills.alignment = BoxContainer.ALIGNMENT_CENTER
+	pills.add_theme_constant_override("separation", 16)
+	vbox.add_child(pills)
+
+	var pill_data: Array = [
+		["🎮 %d" % rounds_played, "Rounds"],
+		["💧 %d" % (GameManager.water_droplets if GameManager else 0), "Droplets"],
+	]
+
+	for pd in pill_data:
+		var pill = PanelContainer.new()
+		var pstyle = StyleBoxFlat.new()
+		pstyle.bg_color = Color(0.12, 0.18, 0.28, 0.9)
+		pstyle.corner_radius_top_left = 16
+		pstyle.corner_radius_top_right = 16
+		pstyle.corner_radius_bottom_left = 16
+		pstyle.corner_radius_bottom_right = 16
+		pstyle.content_margin_left = 20
+		pstyle.content_margin_right = 20
+		pstyle.content_margin_top = 10
+		pstyle.content_margin_bottom = 10
+		pill.add_theme_stylebox_override("panel", pstyle)
+
+		var pvbox = VBoxContainer.new()
+		pvbox.add_theme_constant_override("separation", 2)
+		pill.add_child(pvbox)
+
+		var val_lbl = Label.new()
+		val_lbl.text = pd[0]
+		val_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		val_lbl.add_theme_font_size_override("font_size", 22)
+		val_lbl.add_theme_color_override("font_color", Color.WHITE)
+		pvbox.add_child(val_lbl)
+
+		var cap_lbl = Label.new()
+		cap_lbl.text = pd[1]
+		cap_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		cap_lbl.add_theme_font_size_override("font_size", 13)
+		cap_lbl.add_theme_color_override("font_color", Color(0.5, 0.5, 0.5))
+		pvbox.add_child(cap_lbl)
+
+		pills.add_child(pill)
+
+	# ── Animate ───────────────────────────────────────────────────────
+	var fade_in = create_tween()
+	fade_in.tween_property(page, "modulate:a", 1.0, 0.35)
+	await fade_in.finished
+
+	# Hold for viewing
+	await get_tree().create_timer(2.8).timeout
+
+	# Fade out
+	var fade_out = create_tween()
+	fade_out.tween_property(page, "modulate:a", 0.0, 0.35)
+	await fade_out.finished
+	page.queue_free()
+	if AudioManager:
+		AudioManager.stop_music(0.15)
+
 
 func _process(_delta):
 	if not game_active: return
@@ -1448,7 +1750,7 @@ func _show_round_score_page(success: bool, accuracy: float, _reaction_time: int)
 	vbox.add_child(score_display)
 
 	var score_caption = Label.new()
-	score_caption.text = "POINTS EARNED"
+	score_caption.text = "TOTAL SCORE"
 	score_caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	score_caption.add_theme_font_size_override("font_size", 16)
 	score_caption.add_theme_color_override("font_color", Color(0.55, 0.52, 0.48))
@@ -1527,13 +1829,13 @@ func _show_round_score_page(success: bool, accuracy: float, _reaction_time: int)
 	session_bar.add_child(session_hbox)
 
 	var sess_label = Label.new()
-	sess_label.text = "Session Total"
+	sess_label.text = "This Round"
 	sess_label.add_theme_font_size_override("font_size", 18)
 	sess_label.add_theme_color_override("font_color", Color(0.3, 0.3, 0.3))
 	session_hbox.add_child(sess_label)
 
 	var sess_val = Label.new()
-	sess_val.text = "%d pts" % session_total
+	sess_val.text = "+%d pts" % round_score
 	sess_val.add_theme_font_size_override("font_size", 22)
 	sess_val.add_theme_color_override("font_color", Color(0.15, 0.15, 0.15))
 	session_hbox.add_child(sess_val)
@@ -1576,19 +1878,23 @@ func _show_round_score_page(success: bool, accuracy: float, _reaction_time: int)
 	var flav_tw = create_tween()
 	flav_tw.tween_property(flavor, "modulate:a", 1.0, 0.25)
 
-	# 5. Score count-up
+	# 5. Score count-up (from previous session total → new session total)
 	await get_tree().create_timer(0.15).timeout
 	score_display.modulate.a = 1.0
 	score_caption.modulate.a = 1.0
+	var prev_total := session_total - round_score
 	var count_steps := mini(round_score, 30)
 	if count_steps > 0:
+		score_display.text = str(prev_total)
 		for step in range(count_steps + 1):
-			var val = int(lerp(0.0, float(round_score), float(step) / float(count_steps)))
+			var val = int(lerp(float(prev_total), float(session_total), float(step) / float(count_steps)))
 			score_display.text = str(val)
 			if AudioManager and step % 3 == 0:
 				AudioManager.play_score_tick()
 			await get_tree().create_timer(0.03).timeout
-	score_display.text = str(round_score)
+	else:
+		score_display.text = str(prev_total)
+	score_display.text = str(session_total)
 
 	# Pop the final number
 	var pop_tw = create_tween()
@@ -1664,6 +1970,11 @@ func _get_result_reaction(success: bool) -> Dictionary:
 	}
 
 func _get_result_line_for_key(success: bool, key: String) -> String:
+	var _n: Dictionary = _get_narratives().get(key, {})
+	if success and _n.has("win"):
+		return str(_n["win"])
+	if not success and _n.has("fail"):
+		return str(_n["fail"])
 	if success:
 		match key:
 			"RiceWashRescue":
@@ -1971,15 +2282,197 @@ func _show_success_micro_cutscene() -> void:
 func _get_success_cutscene_data() -> Dictionary:
 	var key = _get_minigame_key()
 	var presets = _get_success_cutscene_presets()
-	if presets.has(key):
-		return presets[key]
-
-	return {
+	var data: Dictionary = presets.get(key, {
 		"icon": "✨",
 		"line": "Clean save!",
 		"anim": "pop",
 		"bg": Color(0.02, 0.12, 0.06, 0.72),
 		"hold": 0.48
+	})
+	var _n: Dictionary = _get_narratives().get(key, {})
+	if _n.has("win"):
+		var _full: String = str(_n["win"])
+		var _dot := _full.find(". ")
+		data["line"] = _full.left(_dot) if _dot > 0 else _full
+	return data
+
+func _get_narratives() -> Dictionary:
+	return {
+		"CatchTheRain": {
+			"intro": "The clouds finally show up. You have one drum. Gravity is merciless.",
+			"win": "The drum overflows with glory. A tiny rainbow forms. You take a bow.",
+			"fail": "You chase a red drop \"just to see.\" The drum fills with mystery liquid. A plant nearby dies on the spot.",
+		},
+		"CoverTheDrum": {
+			"intro": "Standing water. Mosquitoes circling. They look personally offended.",
+			"win": "Every drum sealed. The mosquitoes hold a sad little funeral. The water is safe.",
+			"fail": "You miss one drum. Within seconds, a mosquito the size of a fist has claimed it as a condo. The water is lost. So is your dignity.",
+		},
+		"DropletDash": {
+			"intro": "Water droplets are escaping. They are faster than you. They know this.",
+			"win": "Every drop caught. The droplets look betrayed. You did good.",
+			"fail": "The last droplet waves goodbye. The whole glass is empty. You're thirsty and it's your fault.",
+		},
+		"FilterBuilder": {
+			"intro": "The water is brown. Very brown. Suspiciously brown.",
+			"win": "Sparkling clean water pours out. A child somewhere drinks it gratefully. You are basically a hero.",
+			"fail": "Wrong order. The dirt comes out worse. It looks like gravy. No one is drinking that.",
+		},
+		"FixLeak": {
+			"intro": "The pipe is leaking. Dramatically. Personally.",
+			"win": "The pipe is sealed. Silence. Peace. A single drip salutes you.",
+			"fail": "You plug one, three more burst open. The room is now a splash park. The water bill is catastrophic.",
+		},
+		"PlugTheLeak": {
+			"intro": "The pipe is leaking. Dramatically. Personally.",
+			"win": "The pipe is sealed. Silence. Peace. A single drip salutes you.",
+			"fail": "You plug one, three more burst open. The room is now a splash park. The water bill is catastrophic.",
+		},
+		"GreywaterSorter": {
+			"intro": "Two buckets. One for the garden. One for the drain. The water doesn't know the difference.",
+			"win": "Every bucket sorted. The garden blooms. The drain thanks you for not dumping soap on it.",
+			"fail": "Soapy water hits the tomatoes. They wilt in real time. The garden dies. The tomatoes had a name.",
+		},
+		"BucketBrigade": {
+			"intro": "A line of people. One bucket. A very thirsty plant at the end.",
+			"win": "The plant gets water. Everyone high-fives. Someone shouts \"TEAMWORK!\" unironically.",
+			"fail": "You tap too slow. The third person in line sits down and eats a sandwich. The bucket goes nowhere. The plant writes a strongly worded letter.",
+		},
+		"QuickShower": {
+			"intro": "A shower that runs forever. A water meter that cries.",
+			"win": "Precise stop. Clean. Efficient. The water meter gives a thumbs up.",
+			"fail": "You overshoot. The shower runs another 45 minutes. The meter explodes. You're clean but the planet is not.",
+		},
+		"RiceWashRescue": {
+			"intro": "Nanay is washing rice. The rice water is gold. It is also running down the drain.",
+			"win": "Basin full of precious starchy water. The plants are about to be very happy.",
+			"fail": "The pot zigs, you zag. The rice water hits the drain. A single grain of rice rolls away in disappointment.",
+		},
+		"ScrubToSave": {
+			"intro": "One dirty dish. One mission. Use as little water as possible.",
+			"win": "Spotless dish. Minimum water used. The dish sparkles. A fork nearby applauds.",
+			"fail": "You scrub in panic. The gauge drains dry. The dish is still dirty AND you wasted water. The dish does not sparkle. It judges you.",
+		},
+		"SpotTheSpeck": {
+			"intro": "A row of water glasses. Some clean. Some containing things that should not be in water.",
+			"win": "Perfect record. You are basically a water-quality inspector now. Add it to your resume.",
+			"fail": "You approve the glass with a visible something floating in it. Someone drinks it. You don't want to know what happens next.",
+		},
+		"SwipeTheSoap": {
+			"intro": "Handwashing. Quick. Purposeful. The soap has opinions.",
+			"win": "Clean hands. Minimal water. The soap bar is impressed.",
+			"fail": "You swipe wrong. The soap flies off the screen. You rinse with the tap full open for 30 seconds. The soap lands somewhere outside.",
+		},
+		"ThirstyPlant": {
+			"intro": "Three buckets. One is the green one. You will second-guess yourself.",
+			"win": "Correct bucket. The plant gets watered. It grows noticeably. It seems grateful.",
+			"fail": "Wrong bucket. You pour fertilizer directly on the plant's face. It recoils. The real green bucket watches silently.",
+		},
+		"TimingTap": {
+			"intro": "A tap. A container. A line that means \"enough.\"",
+			"win": "Perfect fill. Not a drop over. The container does a little shimmy.",
+			"fail": "You hold too long. It overflows spectacularly. The floor is now a small lake. The target line is underwater.",
+		},
+		"ToiletTankFix": {
+			"intro": "The toilet is running. Constantly. It's been running since Tuesday.",
+			"win": "Tank filled correctly. The phantom flush stops. Peace returns to the household.",
+			"fail": "Overfilled. The tank overflows into the bowl into the floor into your problems. The Tuesday leak was less bad.",
+		},
+		"TracePipePath": {
+			"intro": "The pipe is broken. Water is going to the wrong neighborhood.",
+			"win": "Pipe connected. Water flows true. The neighborhood cheers.",
+			"fail": "You draw off-path. Water detours through the kitchen ceiling. Everyone in the house gets an unexpected shower.",
+		},
+		"TurnOffTap": {
+			"intro": "Multiple faucets. All running. Nobody knows why.",
+			"win": "All taps off. Silence. The water bill sighs with relief.",
+			"fail": "You can't keep up. Every tap you close, another opens in protest. The house is now a fountain. It's actually kind of beautiful. But wrong.",
+		},
+		"VegetableBath": {
+			"intro": "Dirty vegetables. One wash bowl. A very particular basket system.",
+			"win": "All veggies clean and sorted. Dinner is saved. Someone says \"you're actually useful.\"",
+			"fail": "You throw a dirty carrot directly into the clean basket. Cross-contamination achieved. Dinner is canceled. The carrot is ashamed.",
+		},
+		"WaterMemory": {
+			"intro": "Water-saving tips are flashing on cards. They vanish. Your brain says \"I got this.\"",
+			"win": "All pairs matched. The tips are now burned into your brain. You will never run a tap unnecessarily again.",
+			"fail": "You flip the wrong card every time. The cards start to look identical. You match \"Don't waste water\" with \"Turtle.\" That is not a pair.",
+		},
+		"WaterPlant": {
+			"intro": "Wet laundry. A basin below. Physics awaiting.",
+			"win": "Basin full, clothes dry enough. The water goes to the garden. The clothes go on the line.",
+			"fail": "You tap too slowly. The clothes drip-dry on the floor instead. The basin has three drops in it. The garden sulks.",
+		},
+		"WringItOut": {
+			"intro": "Wet laundry. A basin below. Physics awaiting.",
+			"win": "Basin full, clothes dry enough. The water goes to the garden. The clothes go on the line.",
+			"fail": "You tap too slowly. The clothes drip-dry on the floor instead. The basin has three drops in it. The garden sulks.",
+		},
+		"MudPieMaker": {
+			"intro": "Children want mud pies. You have water. The gauge has opinions.",
+			"win": "Perfect consistency. The mud pie is structurally sound. A child somewhere is delighted. You feel strangely proud.",
+			"fail": "Too much water. The mud pie is now mud soup. It collapses immediately. The child is not delighted. You have failed mud.",
+		},
+		"RainwaterHarvesting": {
+			"intro": "A drought. A storm on the way. Two people, four drums, one shot.",
+			"win": "All drums full and sealed. Maximum harvest achieved. The rain stops. You two shake hands like you just ended the drought. Maybe you did.",
+			"fail": "P2 misses an overflow redirect. P1 seals the wrong drum mid-fill. Water cascades everywhere. The storm passes. The drums are one-third full. The drought continues. So does your shame.",
+		},
+		"MP_CatchRainAquarium": {
+			"intro": "It's raining. The fish tank is empty. Two people, one plan, zero coordination yet.",
+			"win": "Tank filled to the line. The fish arrive and immediately look smug. Both players celebrate at each other through the screen.",
+			"fail": "P2 overpours while P1 is still catching. The aquarium floods. The fish were never coming — they heard about you.",
+		},
+		"MP_CollectDishWater": {
+			"intro": "Dishes need washing. Water needs saving. These two facts must coexist.",
+			"win": "Dishes clean. Greywater saved. Two environmentalists nod at each other solemnly.",
+			"fail": "P1 washes too slow; P2's bucket overflows waiting. The greywater hits the floor. Both players blame each other immediately.",
+		},
+		"MP_CollectLaundryWater": {
+			"intro": "The washing machine is done. The rinse water is pure gold (well, soapy gold).",
+			"win": "Every drop redirected. The laundry smells fine. The garden is thriving. You are sustainability icons.",
+			"fail": "Buffer full — water spills onto the tiles. The rinse water is wasted. The tiles need mopping now too. You've created more problems.",
+		},
+		"MP_CollectShowerWater": {
+			"intro": "Someone showered. The warm-up water just ran down the drain for four minutes. Not today.",
+			"win": "Every warm-up litre saved. Both players feel personally responsible for fixing the water crisis. They are correct.",
+			"fail": "P1 passes too fast. P2 drops a bucket. The bathroom is now a puddle. Nobody wins. The shower just watches.",
+		},
+		"MP_FillAquarium": {
+			"intro": "An empty tank. Two determined people. One correct water level line.",
+			"win": "Perfect fill. The line is hit with surgical precision. A goldfish materializes from nowhere to say thank you.",
+			"fail": "P2 signals too late. The tank overflows. The goldfish was watching from a distance and shakes its tiny head.",
+		},
+		"MP_FilterWater": {
+			"intro": "The water is not drinking quality. It is barely looking-at quality.",
+			"win": "Crystal-clear output. Both players look at it like they made something beautiful. They did.",
+			"fail": "P2 stacks layers wrong while P1 pours too fast. Output is brownish. It is somehow more brown than the input. Science has failed you.",
+		},
+		"MP_FlushToilets": {
+			"intro": "Low-flush challenge. The toilet does not care. It wants a full tank. You're giving it half.",
+			"win": "Clean flush. Perfect pressure. The toilet is satisfied. This is the most empowering moment in water conservation.",
+			"fail": "P2 flushes too early with only a quarter tank. It does not clear. The situation escalates quickly. You both pretend it didn't happen.",
+		},
+		"MP_MopFloor": {
+			"intro": "The floor is dirty. You have a plan to use recycled water. The floor has no opinions but the outcome does.",
+			"win": "Spotless floor. Zero fresh water used. You have mopped sustainably. Tell everyone you know.",
+			"fail": "P1 passes an unfiltered bucket. P2 spreads the dirt evenly across the entire floor. It is now uniformly dirty — which is arguably worse. Congratulations.",
+		},
+		"MP_WashCar": {
+			"intro": "Dirty car. Two buckets of rainwater. No hose permitted.",
+			"win": "Shiny car. Zero hose used. Both players stare at it appreciatively. A neighbor walks by and is impressed.",
+			"fail": "P1's timing is off. P2 is mid-scrub with a dry sponge. The dirt smears. The car now has abstract art on it. The neighbor walks past again, confused.",
+		},
+		"MP_WashVegetables": {
+			"intro": "Market-fresh vegetables. Soil still attached. A basin of recycled water awaiting.",
+			"win": "All veggies clean. Basin water saved for irrigation. Dinner and the environment both win.",
+			"fail": "P2 sends a dirty vegetable to the tray. P1 sends five more before noticing. The \"clean\" tray is now the dirty tray. Nobody eats salad tonight.",
+		},
+		"MP_WaterPlants": {
+			"intro": "Thirsty plants. Greywater supply. A pipe system held together by teamwork and optimism.",
+			"win": "Every pot watered correctly. The garden is lush. A butterfly appears. Both players feel personally responsible for that butterfly.",
+			"fail": "P1 releases too much at once; P2 can't redirect fast enough. Three pots overflow. One plant drowns. It was a cactus. A cactus.",
+		},
 	}
 
 func _get_success_cutscene_presets() -> Dictionary:
@@ -2183,16 +2676,19 @@ func _play_cutscene_sfx(kind: String, anim: String, key: String) -> void:
 func _get_failure_cutscene_data() -> Dictionary:
 	var key = _get_minigame_key()
 	var presets = _get_failure_cutscene_presets()
-	if presets.has(key):
-		return presets[key]
-
-	return {
+	var data: Dictionary = presets.get(key, {
 		"icon": "💥",
 		"line": "Mission failed. Retry incoming!",
 		"anim": "wobble",
 		"bg": Color(0, 0, 0, 0.75),
 		"hold": 0.55
-	}
+	})
+	var _n: Dictionary = _get_narratives().get(key, {})
+	if _n.has("fail"):
+		var _full: String = str(_n["fail"])
+		var _dot := _full.find(". ")
+		data["line"] = _full.left(_dot) if _dot > 0 else _full
+	return data
 
 func _get_minigame_key() -> String:
 	if get_script() and get_script().resource_path != "":
