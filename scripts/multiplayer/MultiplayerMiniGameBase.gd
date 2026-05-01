@@ -39,6 +39,11 @@ var partner_role: String = ""
 var local_score: int = 0
 var is_waiting_for_partner: bool = false
 
+# Performance tracking for CoopAdaptation
+var mistakes_made: int = 0
+var correct_actions: int = 0
+var total_actions: int = 0
+
 # UI References
 var hud_layer: CanvasLayer
 var countdown_label: Label
@@ -61,6 +66,17 @@ func _ready() -> void:
 	# Get player info
 	my_player_num = NetworkManager.get_local_player_num()
 	my_role = NetworkManager.get_player_role(my_player_num)
+	
+	# Load CoopAdaptation difficulty and sync to GameManager.difficulty_multiplier
+	# so child games that read difficulty_multiplier get the correct adaptive value
+	var coop = get_node_or_null("/root/CoopAdaptation")
+	if coop and coop.has_method("get_difficulty_params") and GameManager:
+		var params: Dictionary = coop.get_difficulty_params(my_player_num)
+		GameManager.difficulty_multiplier = params.get("speed_multiplier", 1.0)
+		_log("🎯 CoopAdaptation difficulty loaded: %s (mult=%.2f)" % [
+			coop.get_player_difficulty(my_player_num),
+			GameManager.difficulty_multiplier
+		])
 	
 	_log(" Multiplayer game starting - Player %d (%s)" % [my_player_num, my_role])
 	
@@ -595,17 +611,20 @@ func _on_countdown_tick(count: int) -> void:
 	if countdown_label:
 		if count > 0:
 			countdown_label.text = str(count)
+			# Animate the number
+			var tween = create_tween()
+			tween.set_loops(1)
+			tween.tween_property(countdown_label, "scale", Vector2(1.5, 1.5), 0.2).from(Vector2.ZERO)
+			tween.tween_property(countdown_label, "scale", Vector2(1.0, 1.0), 0.2)
 		else:
 			countdown_label.text = "GO!"
-			# When countdown reaches 0 (GO!), start the game after animation
+			# Animate GO! then start game
+			var tween = create_tween()
+			tween.set_loops(1)
+			tween.tween_property(countdown_label, "scale", Vector2(1.5, 1.5), 0.2).from(Vector2.ZERO)
+			tween.tween_property(countdown_label, "scale", Vector2(1.0, 1.0), 0.2)
 			await get_tree().create_timer(1.0).timeout
 			_on_countdown_complete()
-		
-		# Animate
-		var tween = create_tween()
-		tween.set_loops(1)
-		tween.tween_property(countdown_label, "scale", Vector2(1.5, 1.5), 0.2).from(Vector2.ZERO)
-		tween.tween_property(countdown_label, "scale", Vector2(1.0, 1.0), 0.2)
 
 # 
 # GAME FLOW
@@ -649,10 +668,8 @@ func _update_timer_display() -> void:
 			elif remaining <= 10:
 				timer_label.add_theme_color_override("font_color", Color(1.0, 0.9, 0.3))
 	
-	# Update progress bar
-	var progress_bar = hud_layer.get_node_or_null(
-		"PanelContainer/MarginContainer/HBoxContainer/VBoxContainer/VBoxContainer/TimerProgress"
-	)
+	# Update progress bar (find dynamically since it's created in code)
+	var progress_bar = hud_layer.find_child("TimerProgress", true, false)
 	if progress_bar and game_duration < 999999.0:
 		progress_bar.value = remaining
 		
@@ -701,9 +718,28 @@ func end_game(success: bool) -> void:
 	
 	game_completed.emit(success)
 	
-	# Report completion to NetworkManager with scores
+	# Report completion to NetworkManager with performance data for CoopAdaptation
 	if NetworkManager:
-		NetworkManager.report_player_completion(success, local_score)
+		var reaction_time_ms: int = Time.get_ticks_msec() - game_started_time
+		var accuracy: float
+		if total_actions > 0:
+			# Prefer action-tracked accuracy
+			accuracy = clamp(float(correct_actions) / float(total_actions), 0.0, 1.0)
+		elif win_quota > 0:
+			# Derive from score vs quota
+			accuracy = clamp(float(local_score) / float(win_quota), 0.0, 1.0)
+		else:
+			accuracy = 1.0 if success else 0.0
+		NetworkManager.report_player_completion(success, local_score, accuracy, reaction_time_ms)
+
+func record_mp_action(correct: bool) -> void:
+	## Record a player action for CoopAdaptation accuracy tracking.
+	## Call this from child games when the player makes a correct or incorrect move.
+	total_actions += 1
+	if correct:
+		correct_actions += 1
+	else:
+		mistakes_made += 1
 
 func show_waiting_overlay() -> void:
 	# Show waiting for partner overlay
@@ -1108,6 +1144,11 @@ func _show_game_over_screen() -> void:
 	vbox.add_child(btn_container)
 
 func _show_results_screen(success: bool) -> void:
+	# Remove any existing results overlay to prevent duplicates
+	var existing = hud_layer.get_node_or_null("ResultsOverlay")
+	if existing:
+		existing.queue_free()
+	
 	# Show Game Over or Success screen
 	var overlay = Control.new()
 	overlay.name = "ResultsOverlay"

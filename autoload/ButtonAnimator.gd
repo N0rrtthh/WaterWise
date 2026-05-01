@@ -31,10 +31,10 @@ func _scan_tree(node: Node) -> void:
 
 func _on_node_added(node: Node) -> void:
 	if node is BaseButton:
-		# Defer to let the button finish initialization
-		(node as BaseButton).ready.connect(
-			_hook_button.bind(node as BaseButton), CONNECT_ONE_SHOT
-		)
+		var btn := node as BaseButton
+		# Guard: skip if already connected (reparented buttons trigger node_added again)
+		if not btn.ready.is_connected(_hook_button):
+			btn.ready.connect(_hook_button.bind(btn), CONNECT_ONE_SHOT)
 
 
 func _hook_button(button: BaseButton) -> void:

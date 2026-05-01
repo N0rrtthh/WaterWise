@@ -65,6 +65,9 @@ var game_timer: float = 60.0
 var dragging_water: Area2D = null
 var drag_offset: Vector2 = Vector2.ZERO
 var timer_sync_timer: Timer = null
+var is_paused: bool = false
+var pause_menu: Control = null
+var pause_button: Button = null
 
 func _ready() -> void:
 	screen_size = get_viewport_rect().size
@@ -97,6 +100,7 @@ func _ready() -> void:
 	add_child(timer_sync_timer)
 	timer_sync_timer.timeout.connect(_on_timer_sync_timeout)
 	
+	_create_pause_ui()
 	_start_game()
 
 func _get_assigned_mode() -> PlayerMode:
@@ -196,7 +200,7 @@ func _start_game() -> void:
 	_update_score_display()
 
 func _process(delta: float) -> void:
-	if not game_active:
+	if not game_active or is_paused:
 		return
 	
 	if _is_host():
@@ -503,3 +507,111 @@ func _show_result_screen(victory: bool) -> void:
 	label.set_anchors_preset(Control.PRESET_CENTER)
 	result.add_child(label)
 	hud.add_child(result)
+
+func _create_pause_ui() -> void:
+	pause_button = Button.new()
+	pause_button.text = "⏸"
+	pause_button.custom_minimum_size = Vector2(50, 50)
+	pause_button.add_theme_font_size_override("font_size", 32)
+	
+	var btn_normal = StyleBoxFlat.new()
+	btn_normal.bg_color = Color(0.2, 0.3, 0.4, 0.8)
+	btn_normal.corner_radius_top_left = 10
+	btn_normal.corner_radius_top_right = 10
+	btn_normal.corner_radius_bottom_left = 10
+	btn_normal.corner_radius_bottom_right = 10
+	
+	pause_button.add_theme_stylebox_override("normal", btn_normal)
+	pause_button.process_mode = Node.PROCESS_MODE_ALWAYS
+	pause_button.pressed.connect(_on_pause_button_pressed)
+	
+	var top_bar = $UI/TopBar
+	if top_bar:
+		top_bar.add_child(pause_button)
+	
+	# Create pause menu
+	pause_menu = Control.new()
+	pause_menu.set_anchors_preset(Control.PRESET_FULL_RECT)
+	pause_menu.visible = false
+	pause_menu.process_mode = Node.PROCESS_MODE_ALWAYS
+	hud.add_child(pause_menu)
+	
+	var bg = ColorRect.new()
+	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	bg.color = Color(0, 0, 0, 0.7)
+	pause_menu.add_child(bg)
+	
+	var center = CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	pause_menu.add_child(center)
+	
+	var vbox = VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 20)
+	center.add_child(vbox)
+	
+	var label = Label.new()
+	label.text = "PAUSED"
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.add_theme_font_size_override("font_size", 48)
+	vbox.add_child(label)
+	
+	var resume_btn = Button.new()
+	resume_btn.text = "RESUME"
+	resume_btn.custom_minimum_size = Vector2(200, 60)
+	resume_btn.add_theme_font_size_override("font_size", 24)
+	resume_btn.pressed.connect(_on_resume_pressed)
+	vbox.add_child(resume_btn)
+	
+	var exit_btn = Button.new()
+	exit_btn.text = "EXIT TO LOBBY"
+	exit_btn.custom_minimum_size = Vector2(200, 60)
+	exit_btn.add_theme_font_size_override("font_size", 24)
+	exit_btn.pressed.connect(_on_exit_pressed)
+	vbox.add_child(exit_btn)
+
+func _on_pause_button_pressed() -> void:
+	if is_paused:
+		return
+	is_paused = true
+	get_tree().paused = true
+	pause_menu.visible = true
+	pause_button.text = "▶"
+	if NetworkManager:
+		NetworkManager.rpc("sync_pause_state", true)
+
+func _on_resume_pressed() -> void:
+	if not is_paused:
+		return
+	is_paused = false
+	get_tree().paused = false
+	pause_menu.visible = false
+	pause_button.text = "⏸"
+	if NetworkManager:
+		NetworkManager.rpc("sync_pause_state", false)
+
+func _on_exit_pressed() -> void:
+	get_tree().paused = false
+	is_paused = false
+	game_active = false
+	if spawn_timer:
+		spawn_timer.stop()
+	if NetworkManager:
+		NetworkManager.return_to_lobby()
+	else:
+		get_tree().change_scene_to_file("res://scenes/ui/MultiplayerLobby.tscn")
+
+func _on_remote_pause() -> void:
+	is_paused = true
+	get_tree().paused = true
+	if pause_menu:
+		pause_menu.visible = true
+	if pause_button:
+		pause_button.text = "▶"
+
+func _on_remote_resume() -> void:
+	is_paused = false
+	get_tree().paused = false
+	if pause_menu:
+		pause_menu.visible = false
+	if pause_button:
+		pause_button.text = "⏸"

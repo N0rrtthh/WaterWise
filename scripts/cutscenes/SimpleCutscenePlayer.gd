@@ -37,14 +37,16 @@ func play_cutscene(minigame_key: String, cutscene_type) -> void:
 	cutscene_finished.emit()
 
 func _show_animated_droplet(is_win: bool) -> void:
+	var scene_data = _get_scene_data(_game_key, is_win)
 	var container = Control.new()
 	container.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(container)
 
-	# Background with gradient feel
+	# Per-game background color
 	var bg = ColorRect.new()
 	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
-	bg.color = Color(0.02, 0.14, 0.06, 0.85) if is_win else Color(0.12, 0.03, 0.02, 0.88)
+	var default_bg = Color(0.02, 0.14, 0.06, 0.85) if is_win else Color(0.12, 0.03, 0.02, 0.88)
+	bg.color = scene_data.get("bg", default_bg)
 	container.add_child(bg)
 
 	# Flash on entry
@@ -58,6 +60,10 @@ func _show_animated_droplet(is_win: bool) -> void:
 	ft.tween_property(flash, "color:a", 0.4 if is_win else 0.3, 0.1)
 	ft.tween_property(flash, "color:a", 0.0, 0.25)
 
+	# Scene-specific props (render behind character for depth)
+	var vp = get_viewport_rect().size
+	_spawn_scene_props(container, scene_data, vp)
+
 	# Center area for character
 	var center = Control.new()
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -65,9 +71,34 @@ func _show_animated_droplet(is_win: bool) -> void:
 
 	# Build character and position at viewport center
 	_character = _create_droplet_character(is_win)
-	var vp = get_viewport_rect().size
 	_character.position = Vector2(vp.x * 0.5, vp.y * 0.5)
 	center.add_child(_character)
+
+	# Scene flavor text (lower portion of screen, fades in after 0.45s)
+	var scene_text: String = scene_data.get("text", "")
+	if not scene_text.is_empty():
+		var text_lbl = Label.new()
+		text_lbl.text = scene_text
+		text_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		text_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		text_lbl.add_theme_font_size_override("font_size", 26)
+		text_lbl.add_theme_color_override(
+			"font_color",
+			Color(1.0, 1.0, 0.82) if is_win else Color(1.0, 0.78, 0.65)
+		)
+		text_lbl.add_theme_color_override("font_outline_color", Color(0.0, 0.0, 0.0, 0.95))
+		text_lbl.add_theme_constant_override("outline_size", 5)
+		text_lbl.set_anchors_preset(Control.PRESET_FULL_RECT)
+		text_lbl.anchor_top = 0.76
+		text_lbl.anchor_bottom = 1.0
+		text_lbl.offset_left = 24
+		text_lbl.offset_right = -24
+		text_lbl.modulate.a = 0.0
+		text_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		container.add_child(text_lbl)
+		var ttw = create_tween()
+		ttw.tween_interval(0.45)
+		ttw.tween_property(text_lbl, "modulate:a", 1.0, 0.3)
 
 	# Spawn burst particles
 	_spawn_burst_particles(container, is_win)
@@ -482,3 +513,829 @@ func _animate_droplet(is_win: bool) -> void:
 		sad.tween_property(_character, "rotation", -0.1, 0.3)
 
 		await get_tree().create_timer(1.5).timeout
+
+## ─────────────────────────────────────────────────────────────────
+## SCENE PROPS — per-game animated emoji stage dressing
+## ─────────────────────────────────────────────────────────────────
+
+func _spawn_scene_props(container: Control, scene_data: Dictionary, vp: Vector2) -> void:
+	var props: Array = scene_data.get("props", [])
+	for p_data in props:
+		var emoji: String = p_data.get("e", "")
+		if emoji.is_empty():
+			continue
+		var font_sz: int = p_data.get("size", 64)
+		var lbl = Label.new()
+		lbl.text = emoji
+		lbl.add_theme_font_size_override("font_size", font_sz)
+		lbl.modulate.a = 0.0
+		lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		# nx/ny are normalized [0..1] viewport fractions
+		var nx: float = p_data.get("x", 0.5)
+		var ny: float = p_data.get("y", 0.5)
+		var base_x := vp.x * nx - font_sz * 0.5
+		var base_y := vp.y * ny - font_sz * 0.5
+		lbl.position = Vector2(base_x, base_y)
+		container.add_child(lbl)
+
+		var delay: float = p_data.get("delay", 0.0)
+		var anim_type: String = p_data.get("anim", "pop")
+
+		# Fade in
+		var show_tw = create_tween()
+		show_tw.tween_interval(delay)
+		show_tw.tween_property(lbl, "modulate:a", 1.0, 0.18)
+
+		# Anim type
+		match anim_type:
+			"bounce":
+				var tw = create_tween().set_loops(6)
+				tw.tween_interval(delay + 0.22)
+				tw.tween_property(lbl, "position:y", base_y - 18, 0.2).set_ease(Tween.EASE_OUT)
+				tw.tween_property(lbl, "position:y", base_y, 0.2).set_ease(Tween.EASE_IN)
+			"float":
+				var tw = create_tween()
+				tw.tween_interval(delay + 0.12)
+				tw.tween_property(lbl, "position:y", base_y - 88, 1.5).set_ease(Tween.EASE_OUT)
+				var ftw = create_tween()
+				ftw.tween_interval(delay + 0.75)
+				ftw.tween_property(lbl, "modulate:a", 0.0, 0.85)
+			"fall":
+				lbl.position.y = base_y - 110
+				var tw = create_tween()
+				tw.tween_interval(delay)
+				tw.tween_property(lbl, "position:y", base_y, 0.38).set_ease(Tween.EASE_IN).set_trans(Tween.TRANS_BOUNCE)
+			"shake":
+				var tw = create_tween().set_loops(7)
+				tw.tween_interval(delay + 0.18)
+				tw.tween_property(lbl, "rotation", 0.18, 0.08)
+				tw.tween_property(lbl, "rotation", -0.18, 0.08)
+				tw.tween_property(lbl, "rotation", 0.0, 0.06)
+			"spin":
+				var tw = create_tween()
+				tw.tween_interval(delay)
+				tw.tween_property(lbl, "rotation", TAU * 2.0, 1.5).set_trans(Tween.TRANS_LINEAR)
+			"pop":
+				lbl.scale = Vector2(0.05, 0.05)
+				var tw = create_tween()
+				tw.tween_interval(delay)
+				tw.tween_property(lbl, "scale", Vector2(1.35, 1.35), 0.18).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_BACK)
+				tw.tween_property(lbl, "scale", Vector2(1.0, 1.0), 0.1)
+			"fly_away":
+				var dir_x = 1.0 if base_x > vp.x * 0.5 else -1.0
+				var tw = create_tween()
+				tw.tween_interval(delay + 0.38)
+				tw.set_parallel(true)
+				tw.tween_property(lbl, "position:x", base_x + dir_x * 280, 0.52).set_ease(Tween.EASE_IN)
+				tw.tween_property(lbl, "position:y", base_y - 55, 0.38).set_ease(Tween.EASE_OUT)
+				tw.tween_property(lbl, "modulate:a", 0.0, 0.42)
+			"fill_up":
+				lbl.pivot_offset = Vector2(font_sz * 0.5, font_sz)
+				lbl.scale = Vector2(1.0, 0.12)
+				var tw = create_tween()
+				tw.tween_interval(delay + 0.18)
+				tw.tween_property(lbl, "scale", Vector2(1.0, 1.0), 0.55).set_ease(Tween.EASE_OUT)
+			"drip":
+				var tw = create_tween().set_loops(4)
+				tw.tween_interval(delay + 0.18)
+				tw.tween_property(lbl, "position:y", base_y + 22, 0.32).set_ease(Tween.EASE_IN)
+				tw.tween_property(lbl, "modulate:a", 0.35, 0.14)
+				tw.tween_property(lbl, "position:y", base_y, 0.06)
+				tw.tween_property(lbl, "modulate:a", 1.0, 0.1)
+
+## ─────────────────────────────────────────────────────────────────
+## PER-GAME SCENE DATA  (bg color + emoji props + flavor text)
+## Covers all 20 SP + 12 MP minigames; win and fail variants.
+## ─────────────────────────────────────────────────────────────────
+
+func _get_scene_data(key: String, is_win: bool) -> Dictionary:
+	var outcome := "win" if is_win else "fail"
+	var default_bg = Color(0.02, 0.14, 0.06, 0.85) if is_win else Color(0.12, 0.03, 0.02, 0.88)
+	var scenes: Dictionary = {
+		"CatchTheRain": {
+			"win": {
+				"bg": Color(0.08, 0.18, 0.38, 0.88),
+				"props": [
+					{"e": "☁️", "x": 0.5, "y": 0.12, "size": 80, "anim": "bounce", "delay": 0.0},
+					{"e": "🌧️", "x": 0.3, "y": 0.22, "size": 52, "anim": "fall", "delay": 0.15},
+					{"e": "🌧️", "x": 0.7, "y": 0.22, "size": 52, "anim": "fall", "delay": 0.28},
+					{"e": "🛢️", "x": 0.5, "y": 0.8, "size": 76, "anim": "fill_up", "delay": 0.32},
+					{"e": "🌈", "x": 0.74, "y": 0.1, "size": 56, "anim": "pop", "delay": 0.85},
+				],
+				"text": "The drum overflows with glory!",
+			},
+			"fail": {
+				"bg": Color(0.12, 0.12, 0.2, 0.88),
+				"props": [
+					{"e": "☁️", "x": 0.5, "y": 0.12, "size": 72, "anim": "shake", "delay": 0.0},
+					{"e": "🌧️", "x": 0.22, "y": 0.24, "size": 48, "anim": "fall", "delay": 0.12},
+					{"e": "🌧️", "x": 0.78, "y": 0.26, "size": 48, "anim": "fall", "delay": 0.24},
+					{"e": "🪣", "x": 0.5, "y": 0.8, "size": 68, "anim": "pop", "delay": 0.1},
+					{"e": "💀", "x": 0.8, "y": 0.76, "size": 44, "anim": "pop", "delay": 0.72},
+				],
+				"text": "Mystery liquid fills the drum. A plant dies.",
+			},
+		},
+		"CoverTheDrum": {
+			"win": {
+				"bg": Color(0.05, 0.22, 0.15, 0.88),
+				"props": [
+					{"e": "🛢️", "x": 0.5, "y": 0.78, "size": 80, "anim": "pop", "delay": 0.0},
+					{"e": "🦟", "x": 0.22, "y": 0.32, "size": 52, "anim": "fly_away", "delay": 0.32},
+					{"e": "🦟", "x": 0.75, "y": 0.36, "size": 48, "anim": "fly_away", "delay": 0.48},
+					{"e": "✅", "x": 0.78, "y": 0.72, "size": 52, "anim": "pop", "delay": 0.62},
+				],
+				"text": "Mosquitoes hold a sad little funeral.",
+			},
+			"fail": {
+				"bg": Color(0.18, 0.06, 0.18, 0.88),
+				"props": [
+					{"e": "🛢️", "x": 0.5, "y": 0.78, "size": 80, "anim": "shake", "delay": 0.0},
+					{"e": "🦟", "x": 0.38, "y": 0.28, "size": 64, "anim": "bounce", "delay": 0.22},
+					{"e": "🦟", "x": 0.65, "y": 0.22, "size": 52, "anim": "spin", "delay": 0.42},
+					{"e": "🏠", "x": 0.16, "y": 0.72, "size": 52, "anim": "pop", "delay": 0.62},
+				],
+				"text": "A mosquito the size of a fist claims the drum as a condo.",
+			},
+		},
+		"DropletDash": {
+			"win": {
+				"bg": Color(0.05, 0.25, 0.42, 0.88),
+				"props": [
+					{"e": "💧", "x": 0.22, "y": 0.3, "size": 60, "anim": "bounce", "delay": 0.0},
+					{"e": "💧", "x": 0.75, "y": 0.25, "size": 52, "anim": "bounce", "delay": 0.15},
+					{"e": "🫙", "x": 0.5, "y": 0.78, "size": 76, "anim": "fill_up", "delay": 0.38},
+					{"e": "✨", "x": 0.78, "y": 0.68, "size": 48, "anim": "float", "delay": 0.6},
+				],
+				"text": "Every drop caught. The droplets look betrayed.",
+			},
+			"fail": {
+				"bg": Color(0.18, 0.18, 0.25, 0.88),
+				"props": [
+					{"e": "💧", "x": 0.22, "y": 0.28, "size": 60, "anim": "fly_away", "delay": 0.1},
+					{"e": "💧", "x": 0.72, "y": 0.22, "size": 52, "anim": "fly_away", "delay": 0.25},
+					{"e": "🫙", "x": 0.5, "y": 0.78, "size": 76, "anim": "shake", "delay": 0.18},
+					{"e": "😢", "x": 0.16, "y": 0.7, "size": 52, "anim": "pop", "delay": 0.52},
+				],
+				"text": "The last droplet waves goodbye. Glass is empty.",
+			},
+		},
+		"FilterBuilder": {
+			"win": {
+				"bg": Color(0.05, 0.22, 0.28, 0.88),
+				"props": [
+					{"e": "🧪", "x": 0.5, "y": 0.78, "size": 80, "anim": "pop", "delay": 0.0},
+					{"e": "✨", "x": 0.25, "y": 0.3, "size": 56, "anim": "float", "delay": 0.38},
+					{"e": "💧", "x": 0.75, "y": 0.32, "size": 52, "anim": "float", "delay": 0.52},
+					{"e": "🌟", "x": 0.5, "y": 0.18, "size": 60, "anim": "spin", "delay": 0.6},
+				],
+				"text": "Sparkling clean water. A child drinks gratefully.",
+			},
+			"fail": {
+				"bg": Color(0.22, 0.16, 0.06, 0.88),
+				"props": [
+					{"e": "🧪", "x": 0.5, "y": 0.75, "size": 76, "anim": "shake", "delay": 0.0},
+					{"e": "🤢", "x": 0.78, "y": 0.48, "size": 52, "anim": "pop", "delay": 0.5},
+				],
+				"text": "Wrong order. It looks like gravy. No one drinks that.",
+			},
+		},
+		"FixLeak": {
+			"win": {
+				"bg": Color(0.05, 0.22, 0.35, 0.88),
+				"props": [
+					{"e": "🔧", "x": 0.5, "y": 0.3, "size": 80, "anim": "pop", "delay": 0.0},
+					{"e": "🚰", "x": 0.5, "y": 0.78, "size": 72, "anim": "pop", "delay": 0.2},
+					{"e": "💧", "x": 0.62, "y": 0.7, "size": 36, "anim": "float", "delay": 0.72},
+					{"e": "🫡", "x": 0.75, "y": 0.48, "size": 56, "anim": "pop", "delay": 0.82},
+				],
+				"text": "Silence. Peace. A single drip salutes you.",
+			},
+			"fail": {
+				"bg": Color(0.06, 0.12, 0.28, 0.92),
+				"props": [
+					{"e": "💦", "x": 0.3, "y": 0.22, "size": 64, "anim": "fall", "delay": 0.0},
+					{"e": "💦", "x": 0.6, "y": 0.18, "size": 64, "anim": "fall", "delay": 0.15},
+					{"e": "💦", "x": 0.15, "y": 0.32, "size": 52, "anim": "fall", "delay": 0.3},
+					{"e": "🌊", "x": 0.5, "y": 0.85, "size": 80, "anim": "pop", "delay": 0.42},
+				],
+				"text": "Three more burst open. The room is now a splash park!",
+			},
+		},
+		"PlugTheLeak": {
+			"win": {
+				"bg": Color(0.05, 0.22, 0.35, 0.88),
+				"props": [
+					{"e": "🔧", "x": 0.5, "y": 0.3, "size": 80, "anim": "pop", "delay": 0.0},
+					{"e": "🚰", "x": 0.5, "y": 0.78, "size": 72, "anim": "pop", "delay": 0.2},
+					{"e": "💧", "x": 0.62, "y": 0.7, "size": 36, "anim": "float", "delay": 0.72},
+					{"e": "🫡", "x": 0.75, "y": 0.48, "size": 56, "anim": "pop", "delay": 0.82},
+				],
+				"text": "Silence. Peace. A single drip salutes you.",
+			},
+			"fail": {
+				"bg": Color(0.06, 0.12, 0.28, 0.92),
+				"props": [
+					{"e": "💦", "x": 0.3, "y": 0.22, "size": 64, "anim": "fall", "delay": 0.0},
+					{"e": "💦", "x": 0.6, "y": 0.18, "size": 64, "anim": "fall", "delay": 0.15},
+					{"e": "💦", "x": 0.15, "y": 0.32, "size": 52, "anim": "fall", "delay": 0.3},
+					{"e": "🌊", "x": 0.5, "y": 0.85, "size": 80, "anim": "pop", "delay": 0.42},
+				],
+				"text": "Three more burst open. The room is now a splash park!",
+			},
+		},
+		"GreywaterSorter": {
+			"win": {
+				"bg": Color(0.08, 0.25, 0.08, 0.88),
+				"props": [
+					{"e": "🪣", "x": 0.3, "y": 0.68, "size": 72, "anim": "pop", "delay": 0.0},
+					{"e": "🌸", "x": 0.72, "y": 0.62, "size": 60, "anim": "pop", "delay": 0.3},
+					{"e": "🌿", "x": 0.5, "y": 0.78, "size": 60, "anim": "bounce", "delay": 0.5},
+				],
+				"text": "Every bucket sorted. The garden blooms!",
+			},
+			"fail": {
+				"bg": Color(0.18, 0.15, 0.05, 0.88),
+				"props": [
+					{"e": "🍅", "x": 0.5, "y": 0.72, "size": 76, "anim": "shake", "delay": 0.0},
+					{"e": "🧼", "x": 0.3, "y": 0.3, "size": 60, "anim": "fall", "delay": 0.22},
+					{"e": "😭", "x": 0.75, "y": 0.55, "size": 52, "anim": "pop", "delay": 0.62},
+				],
+				"text": "Soapy water hits the tomatoes. The tomatoes had a name.",
+			},
+		},
+		"BucketBrigade": {
+			"win": {
+				"bg": Color(0.2, 0.22, 0.05, 0.88),
+				"props": [
+					{"e": "🪣", "x": 0.22, "y": 0.42, "size": 72, "anim": "bounce", "delay": 0.0},
+					{"e": "🪣", "x": 0.5, "y": 0.38, "size": 72, "anim": "bounce", "delay": 0.15},
+					{"e": "🌿", "x": 0.78, "y": 0.72, "size": 68, "anim": "pop", "delay": 0.4},
+					{"e": "🎉", "x": 0.5, "y": 0.18, "size": 60, "anim": "float", "delay": 0.6},
+				],
+				"text": "TEAMWORK! — someone shouts it unironically.",
+			},
+			"fail": {
+				"bg": Color(0.2, 0.15, 0.05, 0.88),
+				"props": [
+					{"e": "🪣", "x": 0.5, "y": 0.45, "size": 72, "anim": "shake", "delay": 0.0},
+					{"e": "🥪", "x": 0.75, "y": 0.42, "size": 60, "anim": "pop", "delay": 0.42},
+					{"e": "🌱", "x": 0.22, "y": 0.72, "size": 56, "anim": "shake", "delay": 0.62},
+				],
+				"text": "Third person eats a sandwich. The plant writes a letter.",
+			},
+		},
+		"QuickShower": {
+			"win": {
+				"bg": Color(0.05, 0.22, 0.35, 0.88),
+				"props": [
+					{"e": "🚿", "x": 0.5, "y": 0.72, "size": 80, "anim": "pop", "delay": 0.0},
+					{"e": "👍", "x": 0.75, "y": 0.48, "size": 60, "anim": "pop", "delay": 0.52},
+					{"e": "✨", "x": 0.25, "y": 0.3, "size": 52, "anim": "float", "delay": 0.62},
+				],
+				"text": "Clean. Efficient. The water meter gives a thumbs up.",
+			},
+			"fail": {
+				"bg": Color(0.05, 0.1, 0.32, 0.92),
+				"props": [
+					{"e": "🚿", "x": 0.5, "y": 0.62, "size": 80, "anim": "shake", "delay": 0.0},
+					{"e": "💸", "x": 0.75, "y": 0.32, "size": 60, "anim": "fly_away", "delay": 0.3},
+					{"e": "💥", "x": 0.28, "y": 0.38, "size": 64, "anim": "pop", "delay": 0.52},
+				],
+				"text": "The meter explodes. You're clean but the planet is not.",
+			},
+		},
+		"RiceWashRescue": {
+			"win": {
+				"bg": Color(0.06, 0.15, 0.12, 0.9),
+				"props": [
+					{"e": "🍚", "x": 0.5, "y": 0.28, "size": 76, "anim": "bounce", "delay": 0.0},
+					{"e": "💧", "x": 0.35, "y": 0.5, "size": 52, "anim": "float", "delay": 0.2},
+					{"e": "💧", "x": 0.65, "y": 0.45, "size": 48, "anim": "float", "delay": 0.35},
+					{"e": "🌱", "x": 0.78, "y": 0.68, "size": 56, "anim": "pop", "delay": 0.72},
+				],
+				"text": "Precious starchy water saved. The plants are very happy.",
+			},
+			"fail": {
+				"bg": Color(0.18, 0.14, 0.06, 0.88),
+				"props": [
+					{"e": "🍚", "x": 0.5, "y": 0.28, "size": 72, "anim": "shake", "delay": 0.0},
+					{"e": "🌊", "x": 0.5, "y": 0.82, "size": 72, "anim": "pop", "delay": 0.22},
+					{"e": "😔", "x": 0.75, "y": 0.52, "size": 52, "anim": "pop", "delay": 0.62},
+				],
+				"text": "A single grain of rice rolls away in disappointment.",
+			},
+		},
+		"ScrubToSave": {
+			"win": {
+				"bg": Color(0.05, 0.2, 0.32, 0.88),
+				"props": [
+					{"e": "🍽️", "x": 0.5, "y": 0.72, "size": 80, "anim": "pop", "delay": 0.0},
+					{"e": "✨", "x": 0.62, "y": 0.6, "size": 44, "anim": "float", "delay": 0.3},
+					{"e": "🍴", "x": 0.75, "y": 0.68, "size": 52, "anim": "bounce", "delay": 0.52},
+				],
+				"text": "Spotless! A fork nearby applauds.",
+			},
+			"fail": {
+				"bg": Color(0.18, 0.16, 0.12, 0.88),
+				"props": [
+					{"e": "🍽️", "x": 0.5, "y": 0.72, "size": 80, "anim": "shake", "delay": 0.0},
+					{"e": "👀", "x": 0.72, "y": 0.48, "size": 56, "anim": "pop", "delay": 0.52},
+				],
+				"text": "The dish does not sparkle. It judges you.",
+			},
+		},
+		"SpotTheSpeck": {
+			"win": {
+				"bg": Color(0.05, 0.25, 0.4, 0.88),
+				"props": [
+					{"e": "🔍", "x": 0.5, "y": 0.3, "size": 80, "anim": "pop", "delay": 0.0},
+					{"e": "🥛", "x": 0.3, "y": 0.72, "size": 64, "anim": "pop", "delay": 0.22},
+					{"e": "🥛", "x": 0.7, "y": 0.72, "size": 64, "anim": "pop", "delay": 0.32},
+					{"e": "✅", "x": 0.72, "y": 0.28, "size": 52, "anim": "pop", "delay": 0.62},
+				],
+				"text": "All impurities spotted. Add it to your resume.",
+			},
+			"fail": {
+				"bg": Color(0.2, 0.18, 0.1, 0.88),
+				"props": [
+					{"e": "🔍", "x": 0.5, "y": 0.28, "size": 72, "anim": "shake", "delay": 0.0},
+					{"e": "🥛", "x": 0.5, "y": 0.72, "size": 76, "anim": "bounce", "delay": 0.22},
+					{"e": "😨", "x": 0.22, "y": 0.48, "size": 56, "anim": "pop", "delay": 0.52},
+				],
+				"text": "You don't want to know what happens next.",
+			},
+		},
+		"SwipeTheSoap": {
+			"win": {
+				"bg": Color(0.08, 0.22, 0.32, 0.88),
+				"props": [
+					{"e": "🧼", "x": 0.5, "y": 0.72, "size": 80, "anim": "pop", "delay": 0.0},
+					{"e": "👐", "x": 0.5, "y": 0.35, "size": 72, "anim": "pop", "delay": 0.3},
+					{"e": "✨", "x": 0.75, "y": 0.5, "size": 48, "anim": "float", "delay": 0.52},
+				],
+				"text": "Clean hands! The soap bar is impressed.",
+			},
+			"fail": {
+				"bg": Color(0.18, 0.12, 0.06, 0.88),
+				"props": [
+					{"e": "🧼", "x": 0.5, "y": 0.62, "size": 76, "anim": "fly_away", "delay": 0.1},
+					{"e": "🚰", "x": 0.5, "y": 0.78, "size": 68, "anim": "shake", "delay": 0.22},
+					{"e": "💧", "x": 0.3, "y": 0.5, "size": 48, "anim": "drip", "delay": 0.4},
+					{"e": "💧", "x": 0.7, "y": 0.5, "size": 48, "anim": "drip", "delay": 0.52},
+				],
+				"text": "The soap lands somewhere outside.",
+			},
+		},
+		"ThirstyPlant": {
+			"win": {
+				"bg": Color(0.06, 0.22, 0.1, 0.88),
+				"props": [
+					{"e": "🪣", "x": 0.3, "y": 0.42, "size": 68, "anim": "pop", "delay": 0.0},
+					{"e": "🌿", "x": 0.7, "y": 0.72, "size": 80, "anim": "bounce", "delay": 0.3},
+					{"e": "💧", "x": 0.5, "y": 0.25, "size": 52, "anim": "fall", "delay": 0.1},
+				],
+				"text": "Correct bucket! It grows noticeably. It seems grateful.",
+			},
+			"fail": {
+				"bg": Color(0.2, 0.15, 0.06, 0.88),
+				"props": [
+					{"e": "🌱", "x": 0.72, "y": 0.72, "size": 72, "anim": "shake", "delay": 0.0},
+					{"e": "🪣", "x": 0.3, "y": 0.52, "size": 64, "anim": "pop", "delay": 0.3},
+					{"e": "😐", "x": 0.72, "y": 0.35, "size": 52, "anim": "pop", "delay": 0.72},
+				],
+				"text": "Wrong bucket. The real green one watches silently.",
+			},
+		},
+		"TimingTap": {
+			"win": {
+				"bg": Color(0.05, 0.2, 0.38, 0.88),
+				"props": [
+					{"e": "🚰", "x": 0.5, "y": 0.28, "size": 76, "anim": "pop", "delay": 0.0},
+					{"e": "🫙", "x": 0.5, "y": 0.78, "size": 76, "anim": "fill_up", "delay": 0.3},
+					{"e": "🎯", "x": 0.78, "y": 0.32, "size": 56, "anim": "pop", "delay": 0.52},
+				],
+				"text": "Perfect fill! The container does a little shimmy.",
+			},
+			"fail": {
+				"bg": Color(0.04, 0.1, 0.28, 0.92),
+				"props": [
+					{"e": "🚰", "x": 0.5, "y": 0.22, "size": 76, "anim": "shake", "delay": 0.0},
+					{"e": "🌊", "x": 0.5, "y": 0.85, "size": 80, "anim": "pop", "delay": 0.3},
+					{"e": "😱", "x": 0.22, "y": 0.55, "size": 56, "anim": "pop", "delay": 0.52},
+				],
+				"text": "It overflows. The floor is now a small lake.",
+			},
+		},
+		"ToiletTankFix": {
+			"win": {
+				"bg": Color(0.08, 0.2, 0.3, 0.88),
+				"props": [
+					{"e": "🚽", "x": 0.5, "y": 0.75, "size": 84, "anim": "pop", "delay": 0.0},
+					{"e": "🕊️", "x": 0.5, "y": 0.18, "size": 60, "anim": "float", "delay": 0.52},
+					{"e": "😌", "x": 0.78, "y": 0.52, "size": 52, "anim": "pop", "delay": 0.72},
+				],
+				"text": "Peace returns to the household.",
+			},
+			"fail": {
+				"bg": Color(0.05, 0.1, 0.28, 0.92),
+				"props": [
+					{"e": "🚽", "x": 0.5, "y": 0.72, "size": 84, "anim": "shake", "delay": 0.0},
+					{"e": "🌊", "x": 0.5, "y": 0.85, "size": 72, "anim": "pop", "delay": 0.3},
+					{"e": "😰", "x": 0.25, "y": 0.42, "size": 56, "anim": "pop", "delay": 0.52},
+				],
+				"text": "The toilet overflows. The Tuesday leak was less bad.",
+			},
+		},
+		"TracePipePath": {
+			"win": {
+				"bg": Color(0.06, 0.2, 0.32, 0.88),
+				"props": [
+					{"e": "🏘️", "x": 0.5, "y": 0.72, "size": 80, "anim": "pop", "delay": 0.0},
+					{"e": "🎉", "x": 0.28, "y": 0.32, "size": 60, "anim": "float", "delay": 0.4},
+					{"e": "🎉", "x": 0.72, "y": 0.28, "size": 56, "anim": "float", "delay": 0.55},
+				],
+				"text": "Pipe connected correctly. The neighborhood cheers!",
+			},
+			"fail": {
+				"bg": Color(0.05, 0.1, 0.28, 0.92),
+				"props": [
+					{"e": "🏠", "x": 0.5, "y": 0.72, "size": 80, "anim": "shake", "delay": 0.0},
+					{"e": "🚿", "x": 0.3, "y": 0.32, "size": 60, "anim": "fall", "delay": 0.22},
+					{"e": "🚿", "x": 0.72, "y": 0.28, "size": 56, "anim": "fall", "delay": 0.36},
+					{"e": "😱", "x": 0.22, "y": 0.55, "size": 52, "anim": "pop", "delay": 0.52},
+				],
+				"text": "Water goes through the kitchen ceiling. Everyone showers.",
+			},
+		},
+		"TurnOffTap": {
+			"win": {
+				"bg": Color(0.08, 0.22, 0.32, 0.88),
+				"props": [
+					{"e": "🚰", "x": 0.3, "y": 0.42, "size": 68, "anim": "pop", "delay": 0.0},
+					{"e": "🚰", "x": 0.7, "y": 0.38, "size": 68, "anim": "pop", "delay": 0.15},
+					{"e": "🤫", "x": 0.5, "y": 0.22, "size": 64, "anim": "pop", "delay": 0.4},
+					{"e": "💰", "x": 0.5, "y": 0.78, "size": 60, "anim": "bounce", "delay": 0.72},
+				],
+				"text": "All taps off. The water bill sighs with relief.",
+			},
+			"fail": {
+				"bg": Color(0.04, 0.1, 0.28, 0.92),
+				"props": [
+					{"e": "🚰", "x": 0.22, "y": 0.32, "size": 60, "anim": "shake", "delay": 0.0},
+					{"e": "🚰", "x": 0.5, "y": 0.28, "size": 64, "anim": "shake", "delay": 0.1},
+					{"e": "🚰", "x": 0.78, "y": 0.32, "size": 60, "anim": "shake", "delay": 0.2},
+					{"e": "🌊", "x": 0.5, "y": 0.85, "size": 80, "anim": "pop", "delay": 0.42},
+				],
+				"text": "The house is now a fountain. Kind of beautiful. But wrong.",
+			},
+		},
+		"VegetableBath": {
+			"win": {
+				"bg": Color(0.08, 0.24, 0.1, 0.88),
+				"props": [
+					{"e": "🥦", "x": 0.28, "y": 0.62, "size": 68, "anim": "bounce", "delay": 0.0},
+					{"e": "🥕", "x": 0.72, "y": 0.65, "size": 64, "anim": "bounce", "delay": 0.2},
+					{"e": "✨", "x": 0.5, "y": 0.28, "size": 56, "anim": "float", "delay": 0.5},
+					{"e": "😊", "x": 0.5, "y": 0.18, "size": 52, "anim": "pop", "delay": 0.72},
+				],
+				"text": "Dinner is saved. You're actually useful.",
+			},
+			"fail": {
+				"bg": Color(0.2, 0.15, 0.06, 0.88),
+				"props": [
+					{"e": "🥕", "x": 0.5, "y": 0.65, "size": 76, "anim": "shake", "delay": 0.0},
+					{"e": "😳", "x": 0.5, "y": 0.28, "size": 60, "anim": "pop", "delay": 0.42},
+				],
+				"text": "Wrong basket. The carrot is ashamed.",
+			},
+		},
+		"WaterMemory": {
+			"win": {
+				"bg": Color(0.06, 0.18, 0.38, 0.88),
+				"props": [
+					{"e": "🃏", "x": 0.3, "y": 0.48, "size": 72, "anim": "pop", "delay": 0.0},
+					{"e": "🃏", "x": 0.7, "y": 0.48, "size": 72, "anim": "pop", "delay": 0.2},
+					{"e": "🧠", "x": 0.5, "y": 0.22, "size": 68, "anim": "bounce", "delay": 0.4},
+					{"e": "✨", "x": 0.72, "y": 0.3, "size": 48, "anim": "float", "delay": 0.62},
+				],
+				"text": "All pairs matched! You will never waste water again.",
+			},
+			"fail": {
+				"bg": Color(0.18, 0.16, 0.2, 0.88),
+				"props": [
+					{"e": "🃏", "x": 0.3, "y": 0.48, "size": 68, "anim": "shake", "delay": 0.0},
+					{"e": "🐢", "x": 0.7, "y": 0.48, "size": 72, "anim": "pop", "delay": 0.22},
+					{"e": "❓", "x": 0.5, "y": 0.22, "size": 60, "anim": "bounce", "delay": 0.52},
+				],
+				"text": "You match 'Don't waste water' with 'Turtle.'",
+			},
+		},
+		"WaterPlant": {
+			"win": {
+				"bg": Color(0.06, 0.22, 0.1, 0.88),
+				"props": [
+					{"e": "👕", "x": 0.3, "y": 0.42, "size": 72, "anim": "pop", "delay": 0.0},
+					{"e": "🌱", "x": 0.72, "y": 0.72, "size": 72, "anim": "bounce", "delay": 0.3},
+					{"e": "💧", "x": 0.5, "y": 0.25, "size": 52, "anim": "fall", "delay": 0.22},
+				],
+				"text": "Basin full. The water goes to the garden!",
+			},
+			"fail": {
+				"bg": Color(0.18, 0.14, 0.08, 0.88),
+				"props": [
+					{"e": "👕", "x": 0.5, "y": 0.42, "size": 72, "anim": "drip", "delay": 0.0},
+					{"e": "🌱", "x": 0.72, "y": 0.72, "size": 68, "anim": "shake", "delay": 0.3},
+					{"e": "😒", "x": 0.22, "y": 0.55, "size": 52, "anim": "pop", "delay": 0.62},
+				],
+				"text": "Three drops in the basin. The garden sulks.",
+			},
+		},
+		"WringItOut": {
+			"win": {
+				"bg": Color(0.06, 0.22, 0.1, 0.88),
+				"props": [
+					{"e": "👕", "x": 0.3, "y": 0.42, "size": 72, "anim": "pop", "delay": 0.0},
+					{"e": "🌱", "x": 0.72, "y": 0.72, "size": 72, "anim": "bounce", "delay": 0.3},
+					{"e": "💧", "x": 0.5, "y": 0.25, "size": 52, "anim": "fall", "delay": 0.22},
+				],
+				"text": "Basin full. The water goes to the garden!",
+			},
+			"fail": {
+				"bg": Color(0.18, 0.14, 0.08, 0.88),
+				"props": [
+					{"e": "👕", "x": 0.5, "y": 0.42, "size": 72, "anim": "drip", "delay": 0.0},
+					{"e": "🌱", "x": 0.72, "y": 0.72, "size": 68, "anim": "shake", "delay": 0.3},
+					{"e": "😒", "x": 0.22, "y": 0.55, "size": 52, "anim": "pop", "delay": 0.62},
+				],
+				"text": "Three drops in the basin. The garden sulks.",
+			},
+		},
+		"MudPieMaker": {
+			"win": {
+				"bg": Color(0.2, 0.14, 0.05, 0.88),
+				"props": [
+					{"e": "🥧", "x": 0.5, "y": 0.72, "size": 80, "anim": "pop", "delay": 0.0},
+					{"e": "😄", "x": 0.28, "y": 0.45, "size": 60, "anim": "bounce", "delay": 0.42},
+					{"e": "✨", "x": 0.72, "y": 0.42, "size": 52, "anim": "float", "delay": 0.52},
+				],
+				"text": "Structurally sound mud pie! A child is delighted.",
+			},
+			"fail": {
+				"bg": Color(0.2, 0.1, 0.02, 0.92),
+				"props": [
+					{"e": "🥧", "x": 0.5, "y": 0.72, "size": 76, "anim": "shake", "delay": 0.0},
+					{"e": "🌊", "x": 0.5, "y": 0.82, "size": 64, "anim": "pop", "delay": 0.3},
+					{"e": "😢", "x": 0.25, "y": 0.45, "size": 56, "anim": "pop", "delay": 0.62},
+				],
+				"text": "Too much water. You have failed mud.",
+			},
+		},
+		"RainwaterHarvesting": {
+			"win": {
+				"bg": Color(0.06, 0.16, 0.32, 0.88),
+				"props": [
+					{"e": "🛢️", "x": 0.18, "y": 0.72, "size": 60, "anim": "fill_up", "delay": 0.0},
+					{"e": "🛢️", "x": 0.38, "y": 0.72, "size": 60, "anim": "fill_up", "delay": 0.15},
+					{"e": "🛢️", "x": 0.62, "y": 0.72, "size": 60, "anim": "fill_up", "delay": 0.3},
+					{"e": "🛢️", "x": 0.82, "y": 0.72, "size": 60, "anim": "fill_up", "delay": 0.45},
+					{"e": "🤝", "x": 0.5, "y": 0.28, "size": 64, "anim": "pop", "delay": 0.72},
+				],
+				"text": "All drums full! You two might have ended the drought.",
+			},
+			"fail": {
+				"bg": Color(0.12, 0.1, 0.08, 0.92),
+				"props": [
+					{"e": "🛢️", "x": 0.5, "y": 0.72, "size": 72, "anim": "shake", "delay": 0.0},
+					{"e": "☀️", "x": 0.5, "y": 0.15, "size": 64, "anim": "bounce", "delay": 0.42},
+					{"e": "😞", "x": 0.25, "y": 0.45, "size": 52, "anim": "pop", "delay": 0.62},
+				],
+				"text": "The drought continues. So does your shame.",
+			},
+		},
+		# ── Multiplayer games ──────────────────────────────────────────
+		"MP_CatchRainAquarium": {
+			"win": {
+				"bg": Color(0.04, 0.18, 0.4, 0.88),
+				"props": [
+					{"e": "🌧️", "x": 0.5, "y": 0.15, "size": 68, "anim": "fall", "delay": 0.0},
+					{"e": "🐠", "x": 0.35, "y": 0.65, "size": 64, "anim": "bounce", "delay": 0.42},
+					{"e": "🐟", "x": 0.65, "y": 0.7, "size": 60, "anim": "bounce", "delay": 0.52},
+					{"e": "🪣", "x": 0.5, "y": 0.8, "size": 72, "anim": "fill_up", "delay": 0.3},
+				],
+				"text": "Tank filled to the line. The fish look smug.",
+			},
+			"fail": {
+				"bg": Color(0.05, 0.1, 0.3, 0.92),
+				"props": [
+					{"e": "🌧️", "x": 0.5, "y": 0.15, "size": 64, "anim": "fall", "delay": 0.0},
+					{"e": "🌊", "x": 0.5, "y": 0.82, "size": 76, "anim": "pop", "delay": 0.3},
+					{"e": "🐠", "x": 0.5, "y": 0.3, "size": 60, "anim": "fly_away", "delay": 0.62},
+				],
+				"text": "The fish were never coming — they heard about you.",
+			},
+		},
+		"MP_CollectDishWater": {
+			"win": {
+				"bg": Color(0.06, 0.2, 0.3, 0.88),
+				"props": [
+					{"e": "🍽️", "x": 0.35, "y": 0.52, "size": 72, "anim": "pop", "delay": 0.0},
+					{"e": "🪣", "x": 0.65, "y": 0.72, "size": 72, "anim": "fill_up", "delay": 0.3},
+					{"e": "🌱", "x": 0.5, "y": 0.2, "size": 56, "anim": "pop", "delay": 0.62},
+				],
+				"text": "Dishes clean. Greywater saved. Two eco-icons.",
+			},
+			"fail": {
+				"bg": Color(0.18, 0.15, 0.08, 0.88),
+				"props": [
+					{"e": "🪣", "x": 0.5, "y": 0.65, "size": 72, "anim": "shake", "delay": 0.0},
+					{"e": "🌊", "x": 0.5, "y": 0.85, "size": 72, "anim": "pop", "delay": 0.3},
+					{"e": "😤", "x": 0.25, "y": 0.38, "size": 52, "anim": "pop", "delay": 0.52},
+					{"e": "😤", "x": 0.72, "y": 0.42, "size": 52, "anim": "pop", "delay": 0.66},
+				],
+				"text": "Both players blame each other immediately.",
+			},
+		},
+		"MP_CollectLaundryWater": {
+			"win": {
+				"bg": Color(0.06, 0.2, 0.28, 0.88),
+				"props": [
+					{"e": "👕", "x": 0.3, "y": 0.38, "size": 72, "anim": "pop", "delay": 0.0},
+					{"e": "🌿", "x": 0.72, "y": 0.68, "size": 72, "anim": "bounce", "delay": 0.4},
+					{"e": "✨", "x": 0.5, "y": 0.2, "size": 56, "anim": "float", "delay": 0.62},
+				],
+				"text": "Every drop redirected. Sustainability icons!",
+			},
+			"fail": {
+				"bg": Color(0.12, 0.12, 0.18, 0.88),
+				"props": [
+					{"e": "🪣", "x": 0.5, "y": 0.65, "size": 72, "anim": "shake", "delay": 0.0},
+					{"e": "🌊", "x": 0.5, "y": 0.85, "size": 72, "anim": "pop", "delay": 0.3},
+					{"e": "🧹", "x": 0.28, "y": 0.45, "size": 60, "anim": "pop", "delay": 0.62},
+				],
+				"text": "Buffer overflowed. Now the tiles need mopping too.",
+			},
+		},
+		"MP_CollectShowerWater": {
+			"win": {
+				"bg": Color(0.05, 0.18, 0.35, 0.88),
+				"props": [
+					{"e": "🚿", "x": 0.5, "y": 0.28, "size": 76, "anim": "pop", "delay": 0.0},
+					{"e": "🪣", "x": 0.3, "y": 0.72, "size": 68, "anim": "fill_up", "delay": 0.3},
+					{"e": "🪣", "x": 0.7, "y": 0.72, "size": 68, "anim": "fill_up", "delay": 0.45},
+					{"e": "🌍", "x": 0.5, "y": 0.18, "size": 52, "anim": "pop", "delay": 0.72},
+				],
+				"text": "Every warm-up litre saved. You fixed the crisis.",
+			},
+			"fail": {
+				"bg": Color(0.05, 0.1, 0.28, 0.92),
+				"props": [
+					{"e": "🪣", "x": 0.5, "y": 0.62, "size": 72, "anim": "shake", "delay": 0.0},
+					{"e": "🌊", "x": 0.5, "y": 0.85, "size": 76, "anim": "pop", "delay": 0.3},
+					{"e": "🚿", "x": 0.5, "y": 0.22, "size": 64, "anim": "shake", "delay": 0.42},
+				],
+				"text": "P1 passes too fast. P2 drops a bucket. The bathroom is a puddle.",
+			},
+		},
+		"MP_FillAquarium": {
+			"win": {
+				"bg": Color(0.04, 0.18, 0.4, 0.88),
+				"props": [
+					{"e": "🐡", "x": 0.5, "y": 0.58, "size": 76, "anim": "bounce", "delay": 0.42},
+					{"e": "🪣", "x": 0.3, "y": 0.72, "size": 68, "anim": "pop", "delay": 0.0},
+					{"e": "🎯", "x": 0.72, "y": 0.42, "size": 56, "anim": "pop", "delay": 0.52},
+				],
+				"text": "Perfect fill! A goldfish materializes to say thank you.",
+			},
+			"fail": {
+				"bg": Color(0.05, 0.1, 0.3, 0.92),
+				"props": [
+					{"e": "🌊", "x": 0.5, "y": 0.82, "size": 76, "anim": "pop", "delay": 0.22},
+					{"e": "🐟", "x": 0.5, "y": 0.42, "size": 68, "anim": "shake", "delay": 0.52},
+				],
+				"text": "P2 signals too late. The goldfish shakes its tiny head.",
+			},
+		},
+		"MP_FilterWater": {
+			"win": {
+				"bg": Color(0.05, 0.22, 0.3, 0.88),
+				"props": [
+					{"e": "🧪", "x": 0.5, "y": 0.72, "size": 80, "anim": "pop", "delay": 0.0},
+					{"e": "✨", "x": 0.3, "y": 0.38, "size": 56, "anim": "float", "delay": 0.4},
+					{"e": "💧", "x": 0.72, "y": 0.35, "size": 52, "anim": "float", "delay": 0.52},
+				],
+				"text": "Crystal clear. You made something beautiful.",
+			},
+			"fail": {
+				"bg": Color(0.2, 0.15, 0.06, 0.92),
+				"props": [
+					{"e": "🧪", "x": 0.5, "y": 0.72, "size": 76, "anim": "shake", "delay": 0.0},
+					{"e": "🤮", "x": 0.72, "y": 0.45, "size": 52, "anim": "pop", "delay": 0.52},
+				],
+				"text": "Somehow more brown than the input. Science has failed.",
+			},
+		},
+		"MP_FlushToilets": {
+			"win": {
+				"bg": Color(0.05, 0.2, 0.3, 0.88),
+				"props": [
+					{"e": "🚽", "x": 0.5, "y": 0.72, "size": 84, "anim": "pop", "delay": 0.0},
+					{"e": "💪", "x": 0.5, "y": 0.28, "size": 64, "anim": "pop", "delay": 0.52},
+				],
+				"text": "Perfect pressure. The toilet is satisfied.",
+			},
+			"fail": {
+				"bg": Color(0.2, 0.12, 0.06, 0.88),
+				"props": [
+					{"e": "🚽", "x": 0.5, "y": 0.72, "size": 84, "anim": "shake", "delay": 0.0},
+					{"e": "😅", "x": 0.5, "y": 0.3, "size": 60, "anim": "pop", "delay": 0.52},
+				],
+				"text": "It does not clear. The situation escalates quickly.",
+			},
+		},
+		"MP_MopFloor": {
+			"win": {
+				"bg": Color(0.06, 0.2, 0.25, 0.88),
+				"props": [
+					{"e": "🧹", "x": 0.5, "y": 0.52, "size": 80, "anim": "pop", "delay": 0.0},
+					{"e": "✨", "x": 0.3, "y": 0.35, "size": 56, "anim": "float", "delay": 0.4},
+					{"e": "✨", "x": 0.72, "y": 0.4, "size": 52, "anim": "float", "delay": 0.55},
+				],
+				"text": "Spotless floor. Zero fresh water used.",
+			},
+			"fail": {
+				"bg": Color(0.18, 0.14, 0.06, 0.88),
+				"props": [
+					{"e": "🧹", "x": 0.5, "y": 0.52, "size": 76, "anim": "shake", "delay": 0.0},
+					{"e": "😬", "x": 0.5, "y": 0.28, "size": 60, "anim": "pop", "delay": 0.52},
+				],
+				"text": "Uniformly dirty now. Arguably worse than before.",
+			},
+		},
+		"MP_WashCar": {
+			"win": {
+				"bg": Color(0.06, 0.2, 0.32, 0.88),
+				"props": [
+					{"e": "🚗", "x": 0.5, "y": 0.68, "size": 84, "anim": "pop", "delay": 0.0},
+					{"e": "🪣", "x": 0.28, "y": 0.55, "size": 60, "anim": "bounce", "delay": 0.3},
+					{"e": "✨", "x": 0.72, "y": 0.48, "size": 52, "anim": "float", "delay": 0.52},
+				],
+				"text": "Shiny car, zero hose used. A neighbor is impressed.",
+			},
+			"fail": {
+				"bg": Color(0.18, 0.12, 0.06, 0.88),
+				"props": [
+					{"e": "🚗", "x": 0.5, "y": 0.68, "size": 84, "anim": "shake", "delay": 0.0},
+					{"e": "🎨", "x": 0.5, "y": 0.32, "size": 60, "anim": "pop", "delay": 0.42},
+					{"e": "🤔", "x": 0.25, "y": 0.45, "size": 52, "anim": "pop", "delay": 0.62},
+				],
+				"text": "The dirt smears. The car now has abstract art on it.",
+			},
+		},
+		"MP_WashVegetables": {
+			"win": {
+				"bg": Color(0.06, 0.22, 0.1, 0.88),
+				"props": [
+					{"e": "🥬", "x": 0.3, "y": 0.58, "size": 72, "anim": "pop", "delay": 0.0},
+					{"e": "🥕", "x": 0.7, "y": 0.62, "size": 64, "anim": "pop", "delay": 0.22},
+					{"e": "🌱", "x": 0.5, "y": 0.75, "size": 56, "anim": "bounce", "delay": 0.52},
+				],
+				"text": "All veggies clean. Dinner and the environment win.",
+			},
+			"fail": {
+				"bg": Color(0.18, 0.14, 0.06, 0.88),
+				"props": [
+					{"e": "🥕", "x": 0.5, "y": 0.62, "size": 76, "anim": "shake", "delay": 0.0},
+					{"e": "🚫", "x": 0.5, "y": 0.28, "size": 64, "anim": "pop", "delay": 0.42},
+					{"e": "🥗", "x": 0.25, "y": 0.55, "size": 52, "anim": "fly_away", "delay": 0.62},
+				],
+				"text": "The 'clean' tray is now dirty. Nobody eats salad tonight.",
+			},
+		},
+		"MP_WaterPlants": {
+			"win": {
+				"bg": Color(0.06, 0.22, 0.1, 0.88),
+				"props": [
+					{"e": "🌿", "x": 0.3, "y": 0.68, "size": 72, "anim": "bounce", "delay": 0.0},
+					{"e": "🌺", "x": 0.7, "y": 0.65, "size": 68, "anim": "bounce", "delay": 0.22},
+					{"e": "🦋", "x": 0.5, "y": 0.28, "size": 60, "anim": "float", "delay": 0.52},
+				],
+				"text": "A butterfly appears. Both players feel responsible for it.",
+			},
+			"fail": {
+				"bg": Color(0.2, 0.12, 0.04, 0.88),
+				"props": [
+					{"e": "🌵", "x": 0.5, "y": 0.65, "size": 80, "anim": "shake", "delay": 0.0},
+					{"e": "🌊", "x": 0.5, "y": 0.85, "size": 72, "anim": "pop", "delay": 0.3},
+					{"e": "😱", "x": 0.28, "y": 0.35, "size": 56, "anim": "pop", "delay": 0.52},
+				],
+				"text": "One plant drowns. It was a cactus. A CACTUS.",
+			},
+		},
+	}
+	var key_data: Dictionary = scenes.get(key, {})
+	return key_data.get(outcome, {
+		"bg": default_bg,
+		"props": [],
+		"text": "",
+	})

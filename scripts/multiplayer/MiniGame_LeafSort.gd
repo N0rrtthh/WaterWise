@@ -1,4 +1,4 @@
-﻿class_name MiniGameLeafSort
+class_name MiniGameLeafSort
 extends Node2D
 
 ## 
@@ -436,7 +436,9 @@ func _process(delta: float) -> void:
 		var viewport = get_viewport()
 		if viewport:
 			var mouse_x: float = viewport.get_mouse_position().x
-			bucket.position.x = clampf(mouse_x, 50, screen_size.x - 50)
+			var target_x: float = clampf(mouse_x, 50, screen_size.x - 50)
+			# Smooth movement instead of instant snap
+			bucket.position.x = lerp(bucket.position.x, target_x, delta * 15.0)
 
 func _update_score_display() -> void:
 	var global_score: int = GameManager.get_global_score() if GameManager else local_score

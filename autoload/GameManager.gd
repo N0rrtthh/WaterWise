@@ -713,11 +713,20 @@ func _begin_multiplayer_session_rpc() -> void:
 # MULTIPLAYER MINIGAME PROGRESSION
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-# Multiplayer minigame pool (3 dual-mode co-op games)
+# Multiplayer minigame pool (all cooperative water-themed games)
 var multiplayer_minigames: Array[String] = [
-	"MiniGame_WaterHarvest",
-	"MiniGame_GreywaterSort",
-	"MiniGame_LeafSort"
+	"MP_CatchRainAquarium",
+	"MP_CatchTheRain",
+	"MP_CollectDishWater",
+	"MP_CollectLaundryWater",
+	"MP_CollectShowerWater",
+	"MP_FillAquarium",
+	"MP_FilterWater",
+	"MP_FlushToilets",
+	"MP_MopFloor",
+	"MP_WashCar",
+	"MP_WashVegetables",
+	"MP_WaterPlants"
 ]
 
 var multiplayer_game_order: Array[String] = []
@@ -878,7 +887,7 @@ func _load_next_multiplayer_minigame() -> void:
 	print("⚡ Difficulty Multiplier: %.2f" % difficulty_multiplier)
 	
 	# Load the scene
-	var game_path: String = "res://scripts/multiplayer/%s.tscn" % game_name
+	var game_path: String = "res://scenes/multiplayer/%s.tscn" % game_name
 	if ResourceLoader.exists(game_path):
 		transition_to_scene(game_path, 0.25)
 	else:
@@ -1151,6 +1160,8 @@ func complete_minigame(
 	var save_mgr = get_node_or_null("/root/SaveManager")
 	if save_mgr and save_mgr.has_method("record_game_result"):
 		save_mgr.record_game_result(game_name, round_score, accuracy, round_time_seconds)
+		# Note: droplets for SP games are awarded by MiniGameBase.end_game().
+		# Droplets for MP games are awarded by NetworkManager._check_both_completed().
 		if save_mgr.has_method("get_droplets"):
 			water_droplets = int(save_mgr.get_droplets())
 	
@@ -1178,6 +1189,11 @@ func complete_minigame(
 		# This is the RULE-BASED ROLLING WINDOW ALGORITHM in action!
 		if AdaptiveDifficulty:
 			AdaptiveDifficulty.add_performance(accuracy, reaction_time, mistakes, game_name)
+		# Log SP game to SessionLogger for thesis defence export
+		var _session_logger = get_node_or_null("/root/SessionLogger")
+		if _session_logger and _session_logger.has_method("record_sp_game"):
+			var _sp_diff = AdaptiveDifficulty.get_current_difficulty() if AdaptiveDifficulty else "Unknown"
+			_session_logger.record_sp_game(game_name, round_score, accuracy, reaction_time, mistakes, _sp_diff, 0)
 	else:
 		# Multiplayer uses CoopAdaptation (per-player difficulty with sync scoring)
 		# Note: In multiplayer, performance is tracked via submit_score RPC
