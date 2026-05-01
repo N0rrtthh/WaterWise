@@ -16,7 +16,7 @@ var show_hints: bool = true
 var max_water_wasted: float = 100.0
 
 func _ready() -> void:
-	game_name = Localization.tr("fix_leak")
+	game_name = Localization.get_text("fix_leak") if Localization else "Fix the Leak"
 	super._ready()
 
 func _apply_difficulty_settings() -> void:
@@ -46,9 +46,9 @@ func _on_game_start() -> void:
 	_spawn_leaks()
 	print("[FixLeak] Leaks spawned: %d" % leaks.size())
 	_create_tools()
-	# Failsafe: If leaks not clickable or not spawning, force end after 10s
+	# Failsafe: Only triggers if something is truly stuck (well after the real timer)
 	var failsafe_timer = Timer.new()
-	failsafe_timer.wait_time = 10.0
+	failsafe_timer.wait_time = game_duration + 3.0
 	failsafe_timer.one_shot = true
 	failsafe_timer.timeout.connect(func():
 		if fixed_leaks < num_leaks and game_active:

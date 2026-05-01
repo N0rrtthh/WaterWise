@@ -160,6 +160,22 @@ func _spawn_glass():
 	
 	glasses.append(current_glass)
 
+func _input(event: InputEvent) -> void:
+	if not game_active or not current_glass: return
+	if event is InputEventScreenTouch:
+		if event.pressed:
+			is_swiping = true
+			swipe_start = event.position
+		else:
+			if is_swiping:
+				is_swiping = false
+				var direction = event.position - swipe_start
+				if direction.length() > 60 and abs(direction.y) > abs(direction.x):
+					if direction.y < 0:
+						_judge_glass(false)  # Swipe UP = Clean
+					else:
+						_judge_glass(true)   # Swipe DOWN = Dirty
+
 func _process(delta):
 	super._process(delta)
 	if not game_active or not current_glass: return
@@ -167,6 +183,7 @@ func _process(delta):
 	_handle_input()
 
 func _handle_input():
+	# Mouse input (PC only — touch is handled in _input() above)
 	var viewport = get_viewport()
 	if viewport == null: return
 	var mouse_pos = viewport.get_mouse_position()
