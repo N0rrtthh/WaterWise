@@ -436,6 +436,24 @@ func _find_button_recursive(root: Node, names: Array) -> Button:
 ## Dispatch to game-specific AI based on the registered game name.
 func _dispatch_game_strategy(delta: float) -> void:
 	match game_name:
+		"MP_CatchTheRain", "MP_CatchRainAquarium":
+			_play_catcher(delta)
+		"MP_CollectDishWater", "MP_CollectLaundryWater", "MP_CollectShowerWater":
+			_play_mp_drag_collection(delta)
+		"MP_WashVegetables":
+			_play_mp_wash_vegetables(delta)
+		"MP_WaterPlants":
+			_play_mp_water_plants(delta)
+		"MP_FlushToilets":
+			_play_mp_flush_toilets(delta)
+		"MP_FillAquarium":
+			_play_mp_fill_aquarium(delta)
+		"MP_FilterWater":
+			_play_mp_filter_water(delta)
+		"MP_MopFloor":
+			_play_mp_mop_floor(delta)
+		"MP_WashCar":
+			_play_mp_wash_car(delta)
 		"Swipe The Soap":
 			_play_swipe_soap(delta)
 		"Scrub To Save":
@@ -530,6 +548,171 @@ func _play_mp_click_target(_delta: float) -> void:
 			ev_up.pressed = false
 			vp.push_input(ev_up)
 	tap_cooldown = 0.5
+
+func _play_mp_drag_collection(_delta: float) -> void:
+	var g := current_game
+	if not is_instance_valid(g):
+		return
+	var catcher := _get_mp_collection_catcher(g)
+	if catcher == null or not is_instance_valid(catcher):
+		return
+	var target := _get_mp_falling_target(g)
+	if target == null or not is_instance_valid(target):
+		return
+	var viewport_width := get_viewport().get_visible_rect().size.x
+	catcher.position.x = clampf(target.position.x, 50.0, viewport_width - 50.0)
+
+func _get_mp_collection_catcher(g: Node) -> Node2D:
+	var catchers: Array = []
+	if "containers" in g:
+		catchers = g.containers
+	elif "buckets" in g:
+		catchers = g.buckets
+	if catchers.is_empty():
+		return null
+	var best: Node2D = null
+	var lowest_fill := INF
+	for catcher in catchers:
+		if not is_instance_valid(catcher):
+			continue
+		var fill := 0.0
+		if catcher.has_meta("current"):
+			fill = float(catcher.get_meta("current", 0))
+		elif catcher.has_meta("water_level"):
+			fill = float(catcher.get_meta("water_level", 0))
+		if best == null or fill < lowest_fill:
+			best = catcher
+			lowest_fill = fill
+	return best
+
+func _get_mp_falling_target(g: Node) -> Area2D:
+	var best: Area2D = null
+	var best_y := -INF
+	for child in g.get_children():
+		if not child is Area2D:
+			continue
+		var area := child as Area2D
+		if not is_instance_valid(area) or not area.has_meta("velocity"):
+			continue
+		if area.position.y > best_y:
+			best = area
+			best_y = area.position.y
+	return best
+
+func _play_mp_wash_vegetables(_delta: float) -> void:
+	if tap_cooldown > 0.0:
+		return
+	var g := current_game
+	if not is_instance_valid(g):
+		return
+	var sink: Node2D = g.get("sink_area")
+	var vegetables: Array = g.get("vegetables") if "vegetables" in g else []
+	if sink == null or vegetables.is_empty() or not g.has_method("_check_wash_vegetable"):
+		return
+	for vegetable in vegetables:
+		if not is_instance_valid(vegetable):
+			continue
+		g.dragging_vegetable = vegetable
+		vegetable.position = sink.position
+		g.call("_check_wash_vegetable")
+		tap_cooldown = 0.15
+		return
+
+func _play_mp_water_plants(_delta: float) -> void:
+	if tap_cooldown > 0.0:
+		return
+	var g := current_game
+	if not is_instance_valid(g) or not g.has_method("_try_water_plant"):
+		return
+	if int(g.get("available_water")) <= 0:
+		return
+	for plant in g.get("plants"):
+		if not is_instance_valid(plant):
+			continue
+		if plant.get_meta("watered", false):
+			continue
+		g.call("_try_water_plant", plant)
+		tap_cooldown = 0.12
+		return
+
+func _play_mp_flush_toilets(_delta: float) -> void:
+	if tap_cooldown > 0.0:
+		return
+	var g := current_game
+	if not is_instance_valid(g) or not g.has_method("_try_flush"):
+		return
+	if int(g.get("available_water")) <= 0:
+		return
+	for toilet in g.get("toilets"):
+		if not is_instance_valid(toilet):
+			continue
+		if not toilet.get_meta("needs_flush", false):
+			continue
+		g.call("_try_flush", toilet)
+		tap_cooldown = 0.15
+		return
+
+func _play_mp_fill_aquarium(_delta: float) -> void:
+	if tap_cooldown > 0.0:
+		return
+	var g := current_game
+	if not is_instance_valid(g) or not g.has_method("_try_fill"):
+		return
+	if int(g.get("available_water")) <= 0:
+		return
+	var aquarium_level := float(g.get("aquarium_level"))
+	var aquarium_max := float(g.get("aquarium_max"))
+	if aquarium_level >= aquarium_max:
+		return
+	g.call("_try_fill")
+	tap_cooldown = 0.15
+
+func _play_mp_filter_water(_delta: float) -> void:
+	if tap_cooldown > 0.0:
+		return
+	var g := current_game
+	if not is_instance_valid(g) or not g.has_method("_filter_particle"):
+		return
+	for particle in g.get("dirt_particles"):
+		if not is_instance_valid(particle):
+			continue
+		g.call("_filter_particle", particle)
+		tap_cooldown = 0.08
+		return
+
+func _play_mp_mop_floor(_delta: float) -> void:
+	if tap_cooldown > 0.0:
+		return
+	var g := current_game
+	if not is_instance_valid(g) or not g.has_method("_try_mop"):
+		return
+	if int(g.get("available_water")) <= 0:
+		return
+	for tile in g.get("floor_tiles"):
+		if not is_instance_valid(tile):
+			continue
+		if not tile.get_meta("dirty", false):
+			continue
+		g.call("_try_mop", tile)
+		tap_cooldown = 0.15
+		return
+
+func _play_mp_wash_car(_delta: float) -> void:
+	if tap_cooldown > 0.0:
+		return
+	var g := current_game
+	if not is_instance_valid(g) or not g.has_method("_try_wash"):
+		return
+	if int(g.get("available_water")) <= 0:
+		return
+	for section in g.get("car_sections"):
+		if not is_instance_valid(section):
+			continue
+		if not section.get_meta("dirty", false):
+			continue
+		g.call("_try_wash", section)
+		tap_cooldown = 0.15
+		return
 
 func _collect_clickable_nodes(node: Node, out: Array[Node]) -> void:
 	if out.size() >= 5:
