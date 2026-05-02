@@ -376,6 +376,9 @@ func disconnect_multiplayer() -> void:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func set_ready(is_ready: bool) -> void:
+	# Guard: peer may be gone already (e.g. called during disconnect flow)
+	if not multiplayer.multiplayer_peer:
+		return
 	# Set local player ready status
 	var my_peer_id = multiplayer.get_unique_id()
 	

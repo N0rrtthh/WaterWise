@@ -365,6 +365,8 @@ func _on_start_game_pressed() -> void:
 	GameManager.rpc("_load_next_multiplayer_minigame")
 
 func _on_disconnect_pressed() -> void:
+	# Mark lobby closing first so _sync_local_ready skips RPCs and NetworkManager calls
+	_lobby_closing = true
 	if GameManager:
 		GameManager.disconnect_multiplayer()
 	if NetworkManager and NetworkManager.connection_active:
