@@ -174,6 +174,47 @@ func _ready() -> void:
 	# Start the game
 	_start_game()
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# GAME INSTRUCTIONS
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+func get_instructions() -> String:
+	# Return role-specific instructions
+	if my_mode == PlayerMode.MODE_1_COLLECTOR:
+		return """🌧️ RAINWATER COLLECTOR
+
+YOUR ROLE: Catch falling water drops!
+
+🎯 HOW TO PLAY:
+• Move your bucket LEFT/RIGHT with mouse
+• Catch BLUE water drops (good!)
+• AVOID RED acid drops (bad!)
+
+⭐ GOAL: Collect %d drops before time runs out
+
+⚠️ WARNING: Missing water or catching acid loses a life!
+
+💧 Work together with your partner to reach the quota!""" % current_settings.get("quota", 20)
+	else:
+		return """🍃 LEAF CLEANER
+
+YOUR ROLE: Remove dirty leaves from water!
+
+🎯 HOW TO PLAY:
+• CLICK on brown dirty leaves to remove them
+• Leaves float across the screen
+• Clean them before they escape!
+
+⭐ GOAL: Clean %d leaves before time runs out
+
+⚠️ WARNING: Missing leaves loses a life!
+
+💧 Work together with your partner to reach the quota!""" % current_settings.get("quota", 20)
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# GAME SETUP
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 func _preload_scenes() -> void:
 	# Preload the spawnable object scenes.
 	# Use the generic MovingObject scene for all spawnable items
@@ -293,6 +334,10 @@ func _setup_role_ui() -> void:
 	
 	# Update lives display
 	_update_lives_display()
+	
+	# Register with AutoPlayManager
+	if AutoPlayManager and AutoPlayManager.is_auto_play_enabled():
+		AutoPlayManager.register_game(self, "MiniGame_Rain")
 
 func _update_lives_display() -> void:
 	# Update the lives display from GameManager.
@@ -472,15 +517,46 @@ func _create_dynamic_drop(is_acid: bool) -> Area2D:
 	collision.shape = shape
 	drop.add_child(collision)
 	
-	# Add visual (colored circle)
+	# Add visual - IMPROVED WATER DROP SHAPE
 	var visual: Polygon2D = Polygon2D.new()
 	var points: PackedVector2Array = PackedVector2Array()
+	
+	# Create realistic teardrop shape
 	for i in range(16):
 		var angle: float = i * TAU / 16
-		points.append(Vector2(cos(angle) * 20, sin(angle) * 25))
+		var radius_x: float = 18.0 * sin(angle * 0.5)  # Narrower at top
+		var radius_y: float = 22.0
+		points.append(Vector2(radius_x * cos(angle), radius_y * sin(angle) - 5))
+	
 	visual.polygon = points
-	visual.color = Color(1.0, 0.2, 0.2) if is_acid else Color(0.3, 0.6, 1.0)
+	
+	if is_acid:
+		# Acid: Bright red/orange with warning look
+		visual.color = Color(1.0, 0.2, 0.1, 0.95)
+	else:
+		# Water: Beautiful blue with transparency
+		visual.color = Color(0.3, 0.7, 1.0, 0.9)
+	
 	drop.add_child(visual)
+	
+	# Add highlight/shine effect
+	var shine: Polygon2D = Polygon2D.new()
+	var shine_points: PackedVector2Array = PackedVector2Array([
+		Vector2(-6, -12),
+		Vector2(-3, -15),
+		Vector2(0, -12),
+		Vector2(-3, -9)
+	])
+	shine.polygon = shine_points
+	shine.color = Color(1.0, 1.0, 1.0, 0.6)
+	drop.add_child(shine)
+	
+	# Add emoji label for extra clarity
+	var label: Label = Label.new()
+	label.text = "☠️" if is_acid else "💧"
+	label.add_theme_font_size_override("font_size", 24)
+	label.position = Vector2(-12, -30)
+	drop.add_child(label)
 	
 	# Add the MovingObject script
 	if MOVING_OBJECT_SCRIPT:
@@ -500,12 +576,22 @@ func _on_drop_caught(drop: Area2D, is_acid: bool) -> void:
 	if is_acid:
 		# Caught acid - that's bad!
 		print(" Caught acid drop!")
+		
+		# ✨ VISUAL FEEDBACK: Mistake effect
+		play_mistake_effect()
+		
 		if GameManager:
 			GameManager.rpc("report_damage")
 	else:
 		# Caught water - score!
 		local_score += 1
 		print(" Caught water drop! Score: ", local_score)
+		
+		# ✨ VISUAL FEEDBACK: Success effect + score popup
+		play_success_effect()
+		if drop:
+			play_score_popup(1, drop.global_position)
+		animate_score_label()
 		
 		# G-Counter: Submit score to server (this syncs automatically)
 		if GameManager:
@@ -521,9 +607,16 @@ func _on_drop_missed(drop: Area2D, is_special: bool) -> void:
 	if is_special:
 		# Missed acid - that's good!
 		print(" Avoided acid drop!")
+		
+		# ✨ VISUAL FEEDBACK: Success for avoiding acid
+		play_success_effect()
 	else:
 		# Missed water - damage!
 		print(" Missed water drop!")
+		
+		# ✨ VISUAL FEEDBACK: Mistake effect
+		play_mistake_effect()
+		
 		if GameManager:
 			GameManager.rpc("report_damage")
 	
@@ -542,36 +635,66 @@ func _create_dynamic_leaf() -> Area2D:
 	# Add collision shape (larger for easier clicking)
 	var collision: CollisionShape2D = CollisionShape2D.new()
 	var shape: CircleShape2D = CircleShape2D.new()
-	shape.radius = 25.0
+	shape.radius = 30.0
 	collision.shape = shape
 	leaf.add_child(collision)
 	
-	# Add visual (realistic dirty leaf shape)
+	# Add visual - IMPROVED LEAF SHAPE
 	var visual: Polygon2D = Polygon2D.new()
+	# More realistic leaf shape with pointed ends
 	visual.polygon = PackedVector2Array([
-		Vector2(-25, 0),
-		Vector2(-15, -12),
-		Vector2(0, -15),
-		Vector2(15, -12),
-		Vector2(25, 0),
-		Vector2(15, 12),
-		Vector2(0, 15),
-		Vector2(-15, 12)
+		Vector2(-30, 0),    # Left point
+		Vector2(-20, -15),  # Top left curve
+		Vector2(-5, -18),   # Top left
+		Vector2(0, -20),    # Top point
+		Vector2(5, -18),    # Top right
+		Vector2(20, -15),   # Top right curve
+		Vector2(30, 0),     # Right point
+		Vector2(20, 15),    # Bottom right curve
+		Vector2(5, 18),     # Bottom right
+		Vector2(0, 20),     # Bottom point
+		Vector2(-5, 18),    # Bottom left
+		Vector2(-20, 15)    # Bottom left curve
 	])
-	# Dirty brown color
-	visual.color = Color(0.4, 0.3, 0.1, 1.0)
+	# Dirty brown/green color
+	visual.color = Color(0.45, 0.35, 0.15, 1.0)
 	leaf.add_child(visual)
 	
-	# Add dirt spots
+	# Add leaf vein (center line)
+	var vein: Line2D = Line2D.new()
+	vein.add_point(Vector2(0, -18))
+	vein.add_point(Vector2(0, 18))
+	vein.width = 2.0
+	vein.default_color = Color(0.3, 0.2, 0.1, 0.8)
+	leaf.add_child(vein)
+	
+	# Add dirt spots for visual clarity
 	var spot1: Polygon2D = Polygon2D.new()
 	spot1.polygon = PackedVector2Array([
-		Vector2(-5, -5),
-		Vector2(0, -8),
-		Vector2(5, -5),
-		Vector2(0, -2)
+		Vector2(-8, -6),
+		Vector2(-3, -10),
+		Vector2(2, -6),
+		Vector2(-3, -2)
 	])
 	spot1.color = Color(0.2, 0.15, 0.05, 1.0)
 	leaf.add_child(spot1)
+	
+	var spot2: Polygon2D = Polygon2D.new()
+	spot2.polygon = PackedVector2Array([
+		Vector2(5, 4),
+		Vector2(10, 2),
+		Vector2(12, 8),
+		Vector2(7, 10)
+	])
+	spot2.color = Color(0.25, 0.18, 0.08, 1.0)
+	leaf.add_child(spot2)
+	
+	# Add emoji label for extra clarity
+	var label: Label = Label.new()
+	label.text = "🍂"
+	label.add_theme_font_size_override("font_size", 28)
+	label.position = Vector2(-14, -40)
+	leaf.add_child(label)
 	
 	# Add the MovingObject script
 	if MOVING_OBJECT_SCRIPT:
@@ -586,6 +709,12 @@ func _on_leaf_destroyed(leaf: Area2D) -> void:
 	local_score += 1
 	print(" Destroyed leaf! Score: ", local_score)
 	
+	# ✨ VISUAL FEEDBACK: Success effect + score popup
+	play_success_effect()
+	if leaf:
+		play_score_popup(1, leaf.global_position)
+	animate_score_label()
+	
 	# G-Counter: Submit score to server (this syncs automatically)
 	if GameManager:
 		GameManager.rpc("submit_score", 1)
@@ -598,6 +727,10 @@ func _on_leaf_destroyed(leaf: Area2D) -> void:
 func _on_leaf_missed(leaf: Area2D, _is_special: bool) -> void:
 	# Called when P2 misses a leaf (exits screen).
 	print(" Missed leaf!")
+	
+	# ✨ VISUAL FEEDBACK: Mistake effect
+	play_mistake_effect()
+	
 	if GameManager:
 		GameManager.rpc("report_damage")
 	
@@ -620,6 +753,13 @@ func _process(delta: float) -> void:
 	# Update timer display for all players
 	if timer_label:
 		timer_label.text = " " + str(int(max(0, game_timer)))
+		
+		# ✨ VISUAL FEEDBACK: Timer warning when low
+		if game_timer <= 10.0 and game_timer > 0.0:
+			var time_int = int(game_timer)
+			# Flash every second
+			if time_int != int(game_timer + delta):
+				animate_timer_warning()
 	
 	# Check if time ran out (host drives win/lose)
 	if _is_host() and game_timer <= 0 and game_active:
@@ -748,6 +888,10 @@ func _on_team_lost() -> void:
 func _on_life_lost(_remaining: int) -> void:
 	# Called when team loses a life.
 	_update_lives_display()
+	
+	# ✨ VISUAL FEEDBACK: Life lost animation
+	animate_life_lost()
+	play_mistake_effect()
 	
 	# Screen shake effect
 	var tween: Tween = create_tween()

@@ -131,6 +131,46 @@ func _ready() -> void:
 	# Start game
 	_start_game()
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# GAME INSTRUCTIONS
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+func get_instructions() -> String:
+	if my_mode == PlayerMode.MODE_1_COLLECTOR:
+		return """💧 WATER COLLECTOR
+
+YOUR ROLE: Catch falling rainwater drops!
+
+🎯 HOW TO PLAY:
+• Move your bucket LEFT/RIGHT with mouse
+• Catch BLUE water drops
+• Each drop adds to the shared tank!
+
+⭐ GOAL: Collect %d drops together before time runs out
+
+⚠️ WARNING: Missing drops loses a life!
+
+🌧️ Work together with your partner to harvest water!""" % current_settings.get("quota", 20)
+	else:
+		return """🧹 WATER FILTER
+
+YOUR ROLE: Remove dirt from collected water!
+
+🎯 HOW TO PLAY:
+• CLICK on brown dirt particles
+• Dirt floats across the screen
+• Clean the water before it escapes!
+
+⭐ GOAL: Filter %d particles together before time runs out
+
+⚠️ WARNING: Missing dirt loses a life!
+
+🌧️ Work together with your partner to purify water!""" % current_settings.get("quota", 20)
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# GAME SETUP
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 func _get_assigned_mode() -> PlayerMode:
 	# Get the randomly assigned mode for this player.
 	if GameManager and GameManager.has_method("get_my_player_mode"):
@@ -248,6 +288,10 @@ func _start_game() -> void:
 	
 	spawn_timer.start()
 	_update_score_display()
+	
+	# Register with AutoPlayManager
+	if AutoPlayManager and AutoPlayManager.is_auto_play_enabled():
+		AutoPlayManager.register_game(self, "MiniGame_WaterHarvest")
 
 	var runtime_mode := "Collector" if my_mode == PlayerMode.MODE_1_COLLECTOR else "Filter"
 	print("🎮 Water Harvest started! Mode: ", runtime_mode)
@@ -452,6 +496,13 @@ func _on_object_caught(obj: Area2D) -> void:
 
 func _on_water_caught(drop: Area2D) -> void:
 	print("💧 Water drop caught!")
+	
+	# ✨ VISUAL FEEDBACK: Success effect + score popup
+	play_success_effect()
+	if drop:
+		play_score_popup(1, drop.global_position)
+	animate_score_label()
+	
 	if GameManager:
 		GameManager.rpc("submit_score", 1)
 		_update_score_display()
@@ -465,12 +516,23 @@ func _on_water_caught(drop: Area2D) -> void:
 
 func _on_water_missed(drop: Area2D) -> void:
 	print("💔 Missed water drop!")
+	
+	# ✨ VISUAL FEEDBACK: Mistake effect
+	play_mistake_effect()
+	
 	if GameManager:
 		GameManager.rpc("report_damage")
 	drop.queue_free()
 
 func _on_dirt_removed(dirt: Area2D) -> void:
 	print("🧹 Dirt particle removed!")
+	
+	# ✨ VISUAL FEEDBACK: Success effect + score popup
+	play_success_effect()
+	if dirt:
+		play_score_popup(1, dirt.global_position)
+	animate_score_label()
+	
 	if GameManager:
 		GameManager.rpc("submit_score", 1)
 		_update_score_display()
@@ -478,6 +540,10 @@ func _on_dirt_removed(dirt: Area2D) -> void:
 
 func _on_dirt_missed(dirt: Area2D) -> void:
 	print("💔 Missed dirt particle!")
+	
+	# ✨ VISUAL FEEDBACK: Mistake effect
+	play_mistake_effect()
+	
 	if GameManager:
 		GameManager.rpc("report_damage")
 	dirt.queue_free()

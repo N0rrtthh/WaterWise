@@ -89,6 +89,46 @@ func _ready() -> void:
 	_create_pause_ui()
 	_start_game()
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# GAME INSTRUCTIONS
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+func get_instructions() -> String:
+	if is_player_one:
+		return """🪣 BUCKET FILLER
+
+YOUR ROLE: Fill buckets with water!
+
+🎯 HOW TO PLAY:
+• CLICK on empty buckets to fill them
+• Buckets fill up over time
+• Once full, they're ready to empty!
+
+⭐ GOAL: Fill and empty %d buckets together before time runs out
+
+⚠️ WARNING: Work efficiently to avoid wasting time!
+
+💧 Work together - you fill, partner empties!""" % current_settings.get("quota", 20)
+	else:
+		return """🚰 BUCKET EMPTIER
+
+YOUR ROLE: Empty filled buckets!
+
+🎯 HOW TO PLAY:
+• CLICK on full buckets to empty them
+• Wait for your partner to fill them first
+• Each emptied bucket scores a point!
+
+⭐ GOAL: Empty %d buckets together before time runs out
+
+⚠️ WARNING: Work efficiently to avoid wasting time!
+
+💧 Work together - partner fills, you empty!""" % current_settings.get("quota", 20)
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# GAME SETUP
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 func _load_difficulty() -> void:
 	if GameManager:
 		var mult: float = GameManager.difficulty_multiplier
@@ -260,6 +300,13 @@ func _empty_bucket_over_time(index: int) -> void:
 		
 		# Score point for successful emptying
 		local_score += 1
+		
+		# ✨ VISUAL FEEDBACK: Success effect + score popup
+		play_success_effect()
+		var bucket_pos = bucket["node"].global_position if bucket.has("node") else Vector2(screen_size.x / 2, screen_size.y / 2)
+		play_score_popup(1, bucket_pos)
+		animate_score_label()
+		
 		if GameManager:
 			GameManager.rpc("submit_score", 1)
 		rpc("_sync_score_update")
@@ -338,6 +385,10 @@ func _start_game() -> void:
 	
 	_update_lives_display()
 	_update_score_display()
+	
+	# Register with AutoPlayManager
+	if AutoPlayManager and AutoPlayManager.is_auto_play_enabled():
+		AutoPlayManager.register_game(self, "MiniGame_BucketBrigade")
 
 func _update_score_display() -> void:
 	var global_score: int = GameManager.get_global_score() if GameManager else local_score

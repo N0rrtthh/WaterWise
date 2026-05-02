@@ -222,7 +222,17 @@ func _determine_strategy(game_type: String) -> String:
 		"Quick Shower": "quick_shower",
 		"Toilet Tank Fix": "toilet_tank_fix",
 		"Mud Pie Maker": "mud_pie_maker",
-		"Rainwater Harvesting": "tap_targets"
+		"Rainwater Harvesting": "tap_targets",
+		
+		# ═══════════════════════════════════════════════════════════════
+		# MULTIPLAYER GAMES (Main 5)
+		# ═══════════════════════════════════════════════════════════════
+		"CoopMiniGame": "mp_dual_mode",  # Generic fallback
+		"MiniGame_Rain": "mp_rain",
+		"MiniGame_LeafSort": "mp_leaf_sort",
+		"MiniGame_WaterHarvest": "mp_water_harvest",
+		"MiniGame_GreywaterSort": "mp_greywater_sort",
+		"MiniGame_BucketBrigade": "mp_bucket_brigade"
 	}
 	
 	return strategies.get(game_type, "tap_targets")  # Default to tap strategy
@@ -502,12 +512,28 @@ func _dispatch_game_strategy(delta: float) -> void:
 			_play_mud_pie_maker(delta)
 		"Droplet Dash":
 			_play_droplet_dash(delta)
+		# ═══════════════════════════════════════════════════════════════
+		# MULTIPLAYER GAMES (Main 5)
+		# ═══════════════════════════════════════════════════════════════
+		"MiniGame_Rain":
+			_play_mp_rain(delta)
+		"MiniGame_LeafSort":
+			_play_mp_leaf_sort(delta)
+		"MiniGame_WaterHarvest":
+			_play_mp_water_harvest(delta)
+		"MiniGame_GreywaterSort":
+			_play_mp_greywater_sort(delta)
+		"MiniGame_BucketBrigade":
+			_play_mp_bucket_brigade(delta)
 		_:
 			# Fallback: dispatch on strategy string for MP games
 			if auto_play_strategy == "drag_catcher":
 				_play_catcher(delta)
 			elif auto_play_strategy == "click_target":
 				_play_mp_click_target(delta)
+			elif auto_play_strategy.begins_with("mp_"):
+				# Generic multiplayer handler
+				_play_mp_generic(delta)
 			else:
 				_play_generic_tap(delta)
 
@@ -1461,6 +1487,317 @@ func _collect_all_buttons(node: Node) -> Array:
 		result.append_array(_collect_all_buttons(child))
 	return result
 
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# MULTIPLAYER MAIN GAMES (MiniGame_Rain, MiniGame_LeafSort, etc.)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+func _play_mp_rain(_delta: float) -> void:
+	## MiniGame_Rain: Mode 1 = drag bucket, Mode 2 = click leaves
+	var g := current_game
+	if not is_instance_valid(g):
+		return
+	
+	# Check player mode
+	var my_mode = g.get("my_mode")
+	if my_mode == null:
+		return
+	
+	# Mode 1 (Collector): Move bucket to catch water drops
+	if my_mode == 0:  # MODE_1_COLLECTOR
+		_play_mp_rain_collector(g)
+	# Mode 2 (Filter): Click on leaves
+	else:  # MODE_2_FILTER
+		_play_mp_rain_filter(g)
+
+func _play_mp_rain_collector(g: Node) -> void:
+	## Move bucket under falling water drops
+	var bucket = g.get_node_or_null("GameLayer/Bucket")
+	if not bucket:
+		return
+	
+	# Find closest water drop
+	var objects_container = g.get_node_or_null("GameLayer/ObjectsContainer")
+	if not objects_container:
+		return
+	
+	var closest_drop: Node2D = null
+	var closest_dist: float = INF
+	
+	for child in objects_container.get_children():
+		if not is_instance_valid(child):
+			continue
+		if child.name.begins_with("WaterDrop"):
+			var dist = child.global_position.distance_to(bucket.global_position)
+			if dist < closest_dist:
+				closest_dist = dist
+				closest_drop = child
+	
+	# Move bucket toward closest drop
+	if closest_drop:
+		var target_x = closest_drop.global_position.x
+		bucket.global_position.x = move_toward(bucket.global_position.x, target_x, 500.0 * get_process_delta_time())
+
+func _play_mp_rain_filter(g: Node) -> void:
+	## Click on leaves to remove them
+	if tap_cooldown > 0.0:
+		return
+	
+	var objects_container = g.get_node_or_null("GameLayer/ObjectsContainer")
+	if not objects_container:
+		return
+	
+	# Find clickable leaves
+	for child in objects_container.get_children():
+		if not is_instance_valid(child):
+			continue
+		if child.name.begins_with("Leaf") or child.name.begins_with("Dirt"):
+			# Simulate click
+			_simulate_click_on_node(child)
+			tap_cooldown = 0.3
+			return
+
+func _play_mp_leaf_sort(_delta: float) -> void:
+	## MiniGame_LeafSort: P1 = drag bucket, P2 = click leaves
+	var g := current_game
+	if not is_instance_valid(g):
+		return
+	
+	var is_player_one = g.get("is_player_one")
+	if is_player_one == null:
+		return
+	
+	if is_player_one:
+		# Player 1: Move bucket to catch clean leaves
+		_play_mp_leaf_sort_p1(g)
+	else:
+		# Player 2: Click dirty leaves
+		_play_mp_leaf_sort_p2(g)
+
+func _play_mp_leaf_sort_p1(g: Node) -> void:
+	## Move bucket under falling clean leaves
+	var bucket = g.get_node_or_null("GameLayer/Bucket")
+	if not bucket:
+		return
+	
+	var objects_container = g.get_node_or_null("GameLayer/ObjectsContainer")
+	if not objects_container:
+		return
+	
+	var closest_leaf: Node2D = null
+	var closest_dist: float = INF
+	
+	for child in objects_container.get_children():
+		if not is_instance_valid(child):
+			continue
+		if child.name.begins_with("CleanLeaf"):
+			var dist = child.global_position.distance_to(bucket.global_position)
+			if dist < closest_dist:
+				closest_dist = dist
+				closest_leaf = child
+	
+	if closest_leaf:
+		var target_x = closest_leaf.global_position.x
+		bucket.global_position.x = move_toward(bucket.global_position.x, target_x, 500.0 * get_process_delta_time())
+
+func _play_mp_leaf_sort_p2(g: Node) -> void:
+	## Click dirty leaves
+	if tap_cooldown > 0.0:
+		return
+	
+	var objects_container = g.get_node_or_null("GameLayer/ObjectsContainer")
+	if not objects_container:
+		return
+	
+	for child in objects_container.get_children():
+		if not is_instance_valid(child):
+			continue
+		if child.name.begins_with("DirtyLeaf"):
+			_simulate_click_on_node(child)
+			tap_cooldown = 0.3
+			return
+
+func _play_mp_water_harvest(_delta: float) -> void:
+	## MiniGame_WaterHarvest: Mode 1 = drag bucket, Mode 2 = click dirt
+	var g := current_game
+	if not is_instance_valid(g):
+		return
+	
+	var my_mode = g.get("my_mode")
+	if my_mode == null:
+		return
+	
+	if my_mode == 0:  # MODE_1_COLLECTOR
+		_play_mp_rain_collector(g)  # Same as rain collector
+	else:  # MODE_2_FILTER
+		_play_mp_water_harvest_filter(g)
+
+func _play_mp_water_harvest_filter(g: Node) -> void:
+	## Click dirt particles
+	if tap_cooldown > 0.0:
+		return
+	
+	var objects_container = g.get_node_or_null("GameLayer/ObjectsContainer")
+	if not objects_container:
+		return
+	
+	for child in objects_container.get_children():
+		if not is_instance_valid(child):
+			continue
+		if child.name.begins_with("Dirt"):
+			_simulate_click_on_node(child)
+			tap_cooldown = 0.3
+			return
+
+func _play_mp_greywater_sort(_delta: float) -> void:
+	## MiniGame_GreywaterSort: Mode 1 = drag water to tank, Mode 2 = click filters
+	var g := current_game
+	if not is_instance_valid(g):
+		return
+	
+	var my_mode = g.get("my_mode")
+	if my_mode == null:
+		return
+	
+	if my_mode == 0:  # MODE_1_SORTER
+		_play_mp_greywater_sorter(g)
+	else:  # MODE_2_FILTER
+		_play_mp_greywater_filter(g)
+
+func _play_mp_greywater_sorter(g: Node) -> void:
+	## Drag good water to tank
+	if tap_cooldown > 0.0:
+		return
+	
+	var objects_container = g.get_node_or_null("GameLayer/ObjectsContainer")
+	if not objects_container:
+		return
+	
+	# Find good water (not bad)
+	for child in objects_container.get_children():
+		if not is_instance_valid(child):
+			continue
+		if child.name.begins_with("Greywater"):
+			var is_bad = child.get("is_bad")
+			if is_bad == false:
+				# Simulate drag to tank
+				_simulate_click_on_node(child)
+				tap_cooldown = 0.5
+				return
+
+func _play_mp_greywater_filter(g: Node) -> void:
+	## Click filter icons
+	if tap_cooldown > 0.0:
+		return
+	
+	var objects_container = g.get_node_or_null("GameLayer/ObjectsContainer")
+	if not objects_container:
+		return
+	
+	for child in objects_container.get_children():
+		if not is_instance_valid(child):
+			continue
+		if child.name.begins_with("Filter"):
+			_simulate_click_on_node(child)
+			tap_cooldown = 0.4
+			return
+
+func _play_mp_bucket_brigade(_delta: float) -> void:
+	## MiniGame_BucketBrigade: P1 = fill buckets, P2 = empty buckets
+	var g := current_game
+	if not is_instance_valid(g):
+		return
+	
+	if tap_cooldown > 0.0:
+		return
+	
+	var is_player_one = g.get("is_player_one")
+	if is_player_one == null:
+		return
+	
+	var buckets = g.get("buckets")
+	if not buckets or buckets.is_empty():
+		return
+	
+	# P1: Click empty buckets to fill
+	# P2: Click full buckets to empty
+	for bucket_data in buckets:
+		var status = bucket_data.get("status", "")
+		var bucket_node = bucket_data.get("node")
+		
+		if not is_instance_valid(bucket_node):
+			continue
+		
+		if is_player_one and status == "empty":
+			# Fill it
+			_simulate_click_on_node(bucket_node)
+			tap_cooldown = 0.5
+			return
+		elif not is_player_one and status == "full":
+			# Empty it
+			_simulate_click_on_node(bucket_node)
+			tap_cooldown = 0.5
+			return
+
+func _play_mp_generic(_delta: float) -> void:
+	## Generic multiplayer handler - tries to click on interactive objects
+	if tap_cooldown > 0.0:
+		return
+	
+	var g := current_game
+	if not is_instance_valid(g):
+		return
+	
+	# Try to find objects container
+	var objects_container = g.get_node_or_null("GameLayer/ObjectsContainer")
+	if not objects_container:
+		objects_container = g.get_node_or_null("ObjectsContainer")
+	
+	if not objects_container:
+		return
+	
+	# Click first clickable child
+	for child in objects_container.get_children():
+		if not is_instance_valid(child):
+			continue
+		if child.has_method("_input_event") or child.get("input_pickable"):
+			_simulate_click_on_node(child)
+			tap_cooldown = 0.4
+			return
+
+func _simulate_click_on_node(node: Node) -> void:
+	## Simulate a mouse click on a node
+	if not is_instance_valid(node):
+		return
+	
+	# Try input_event signal
+	if node.has_signal("input_event"):
+		var event = InputEventMouseButton.new()
+		event.button_index = MOUSE_BUTTON_LEFT
+		event.pressed = true
+		event.position = node.global_position if node is Node2D else Vector2.ZERO
+		node.emit_signal("input_event", null, event, 0)
+	
+	# Try gui_input signal
+	if node.has_signal("gui_input"):
+		var event = InputEventMouseButton.new()
+		event.button_index = MOUSE_BUTTON_LEFT
+		event.pressed = true
+		event.position = Vector2.ZERO
+		node.emit_signal("gui_input", event)
+	
+	# Try direct method calls
+	if node.has_method("_on_clicked"):
+		node.call("_on_clicked")
+	elif node.has_method("_on_input_event"):
+		var event = InputEventMouseButton.new()
+		event.button_index = MOUSE_BUTTON_LEFT
+		event.pressed = true
+		node.call("_on_input_event", null, event, 0)
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# UTILITY FUNCTIONS
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func _format_duration(_seconds: float) -> String:
 	if _seconds <= 0:
