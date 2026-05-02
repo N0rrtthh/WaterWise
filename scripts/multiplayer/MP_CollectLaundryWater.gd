@@ -12,7 +12,14 @@ var spawn_timer: Timer
 var dragging_container: Area2D = null
 
 func get_instructions() -> String:
-	return "🧺 COLLECT LAUNDRY WATER\n\nCatch water streams from the washing machine!\nCatch 10 streams to win.\nFill containers to send water to your partner.\n\n⚠️ Miss 5 water streams and lose 1 life!\n🎯 Position containers under water streams"
+	return (
+		"🧺 COLLECT LAUNDRY WATER\n\n"
+		+ "Catch water streams from the washing machine!\n"
+		+ "Catch 10 streams to win.\n"
+		+ "Fill containers to send water to your partner.\n\n"
+		+ "⚠️ Miss 5 water streams and lose 1 life!\n"
+		+ "🎯 Position containers under water streams"
+	)
 
 func get_controls_text() -> String:
 	return "🖱️ Drag containers\n🧺 Catch water\n💧 Fill & send"
@@ -50,7 +57,11 @@ func _create_containers() -> void:
 		
 		var visual = Sprite2D.new()
 		visual.name = "Visual"
-		visual.texture = MiniGameAssets.create_bucket_texture(150, 100, Color(0.9, 0.9, 0.9)) # White container
+		visual.texture = MiniGameAssets.create_bucket_texture(
+			150,
+			100,
+			Color(0.9, 0.9, 0.9)
+		)
 		container.add_child(visual)
 		
 		var label = Label.new()
@@ -63,7 +74,12 @@ func _create_containers() -> void:
 		container.input_event.connect(_on_container_input.bind(container))
 		containers.append(container)
 
-func _on_container_input(_viewport: Node, event: InputEvent, _shape_idx: int, container: Area2D) -> void:
+func _on_container_input(
+	_viewport: Node,
+	event: InputEvent,
+	_shape_idx: int,
+	container: Area2D
+) -> void:
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
 		dragging_container = container
 
@@ -71,12 +87,17 @@ func _input(event: InputEvent) -> void:
 	if not game_active:
 		return
 	
-	if event is InputEventMouseButton and not event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+	if (
+		event is InputEventMouseButton
+		and not event.pressed
+		and event.button_index == MOUSE_BUTTON_LEFT
+	):
 		dragging_container = null
 	
 	if event is InputEventMouseMotion and dragging_container:
 		dragging_container.position.x = get_global_mouse_position().x
-		dragging_container.position.x = clamp(dragging_container.position.x, 75, get_viewport_rect().size.x - 75)
+		var max_x := get_viewport_rect().size.x - 75
+		dragging_container.position.x = clamp(dragging_container.position.x, 75, max_x)
 
 func _spawn_water_stream() -> void:
 	var stream = Area2D.new()

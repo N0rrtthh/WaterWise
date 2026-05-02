@@ -186,11 +186,14 @@ func _input(event: InputEvent) -> void:
 	if _is_finishing:
 		return
 	if event is InputEventMouseButton and event.pressed:
-		_advance_page()
+		advance_page()
 		get_viewport().set_input_as_handled()
 	elif event is InputEventScreenTouch and event.pressed:
-		_advance_page()
+		advance_page()
 		get_viewport().set_input_as_handled()
+
+func advance_page() -> void:
+	_advance_page()
 
 func _advance_page() -> void:
 	if _is_animating or _is_finishing:
