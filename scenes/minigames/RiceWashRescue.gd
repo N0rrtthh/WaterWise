@@ -153,12 +153,16 @@ func _process(delta):
 	elif pot_node.position.x < 100:
 		pot_direction = 1
 	
-	# Player controls basin
-	if Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
+	# Player controls basin — always track mouse or touch (no button hold required)
+	# Also works for AutoPlay (which warps mouse X to pot position)
+	var target_x := basin_node.position.x
+	if Input.get_touch_count() > 0:
+		target_x = Input.get_touch_position(0).x
+	else:
 		var viewport = get_viewport()
 		if viewport:
-			var mouse_x = viewport.get_mouse_position().x
-			basin_node.position.x = lerp(basin_node.position.x, mouse_x, 15.0 * delta)
+			target_x = viewport.get_mouse_position().x
+	basin_node.position.x = lerp(basin_node.position.x, target_x, 15.0 * delta)
 	
 	basin_node.position.x = clamp(basin_node.position.x, 100, screen_w - 100)
 	

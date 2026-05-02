@@ -105,8 +105,7 @@ func _process(delta: float) -> void:
 				
 				if spills >= MAX_SPILLS:
 					spills = 0
-					if NetworkManager:
-						NetworkManager.lose_life()
+					report_miss_to_host()
 
 func _on_drop_caught(area: Area2D, drop: Area2D) -> void:
 	if not buckets.has(area):

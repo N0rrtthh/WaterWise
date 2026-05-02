@@ -678,12 +678,12 @@ func _calculate_window_metrics() -> Dictionary:
 	# Normalize standard deviation to penalty range [0.0, 0.2]
 	# High σ → High penalty (erratic timing)
 	# Low σ → Low penalty (consistent timing)
-	# Paper: CP = min(σ / normalizer, 0.2)
-	# Normalizer scaled to current difficulty's time_limit so CP fairly
-	# reflects timing variability RELATIVE to the available time window.
-	# (e.g., σ=2s is very erratic in a 10s game, but normal in a 20s game)
-	var time_limit_ms: float = float(DIFFICULTY_SETTINGS[current_difficulty]["time_limit"]) * 1000.0
-	var consistency_penalty: float = min(std_deviation / time_limit_ms, 0.2)
+	# Paper: CP = min(σ / 5000, 0.2)  — fixed 5000ms normalizer (thesis-specified)
+	# Using a FIXED normalizer ensures the penalty is consistent regardless of
+	# the current difficulty level, so Φ is comparable across difficulty changes.
+	# (Thesis mathematical formulation: Section "Consistency Penalty")
+	const CP_NORMALIZER_MS: float = 5000.0  # Fixed normalizer per thesis formula
+	var consistency_penalty: float = min(std_deviation / CP_NORMALIZER_MS, 0.2)
 	
 	# ═══════════════════════════════════════════════════════════════════════
 	# STEP 4: Calculate Proficiency Index (Φ - Greek letter Phi)
