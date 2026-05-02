@@ -103,6 +103,47 @@ func _ready() -> void:
 	_create_pause_ui()
 	_start_game()
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# GAME INSTRUCTIONS
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+func get_instructions() -> String:
+	if my_mode == PlayerMode.MODE_1_SORTER:
+		return """♻️ GREYWATER SORTER
+
+YOUR ROLE: Sort greywater into the tank!
+
+🎯 HOW TO PLAY:
+• DRAG water drops to the tank
+• GREEN drops are GOOD (safe to reuse)
+• RED drops are BAD (contaminated)
+• Only put GOOD water in the tank!
+
+⭐ GOAL: Sort %d good drops together before time runs out
+
+⚠️ WARNING: Sorting bad water loses a life!
+
+💚 Work together with your partner to reuse water safely!""" % current_settings.get("quota", 20)
+	else:
+		return """⚙️ FILTER ACTIVATOR
+
+YOUR ROLE: Activate water filters!
+
+🎯 HOW TO PLAY:
+• CLICK on filter icons to activate them
+• Filters appear across the screen
+• Each filter cleans the greywater!
+
+⭐ GOAL: Activate %d filters together before time runs out
+
+⚠️ WARNING: Missing filters loses a life!
+
+💚 Work together with your partner to purify water!""" % current_settings.get("quota", 20)
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# GAME SETUP
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 func _get_assigned_mode() -> PlayerMode:
 	if GameManager and GameManager.has_method("get_my_player_mode"):
 		return (
@@ -198,6 +239,10 @@ func _start_game() -> void:
 	)
 	spawn_timer.start()
 	_update_score_display()
+	
+	# Register with AutoPlayManager
+	if AutoPlayManager and AutoPlayManager.is_auto_play_enabled():
+		AutoPlayManager.register_game(self, "MiniGame_GreywaterSort")
 
 func _process(delta: float) -> void:
 	if not game_active or is_paused:
@@ -394,10 +439,21 @@ func _drop_water() -> void:
 	if dropped_in_tank:
 		if is_bad:
 			print("☠️ Sorted BAD water into tank!")
+			
+			# ✨ VISUAL FEEDBACK: Mistake effect
+			play_mistake_effect()
+			
 			if GameManager:
 				GameManager.rpc("report_damage")
 		else:
 			print("♻️ Sorted GOOD water!")
+			
+			# ✨ VISUAL FEEDBACK: Success effect + score popup
+			play_success_effect()
+			if dragging_water:
+				play_score_popup(1, dragging_water.global_position)
+			animate_score_label()
+			
 			if GameManager:
 				GameManager.rpc("submit_score", 1)
 				_update_score_display()
@@ -416,6 +472,13 @@ func _drop_water() -> void:
 
 func _on_filter_activated(filter: Area2D) -> void:
 	print("⚙️ Filter activated!")
+	
+	# ✨ VISUAL FEEDBACK: Success effect + score popup
+	play_success_effect()
+	if filter:
+		play_score_popup(1, filter.global_position)
+	animate_score_label()
+	
 	if GameManager:
 		GameManager.rpc("submit_score", 1)
 		_update_score_display()

@@ -46,6 +46,24 @@ var sp_games: Array = []
 ##              team_success, team_score, sync_score}
 var mp_rounds: Array = []
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# MULTIPLAYER PER-DEVICE RECORDS (Each device records its own metrics)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+## Local player's individual performance in each MP round
+## Each entry: {round_num, game_name, my_score, my_accuracy_pct, my_reaction_time_ms,
+##              my_mistakes, my_difficulty, my_phi, partner_score, team_success,
+##              latency_ms, packet_loss_pct}
+var mp_local_performance: Array = []
+
+## Connection quality metrics per round
+## Each entry: {round_num, latency_ms, packet_loss_pct, sync_events, desyncs}
+var mp_connection_metrics: Array = []
+
+## Network events (disconnects, reconnects, sync issues)
+## Each entry: {elapsed_sec, timestamp, event_type, details}
+var mp_network_events: Array = []
+
 ## Each entry: {scene, elapsed_sec, timestamp}
 var scenes_visited: Array = []
 
@@ -241,6 +259,80 @@ func record_sp_game(
 	print("📋 SP logged #%d %s | Score:%d | Acc:%.0f%% | %s | Φ=%.3f" % [
 		sp_games_count, game_name, score, accuracy * 100.0, difficulty, phi
 	])
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# MP LOCAL PERFORMANCE RECORDING (Per-Device)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+func record_mp_local_round(
+	round_num: int,
+	game_name: String,
+	my_score: int,
+	my_accuracy: float,
+	my_reaction_time_ms: int,
+	my_mistakes: int,
+	my_difficulty: String,
+	my_phi: float,
+	partner_score: int,
+	team_success: bool,
+	latency_ms: float = 0.0,
+	packet_loss_pct: float = 0.0
+) -> void:
+	## Record local player's performance in this MP round
+	var record: Dictionary = {
+		"round_num": round_num,
+		"game_name": game_name,
+		"elapsed_sec": _elapsed(),
+		"timestamp": Time.get_datetime_string_from_system(),
+		# Local metrics
+		"my_score": my_score,
+		"my_accuracy_pct": snapf(my_accuracy * 100.0, 1),
+		"my_reaction_time_ms": my_reaction_time_ms,
+		"my_reaction_time_s": snapf(float(my_reaction_time_ms) / 1000.0, 2),
+		"my_mistakes": my_mistakes,
+		"my_difficulty": my_difficulty,
+		"my_phi": snapf(my_phi, 4),
+		# Team metrics
+		"partner_score": partner_score,
+		"team_success": team_success,
+		"team_score": my_score + partner_score,
+		# Connection metrics
+		"latency_ms": snapf(latency_ms, 1),
+		"packet_loss_pct": snapf(packet_loss_pct, 2)
+	}
+	mp_local_performance.append(record)
+	
+	# Also record connection metrics separately
+	mp_connection_metrics.append({
+		"round_num": round_num,
+		"elapsed_sec": _elapsed(),
+		"latency_ms": snapf(latency_ms, 1),
+		"packet_loss_pct": snapf(packet_loss_pct, 2),
+		"sync_events": 0,
+		"desyncs": 0
+	})
+	
+	print("📋 MP Local P%d #%d %s | MyScore:%d | Acc:%.0f%% | Latency:%.0fms" % [
+		_get_local_player_num(), round_num, game_name, my_score, 
+		my_accuracy * 100.0, latency_ms
+	])
+
+func record_mp_network_event(event_type: String, details: Dictionary = {}) -> void:
+	## Record network events (disconnect, reconnect, desync, etc.)
+	mp_network_events.append({
+		"elapsed_sec": _elapsed(),
+		"timestamp": Time.get_datetime_string_from_system(),
+		"event_type": event_type,
+		"details": details
+	})
+	print("📡 MP Network Event: %s" % event_type)
+
+func _get_local_player_num() -> int:
+	if GameManager:
+		return GameManager.local_player_num
+	elif NetworkManager:
+		return NetworkManager.get_local_player_num()
+	return 0
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # SIGNAL HANDLERS
@@ -577,6 +669,23 @@ func export_session() -> String:
 		"scenes_visited_count": scenes_visited.size()
 	}
 
+	# ── MP Local Performance (Per-Device) ─────────────────────────────
+	var mp_local_summary: Dictionary = {
+		"local_player_num": _get_local_player_num(),
+		"local_peer_id": multiplayer.get_unique_id() if multiplayer.multiplayer_peer else 0,
+		"rounds_played": mp_local_performance.size(),
+		"my_total_score": _calc_mp_local_total_score(),
+		"my_avg_score": _calc_mp_local_avg_score(),
+		"my_avg_accuracy_pct": _calc_mp_local_avg_accuracy(),
+		"my_avg_reaction_time_s": _calc_mp_local_avg_reaction_time(),
+		"my_total_mistakes": _calc_mp_local_total_mistakes(),
+		"team_wins": _count_mp_local_wins(),
+		"win_rate_pct": _calc_mp_local_win_rate(),
+		"avg_latency_ms": _calc_mp_avg_latency(),
+		"avg_packet_loss_pct": _calc_mp_avg_packet_loss(),
+		"network_events_count": mp_network_events.size()
+	}
+
 	# ── Full report ───────────────────────────────────────────────────
 	var report: Dictionary = {
 		"waterwise_session_log": true,
@@ -590,9 +699,13 @@ func export_session() -> String:
 		"gameplay_summary": gameplay,
 		"sp_algorithm": sp_algo,
 		"mp_algorithm": mp_algo,
+		"mp_local_performance": mp_local_summary,
 		"performance": perf_summary,
 		"sp_game_records": sp_games,
 		"mp_round_records": mp_rounds,
+		"mp_local_round_records": mp_local_performance,
+		"mp_connection_metrics": mp_connection_metrics,
+		"mp_network_events": mp_network_events,
 		"scenes_visited": scenes_visited,
 		"performance_snapshots": perf_snapshots
 	}
@@ -984,3 +1097,69 @@ func _calc_mp_win_rate() -> float:
 	if mp_rounds.is_empty():
 		return 0.0
 	return snapf(float(_count_mp_wins()) / float(mp_rounds.size()) * 100.0, 1)
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# MP LOCAL PERFORMANCE HELPERS (Per-Device Metrics)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+func _calc_mp_local_total_score() -> int:
+	var total: int = 0
+	for rec in mp_local_performance:
+		total += int(rec.get("my_score", 0))
+	return total
+
+func _calc_mp_local_avg_score() -> float:
+	if mp_local_performance.is_empty():
+		return 0.0
+	return snapf(float(_calc_mp_local_total_score()) / float(mp_local_performance.size()), 1)
+
+func _calc_mp_local_avg_accuracy() -> float:
+	if mp_local_performance.is_empty():
+		return 0.0
+	var sum: float = 0.0
+	for rec in mp_local_performance:
+		sum += float(rec.get("my_accuracy_pct", 0.0))
+	return snapf(sum / float(mp_local_performance.size()), 1)
+
+func _calc_mp_local_avg_reaction_time() -> float:
+	if mp_local_performance.is_empty():
+		return 0.0
+	var sum: float = 0.0
+	for rec in mp_local_performance:
+		sum += float(rec.get("my_reaction_time_s", 0.0))
+	return snapf(sum / float(mp_local_performance.size()), 2)
+
+func _calc_mp_local_total_mistakes() -> int:
+	var total: int = 0
+	for rec in mp_local_performance:
+		total += int(rec.get("my_mistakes", 0))
+	return total
+
+func _count_mp_local_wins() -> int:
+	var wins: int = 0
+	for rec in mp_local_performance:
+		if rec.get("team_success", false):
+			wins += 1
+	return wins
+
+func _calc_mp_local_win_rate() -> float:
+	if mp_local_performance.is_empty():
+		return 0.0
+	return snapf(float(_count_mp_local_wins()) / float(mp_local_performance.size()) * 100.0, 1)
+
+func _calc_mp_avg_latency() -> float:
+	if mp_connection_metrics.is_empty():
+		return 0.0
+	var sum: float = 0.0
+	for rec in mp_connection_metrics:
+		sum += float(rec.get("latency_ms", 0.0))
+	return snapf(sum / float(mp_connection_metrics.size()), 1)
+
+func _calc_mp_avg_packet_loss() -> float:
+	if mp_connection_metrics.is_empty():
+		return 0.0
+	var sum: float = 0.0
+	for rec in mp_connection_metrics:
+		sum += float(rec.get("packet_loss_pct", 0.0))
+	return snapf(sum / float(mp_connection_metrics.size()), 2)
