@@ -162,6 +162,7 @@ var session_active: bool = false
 var minigames_played_this_session: int = 0
 var local_player_num: int = 0
 var _session_finalized: bool = false
+var _pending_multiplayer_notice: String = ""
 
 # Story chapter thresholds (show story at these game counts)
 var _story_shown_at: Array[int] = []
@@ -386,8 +387,11 @@ func _on_peer_disconnected(peer_id: int) -> void:
 	g_counter.erase(peer_id)
 	if current_game_mode == GameMode.MULTIPLAYER_COOP and session_active and not _session_finalized:
 		session_active = false
-		push_warning("Multiplayer peer disconnected during session. Returning to lobby.")
-		call_deferred("return_to_multiplayer_lobby")
+		var player_label := _get_disconnected_player_label(peer_id)
+		var notice := "%s quit the match." % player_label
+		push_warning(notice)
+		queue_multiplayer_notice(notice)
+		call_deferred("return_to_multiplayer_menu")
 
 func _on_connected_to_server() -> void:
 	print("✅ Connected to server!")
@@ -412,7 +416,9 @@ func _on_server_disconnected() -> void:
 		multiplayer.multiplayer_peer = null
 	if current_game_mode == GameMode.MULTIPLAYER_COOP and session_active:
 		session_active = false
-		call_deferred("return_to_multiplayer_lobby")
+		var notice := "Player 1 (Host) quit the match."
+		queue_multiplayer_notice(notice)
+		call_deferred("return_to_multiplayer_menu")
 
 @rpc("authority", "reliable", "call_local")
 func _sync_game_state(counters: Dictionary, lives: int, diff_mult: float) -> void:
@@ -1399,6 +1405,32 @@ func return_to_multiplayer_lobby() -> void:
 	get_tree().paused = false
 	disconnect_multiplayer()
 	transition_to_scene("res://scenes/ui/MultiplayerLobby.tscn", 0.2)
+
+func return_to_multiplayer_menu() -> void:
+	get_tree().paused = false
+	disconnect_multiplayer()
+	transition_to_scene("res://scenes/ui/MultiplayerMenu.tscn", 0.2)
+
+func queue_multiplayer_notice(message: String) -> void:
+	_pending_multiplayer_notice = message.strip_edges()
+
+func consume_multiplayer_notice() -> String:
+	var message := _pending_multiplayer_notice
+	_pending_multiplayer_notice = ""
+	return message
+
+func _get_disconnected_player_label(peer_id: int) -> String:
+	if NetworkManager:
+		var player_info: Dictionary = NetworkManager.players.get(peer_id, {})
+		var player_name := str(player_info.get("name", "")).strip_edges()
+		if not player_name.is_empty():
+			return player_name
+		var player_num := int(player_info.get("player_num", 0))
+		if player_num > 0:
+			return "Player %d" % player_num
+	if local_player_num == 1:
+		return "Player 2"
+	return "Player %d" % peer_id
 
 func _show_final_score() -> void:
 	print("🎉 Session complete! Showing final score...")
