@@ -101,6 +101,50 @@ func _ready() -> void:
 	_create_pause_ui()
 	_start_game()
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# GAME INSTRUCTIONS
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+func get_instructions() -> String:
+	# Return role-specific instructions
+	if is_player_one:
+		return """🍃 CLEAN LEAF COLLECTOR
+
+YOUR ROLE: Catch falling clean leaves!
+
+🎯 HOW TO PLAY:
+• Move your bucket LEFT/RIGHT with mouse
+• Catch GREEN clean leaves
+• Each leaf you catch helps your team!
+
+⭐ GOAL: Collect %d leaves together before time runs out
+
+⚠️ WARNING: Missing leaves loses a life!
+
+💚 Work together with your partner to reach the quota!""" % current_settings.get("quota", 20)
+	else:
+		return """🍂 DIRTY LEAF REMOVER
+
+YOUR ROLE: Remove dirty leaves from the water!
+
+🎯 HOW TO PLAY:
+• CLICK or SWIPE on brown dirty leaves
+• Leaves float across the screen
+• Remove them before they escape!
+
+⭐ GOAL: Remove %d leaves together before time runs out
+
+⚠️ WARNING: Missing leaves loses a life!
+
+💚 Work together with your partner to reach the quota!""" % current_settings.get("quota", 20)
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# GAME SETUP
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+	
+	_create_pause_ui()
+	_start_game()
+
 func _is_host() -> bool:
 	# Helper: Check if this player is the host
 	return multiplayer.get_unique_id() == 1
@@ -214,6 +258,10 @@ func _start_game() -> void:
 		spawn_timer.wait_time = current_settings["p2_spawn_rate"]
 	
 	spawn_timer.start()
+	
+	# Register with AutoPlayManager
+	if AutoPlayManager and AutoPlayManager.is_auto_play_enabled():
+		AutoPlayManager.register_game(self, "MiniGame_LeafSort")
 
 func _on_spawn_timer_timeout() -> void:
 	if not game_active:
@@ -330,19 +378,61 @@ func _create_dynamic_leaf(is_dirty: bool) -> Area2D:
 	
 	var collision: CollisionShape2D = CollisionShape2D.new()
 	var shape: CircleShape2D = CircleShape2D.new()
-	shape.radius = 25.0
+	shape.radius = 30.0
 	collision.shape = shape
 	leaf.add_child(collision)
 	
+	# IMPROVED LEAF VISUAL
 	var visual: Polygon2D = Polygon2D.new()
+	# More realistic leaf shape
 	visual.polygon = PackedVector2Array([
-		Vector2(-25, 0), Vector2(-15, -15),
-		Vector2(0, -10), Vector2(15, -15),
-		Vector2(25, 0), Vector2(15, 15),
-		Vector2(0, 10), Vector2(-15, 15)
+		Vector2(-28, 0),    # Left point
+		Vector2(-18, -14),  # Top left
+		Vector2(-4, -16),
+		Vector2(0, -18),    # Top point
+		Vector2(4, -16),
+		Vector2(18, -14),   # Top right
+		Vector2(28, 0),     # Right point
+		Vector2(18, 14),    # Bottom right
+		Vector2(4, 16),
+		Vector2(0, 18),     # Bottom point
+		Vector2(-4, 16),
+		Vector2(-18, 14)    # Bottom left
 	])
-	visual.color = Color(0.4, 0.2, 0.1) if is_dirty else Color(0.2, 0.7, 0.3)
+	
+	if is_dirty:
+		# Dirty: Brown with dirt spots
+		visual.color = Color(0.45, 0.3, 0.15, 1.0)
+	else:
+		# Clean: Vibrant green
+		visual.color = Color(0.3, 0.8, 0.4, 1.0)
+	
 	leaf.add_child(visual)
+	
+	# Add leaf vein
+	var vein: Line2D = Line2D.new()
+	vein.add_point(Vector2(0, -16))
+	vein.add_point(Vector2(0, 16))
+	vein.width = 2.0
+	vein.default_color = Color(0.2, 0.6, 0.25, 0.7) if not is_dirty else Color(0.3, 0.2, 0.1, 0.8)
+	leaf.add_child(vein)
+	
+	# Add emoji for clarity
+	var label: Label = Label.new()
+	label.text = "🍂" if is_dirty else "🍃"
+	label.add_theme_font_size_override("font_size", 32)
+	label.position = Vector2(-16, -42)
+	leaf.add_child(label)
+	
+	# Add dirt spots if dirty
+	if is_dirty:
+		var spot: Polygon2D = Polygon2D.new()
+		spot.polygon = PackedVector2Array([
+			Vector2(-6, -4), Vector2(-2, -8),
+			Vector2(2, -4), Vector2(-2, 0)
+		])
+		spot.color = Color(0.2, 0.15, 0.05, 1.0)
+		leaf.add_child(spot)
 	
 	var script: GDScript = load("res://scripts/multiplayer/MovingObject.gd")
 	if script:
@@ -353,6 +443,13 @@ func _create_dynamic_leaf(is_dirty: bool) -> Area2D:
 
 func _on_leaf_caught(leaf: Area2D, _is_special: bool) -> void:
 	local_score += 1
+	
+	# ✨ VISUAL FEEDBACK: Success effect + score popup
+	play_success_effect()
+	if leaf:
+		play_score_popup(1, leaf.global_position)
+	animate_score_label()
+	
 	if GameManager:
 		GameManager.rpc("submit_score", 1)
 		# Also update display immediately
@@ -369,12 +466,22 @@ func _on_leaf_caught(leaf: Area2D, _is_special: bool) -> void:
 	leaf.queue_free()
 
 func _on_leaf_missed(leaf: Area2D, _is_special: bool) -> void:
+	# ✨ VISUAL FEEDBACK: Mistake effect
+	play_mistake_effect()
+	
 	if GameManager:
 		GameManager.rpc("report_damage")
 	leaf.queue_free()
 
 func _on_leaf_destroyed(leaf: Area2D) -> void:
 	local_score += 1
+	
+	# ✨ VISUAL FEEDBACK: Success effect + score popup
+	play_success_effect()
+	if leaf:
+		play_score_popup(1, leaf.global_position)
+	animate_score_label()
+	
 	if GameManager:
 		GameManager.rpc("submit_score", 1)
 		# Also update display immediately
@@ -394,6 +501,9 @@ func _on_leaf_destroyed(leaf: Area2D) -> void:
 	tween.tween_callback(leaf.queue_free)
 
 func _on_dirty_leaf_missed(leaf: Area2D, _is_special: bool) -> void:
+	# ✨ VISUAL FEEDBACK: Mistake effect
+	play_mistake_effect()
+	
 	if GameManager:
 		GameManager.rpc("report_damage")
 	leaf.queue_free()

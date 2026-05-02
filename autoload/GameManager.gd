@@ -1121,6 +1121,13 @@ func start_next_minigame() -> void:
 	_launch_next_minigame_internal()
 
 func _should_show_story() -> bool:
+	# ═══════════════════════════════════════════════════════════════════
+	# CRITICAL FIX: Never show story screens during multiplayer sessions
+	# Story is single-player only - multiplayer has its own flow
+	# ═══════════════════════════════════════════════════════════════════
+	if current_game_mode == GameMode.MULTIPLAYER_COOP:
+		return false
+	
 	for threshold in STORY_THRESHOLDS:
 		if minigames_played_this_session == threshold and threshold not in _story_shown_at:
 			return true
