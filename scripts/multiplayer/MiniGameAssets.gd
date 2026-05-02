@@ -13,13 +13,14 @@ static func create_bucket_texture(width: int, height: int, color: Color) -> Text
 	
 	# Draw bucket shape (trapezoid)
 	for y in range(height):
-		var width_at_y = lerp(float(width) * 0.7, float(width), float(y) / height)
-		var start_x = (width - width_at_y) / 2
-		for x in range(start_x, start_x + width_at_y):
+		var width_at_y = lerp(float(width) * 0.7, float(width), float(y) / float(height))
+		var start_x = int((float(width) - width_at_y) / 2.0)
+		var end_x = int(start_x + width_at_y)
+		for x in range(start_x, end_x):
 			img.set_pixel(x, y, color)
 			
 			# Add border/shading
-			if x == int(start_x) or x == int(start_x + width_at_y) - 1 or y == height - 1:
+			if x == start_x or x == end_x - 1 or y == height - 1:
 				img.set_pixel(x, y, color.darkened(0.4))
 			elif y < 5: # Rim
 				img.set_pixel(x, y, color.lightened(0.2))

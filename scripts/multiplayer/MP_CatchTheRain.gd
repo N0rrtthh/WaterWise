@@ -17,6 +17,7 @@ var bucket: Area2D
 var spawn_timer: Timer
 var drops_caught: int = 0
 var drops_missed: int = 0
+var _layout_ready: bool = false
 
 func get_instructions() -> String:
 	return "Move the bucket with LEFT/RIGHT keys to catch raindrops.\nAvoid missing drops!"
@@ -28,6 +29,7 @@ func _on_multiplayer_ready() -> void:
 	# Setup game when multiplayer is ready
 	game_name = "Catch the Rain"
 	connection_type = "resource_transfer"
+	_connect_viewport_resize()
 	
 	# Set quota for this round (use Rolling Window from GameManager)
 	if GameManager:
@@ -55,7 +57,9 @@ func _on_game_start() -> void:
 func _create_bucket() -> void:
 	# Create the player's bucket
 	bucket = Area2D.new()
-	bucket.position = Vector2(get_viewport_rect().size.x / 2, get_viewport_rect().size.y - 100)
+	bucket.position = Vector2(0, 0)
+	bucket.z_as_relative = false
+	bucket.z_index = 50
 	add_child(bucket)
 	
 	# Collision shape
@@ -65,14 +69,56 @@ func _create_bucket() -> void:
 	collision.shape = shape
 	bucket.add_child(collision)
 	
-	# Visual (Sprite)
+	# Visual (Sprite + fallback shape)
+	var body = Polygon2D.new()
+	body.polygon = PackedVector2Array([
+		Vector2(-50, -20), Vector2(50, -20),
+		Vector2(60, 20), Vector2(-60, 20)
+	])
+	body.color = Color(1.0, 0.6, 0.2, 0.9)
+	body.z_index = -1
+	bucket.add_child(body)
+
+	var rim = Polygon2D.new()
+	rim.polygon = PackedVector2Array([
+		Vector2(-55, -25), Vector2(55, -25),
+		Vector2(55, -15), Vector2(-55, -15)
+	])
+	rim.color = Color(1.0, 0.7, 0.3, 0.95)
+	rim.z_index = -1
+	bucket.add_child(rim)
+
 	var sprite = Sprite2D.new()
-	sprite.texture = MiniGameAssets.create_bucket_texture(100, 40, Color(1.0, 0.6, 0.2)) # Orange bucket
-	sprite.position = Vector2(0, 0)
-	bucket.add_child(sprite)
+	var bucket_texture = MiniGameAssets.create_bucket_texture(100, 40, Color(1.0, 0.6, 0.2))
+	if bucket_texture and bucket_texture.get_width() > 0:
+		sprite.texture = bucket_texture # Orange bucket
+		sprite.position = Vector2(0, 0)
+		bucket.add_child(sprite)
 	
 	# Connect collision
 	bucket.area_entered.connect(_on_bucket_collision)
+	_update_bucket_layout()
+
+func _connect_viewport_resize() -> void:
+	var viewport = get_viewport()
+	if viewport and not viewport.size_changed.is_connected(_on_viewport_size_changed):
+		viewport.size_changed.connect(_on_viewport_size_changed)
+
+func _on_viewport_size_changed() -> void:
+	_update_bucket_layout()
+
+func _update_bucket_layout() -> void:
+	if bucket == null:
+		return
+	var rect = get_viewport_rect()
+	if rect.size.x <= 1.0 or rect.size.y <= 1.0:
+		return
+	var cam = get_viewport().get_camera_2d() if get_viewport() else null
+	var top_left = Vector2.ZERO
+	if cam:
+		top_left = cam.global_position - rect.size * 0.5
+	bucket.position = top_left + Vector2(rect.size.x * 0.5, rect.size.y - 100.0)
+	_layout_ready = true
 
 func _spawn_raindrop() -> void:
 	# Spawn a falling raindrop
@@ -102,6 +148,8 @@ func _spawn_raindrop() -> void:
 func _process(delta: float) -> void:
 	if not game_active:
 		return
+	if not _layout_ready:
+		_update_bucket_layout()
 	
 	# Move bucket with input (Keyboard or Mouse)
 	if bucket:

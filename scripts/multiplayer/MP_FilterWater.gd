@@ -10,10 +10,17 @@ extends MultiplayerMiniGameBase
 const DIRT_SPEED: float = 150.0
 const PARTICLES_PER_WATER: int = 3
 const QUOTA: int = 50  # Team needs 50 points total (shared with P1)
+const AQUARIUM_WIDTH: float = 320.0
+const AQUARIUM_HEIGHT: float = 160.0
+const AQUARIUM_CAPACITY: int = 12
 
 var water_queue: Array = []  # Water units received from P1
 var filtered_count: int = 0
 var dirt_particles: Array = []
+var aquarium: Node2D
+var aquarium_water: Polygon2D
+var aquarium_fill_units: int = 0
+var _layout_ready: bool = false
 
 func get_instructions() -> String:
 	return "Wait for water from your partner.\nClick on dirt particles to filter the water!"
@@ -25,6 +32,8 @@ func _on_multiplayer_ready() -> void:
 	# Setup game when multiplayer is ready
 	game_name = "Filter Water"
 	connection_type = "resource_transfer"
+	_connect_viewport_resize()
+	_create_aquarium()
 	
 	_log("Game ready - Filter water sent by partner!")
 
@@ -44,6 +53,88 @@ func _on_resource_received(_from_player: int, resource_type: String, amount: int
 		
 		# Spawn dirt particles to filter
 		_spawn_dirt_particles(amount * PARTICLES_PER_WATER)
+		aquarium_fill_units = min(AQUARIUM_CAPACITY, aquarium_fill_units + amount)
+		_update_aquarium_fill()
+
+func _create_aquarium() -> void:
+	var screen_size = get_viewport_rect().size
+	aquarium = Node2D.new()
+	aquarium.position = Vector2(screen_size.x * 0.5, screen_size.y - 170)
+	aquarium.z_as_relative = false
+	aquarium.z_index = 20
+	add_child(aquarium)
+
+	var glass = Polygon2D.new()
+	glass.polygon = PackedVector2Array([
+		Vector2(-AQUARIUM_WIDTH * 0.5, -AQUARIUM_HEIGHT * 0.5),
+		Vector2(AQUARIUM_WIDTH * 0.5, -AQUARIUM_HEIGHT * 0.5),
+		Vector2(AQUARIUM_WIDTH * 0.5, AQUARIUM_HEIGHT * 0.5),
+		Vector2(-AQUARIUM_WIDTH * 0.5, AQUARIUM_HEIGHT * 0.5)
+	])
+	glass.color = Color(0.85, 0.95, 1.0, 0.22)
+	aquarium.add_child(glass)
+
+	aquarium_water = Polygon2D.new()
+	aquarium_water.color = Color(0.4, 0.7, 1.0, 0.45)
+	aquarium.add_child(aquarium_water)
+	_update_aquarium_fill()
+
+	var border = Line2D.new()
+	border.width = 4.0
+	border.closed = true
+	border.points = PackedVector2Array([
+		Vector2(-AQUARIUM_WIDTH * 0.5, -AQUARIUM_HEIGHT * 0.5),
+		Vector2(AQUARIUM_WIDTH * 0.5, -AQUARIUM_HEIGHT * 0.5),
+		Vector2(AQUARIUM_WIDTH * 0.5, AQUARIUM_HEIGHT * 0.5),
+		Vector2(-AQUARIUM_WIDTH * 0.5, AQUARIUM_HEIGHT * 0.5)
+	])
+	border.default_color = Color(0.25, 0.45, 0.65, 0.9)
+	aquarium.add_child(border)
+
+	var base = Polygon2D.new()
+	base.polygon = PackedVector2Array([
+		Vector2(-AQUARIUM_WIDTH * 0.5 - 16.0, AQUARIUM_HEIGHT * 0.5),
+		Vector2(AQUARIUM_WIDTH * 0.5 + 16.0, AQUARIUM_HEIGHT * 0.5),
+		Vector2(AQUARIUM_WIDTH * 0.5 + 26.0, AQUARIUM_HEIGHT * 0.5 + 22.0),
+		Vector2(-AQUARIUM_WIDTH * 0.5 - 26.0, AQUARIUM_HEIGHT * 0.5 + 22.0)
+	])
+	base.color = Color(0.3, 0.4, 0.5, 0.9)
+	base.z_index = -1
+	aquarium.add_child(base)
+	_update_aquarium_layout()
+
+func _connect_viewport_resize() -> void:
+	var viewport = get_viewport()
+	if viewport and not viewport.size_changed.is_connected(_on_viewport_size_changed):
+		viewport.size_changed.connect(_on_viewport_size_changed)
+
+func _on_viewport_size_changed() -> void:
+	_update_aquarium_layout()
+
+func _update_aquarium_layout() -> void:
+	if aquarium == null:
+		return
+	var rect = get_viewport_rect()
+	if rect.size.x <= 1.0 or rect.size.y <= 1.0:
+		return
+	var cam = get_viewport().get_camera_2d() if get_viewport() else null
+	var top_left = Vector2.ZERO
+	if cam:
+		top_left = cam.global_position - rect.size * 0.5
+	aquarium.position = top_left + Vector2(rect.size.x * 0.5, rect.size.y - 170.0)
+	_layout_ready = true
+
+func _update_aquarium_fill() -> void:
+	if aquarium_water == null:
+		return
+	var fill_ratio = clamp(float(aquarium_fill_units) / float(AQUARIUM_CAPACITY), 0.0, 1.0)
+	var fill_height = AQUARIUM_HEIGHT * fill_ratio
+	aquarium_water.polygon = PackedVector2Array([
+		Vector2(-AQUARIUM_WIDTH * 0.5 + 8.0, AQUARIUM_HEIGHT * 0.5 - fill_height),
+		Vector2(AQUARIUM_WIDTH * 0.5 - 8.0, AQUARIUM_HEIGHT * 0.5 - fill_height),
+		Vector2(AQUARIUM_WIDTH * 0.5 - 8.0, AQUARIUM_HEIGHT * 0.5 - 8.0),
+		Vector2(-AQUARIUM_WIDTH * 0.5 + 8.0, AQUARIUM_HEIGHT * 0.5 - 8.0)
+	])
 
 func _spawn_dirt_particles(count: int) -> void:
 	# Spawn dirt particles that need to be clicked
@@ -118,6 +209,8 @@ func _check_water_unit_complete() -> void:
 func _process(delta: float) -> void:
 	if not game_active:
 		return
+	if not _layout_ready:
+		_update_aquarium_layout()
 	
 	# Move dirt particles
 	for particle in dirt_particles:
