@@ -112,7 +112,7 @@ var completed_minigames: Array = []
 var current_minigame_index: int = 0
 var minigame_random_bag: Array[String] = []
 var pending_next_minigame_name: String = ""
-var force_full_singleplayer_pool: bool = true
+var force_full_singleplayer_pool: bool = false
 const ALL_SINGLEPLAYER_MINIGAMES: Array = [
 	"RiceWashRescue",
 	"VegetableBath",
@@ -122,6 +122,7 @@ const ALL_SINGLEPLAYER_MINIGAMES: Array = [
 	"MudPieMaker",
 	"CatchTheRain",
 	"CoverTheDrum",
+	"RainwaterHarvesting",
 	"SpotTheSpeck",
 	"FixLeak",
 	"WaterPlant",
@@ -142,7 +143,7 @@ const ALL_SINGLEPLAYER_MINIGAMES: Array = [
 var available_minigames: Array = []
 
 const UNLOCK_ID_TO_MINIGAMES: Dictionary = {
-	"catch_rain": ["CatchTheRain", "CoverTheDrum", "RiceWashRescue"],
+	"catch_rain": ["CatchTheRain", "CoverTheDrum", "RiceWashRescue", "RainwaterHarvesting"],
 	"pipe_puzzle": ["TracePipePath", "PlugTheLeak", "FixLeak", "ToiletTankFix", "TurnOffTap"],
 	"water_sorting": [
 		"GreywaterSorter",
@@ -383,7 +384,7 @@ func _on_peer_connected(peer_id: int) -> void:
 func _on_peer_disconnected(peer_id: int) -> void:
 	print("❌ Player disconnected: ", peer_id)
 	g_counter.erase(peer_id)
-	if current_game_mode == GameMode.MULTIPLAYER_COOP and session_active:
+	if current_game_mode == GameMode.MULTIPLAYER_COOP and session_active and not _session_finalized:
 		session_active = false
 		push_warning("Multiplayer peer disconnected during session. Returning to lobby.")
 		call_deferred("return_to_multiplayer_lobby")
@@ -577,6 +578,93 @@ func _check_both_players_done() -> void:
 	pending_mp_performance.clear()
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# MULTIPLAYER ROUND COMPLETION (GameManager connection path)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# Per-round completion tracking – used when GameManager owns the ENet peer.
+var _mp_round_completions: Dictionary = {}  # {peer_id: {victory, score}}
+
+@rpc("any_peer", "call_local", "reliable")
+func complete_mp_round(victory: bool, score: int) -> void:
+	## Called by each player at end of their minigame (GameManager path).
+	## Host collects both reports then deducts a life if needed and loads next game.
+	if not is_multiplayer_connected:
+		return
+	var sender_id: int = multiplayer.get_remote_sender_id()
+	if sender_id == 0:
+		sender_id = multiplayer.get_unique_id()
+	_mp_round_completions[sender_id] = {"victory": victory, "score": score}
+	if not is_host:
+		return  # Host drives the transition
+	var peer_ids := get_connected_multiplayer_peer_ids()
+	if _mp_round_completions.size() < peer_ids.size():
+		return  # Still waiting for the other player
+	# All players reported — evaluate round
+	var any_win := false
+	for data in _mp_round_completions.values():
+		if data.get("victory", false):
+			any_win = true
+	record_multiplayer_round_result(
+		current_multiplayer_game_name, 0.0, any_win, 0
+	)
+	if not any_win:
+		team_lives = max(0, team_lives - 1)
+		rpc("_sync_team_lives", team_lives)
+	_mp_round_completions.clear()
+	# Brief results window, then advance
+	await get_tree().create_timer(3.5).timeout
+	if is_multiplayer_connected:
+		rpc("_load_next_multiplayer_minigame")
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# COOPERATIVE RESOURCE TRANSFER (GameManager connection path)
+# Used when NetworkManager is not managing the session.
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+signal gm_resource_received(
+	from_player: int, resource_type: String, amount: int, quality: float
+)
+
+@rpc("any_peer", "reliable")
+func send_resource_rpc(
+	resource_type: String, amount: int, quality: float
+) -> void:
+	## Delivers a resource-send event ONLY to the receiving peer (no call_local)
+	## so the sender's _on_resource_received does NOT fire.
+	var from_player: int = multiplayer.get_remote_sender_id()
+	if from_player == 0:
+		from_player = multiplayer.get_unique_id()
+	gm_resource_received.emit(from_player, resource_type, amount, quality)
+
+@rpc("any_peer", "call_local", "reliable")
+func _mp_sync_pause(paused: bool) -> void:
+	## Broadcast pause/resume state to all players on the GameManager connection path.
+	get_tree().paused = paused
+	var scene := get_tree().current_scene
+	if scene:
+		if paused and scene.has_method("_on_remote_pause"):
+			scene.call("_on_remote_pause")
+		elif not paused and scene.has_method("_on_remote_resume"):
+			scene.call("_on_remote_resume")
+
+@rpc("any_peer", "call_local", "reliable")
+func lose_life_rpc() -> void:
+	## Called by a game when the local player misses enough items.
+	## Host deducts a team life and broadcasts to all.
+	if not is_host:
+		return
+	team_lives = max(0, team_lives - 1)
+	print("💔 Team lost a life! Remaining: ", team_lives)
+	rpc("_sync_team_lives", team_lives)
+	if team_lives <= 0:
+		rpc("_announce_team_lost")
+
+@rpc("authority", "call_local", "reliable")
+func sync_player_modes(modes: Dictionary) -> void:
+	## Sync host's player_modes dict to all clients.
+	player_modes = modes
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # TEAM LIVES: DAMAGE REPORTING
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -688,6 +776,7 @@ func reset_multiplayer_game() -> void:
 	player_modes.clear()
 	current_multiplayer_game_name = ""
 	_recorded_multiplayer_round_game = ""
+	_mp_round_completions.clear()
 	
 	if is_host:
 		rpc("_sync_game_state", g_counter, team_lives, difficulty_multiplier)
@@ -713,20 +802,30 @@ func _begin_multiplayer_session_rpc() -> void:
 # MULTIPLAYER MINIGAME PROGRESSION
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-# Multiplayer minigame pool (all cooperative water-themed games)
+# Multiplayer minigame pool — only the 6 "collector/producer" (Mode-1) base games.
+# The paired consumer game for the Mode-2 player is resolved via MULTIPLAYER_GAME_PAIRS.
+const MULTIPLAYER_GAME_PAIRS: Dictionary = {
+	"MP_CatchTheRain":       "MP_FilterWater",
+	"MP_FilterWater":        "MP_CatchTheRain",
+	"MP_CatchRainAquarium":  "MP_FillAquarium",
+	"MP_FillAquarium":       "MP_CatchRainAquarium",
+	"MP_CollectShowerWater": "MP_FlushToilets",
+	"MP_FlushToilets":       "MP_CollectShowerWater",
+	"MP_CollectLaundryWater":"MP_MopFloor",
+	"MP_MopFloor":           "MP_CollectLaundryWater",
+	"MP_CollectDishWater":   "MP_WashCar",
+	"MP_WashCar":            "MP_CollectDishWater",
+	"MP_WashVegetables":     "MP_WaterPlants",
+	"MP_WaterPlants":        "MP_WashVegetables",
+}
+
 var multiplayer_minigames: Array[String] = [
 	"MP_CatchRainAquarium",
 	"MP_CatchTheRain",
 	"MP_CollectDishWater",
 	"MP_CollectLaundryWater",
 	"MP_CollectShowerWater",
-	"MP_FillAquarium",
-	"MP_FilterWater",
-	"MP_FlushToilets",
-	"MP_MopFloor",
-	"MP_WashCar",
 	"MP_WashVegetables",
-	"MP_WaterPlants"
 ]
 
 var multiplayer_game_order: Array[String] = []
@@ -753,6 +852,8 @@ func assign_random_modes() -> void:
 		player_modes[peer_ids[i]] = (i % 2) + 1  # Alternates between 1 and 2
 	
 	print("🎲 Mode assignments: ", player_modes)
+	if is_host and is_multiplayer_connected:
+		rpc("sync_player_modes", player_modes)
 
 func get_my_player_mode() -> int:
 	# Get my assigned mode (1 or 2)
@@ -867,6 +968,11 @@ func _load_next_multiplayer_minigame() -> void:
 	current_minigame_quota = 0
 	_recorded_multiplayer_round_game = ""
 	
+	# Only the host picks and broadcasts the game to avoid shuffle desync.
+	# Non-host peers wait for _load_multiplayer_game() RPC.
+	if not is_host:
+		return
+	
 	# Randomly assign modes for the next game
 	assign_random_modes()
 	
@@ -877,17 +983,33 @@ func _load_next_multiplayer_minigame() -> void:
 		multiplayer_game_index = 0
 		print("🔀 Shuffled multiplayer minigame order: ", multiplayer_game_order)
 	
-	# Get next game
+	# Get next game and broadcast to ALL peers (including self via call_local)
 	var game_name: String = multiplayer_game_order[multiplayer_game_index]
 	multiplayer_game_index += 1
-	current_multiplayer_game_name = game_name
-	
 	print("🎯 Next game: ", game_name)
 	print("❤️ Team Lives: ", team_lives)
 	print("⚡ Difficulty Multiplier: %.2f" % difficulty_multiplier)
-	
-	# Load the scene
-	var game_path: String = "res://scenes/multiplayer/%s.tscn" % game_name
+	rpc("_load_multiplayer_game", game_name)
+
+@rpc("authority", "call_local", "reliable")
+func _load_multiplayer_game(game_name: String) -> void:
+	## Load a specific multiplayer minigame scene on all peers.
+	## Only called by the host after it has selected the game.
+	## Mode-1 players load the base game; Mode-2 players load the paired game
+	## so each player gets a complementary cooperative role.
+	current_multiplayer_game_name = game_name
+	current_minigame_quota = 0
+	_recorded_multiplayer_round_game = ""
+
+	# Resolve which scene to load for this peer.
+	var my_mode: int = get_my_player_mode()
+	var scene_game_name: String = game_name
+	if my_mode == 2 and MULTIPLAYER_GAME_PAIRS.has(game_name):
+		scene_game_name = MULTIPLAYER_GAME_PAIRS[game_name]
+	print("🎮 [%s] Loading scene: %s (my mode: %d)" % [
+		"HOST" if is_host else "CLIENT", scene_game_name, my_mode])
+
+	var game_path: String = "res://scenes/multiplayer/%s.tscn" % scene_game_name
 	if ResourceLoader.exists(game_path):
 		transition_to_scene(game_path, 0.25)
 	else:
@@ -1187,13 +1309,20 @@ func complete_minigame(
 	if current_game_mode == GameMode.SINGLE_PLAYER:
 		# Single-player uses AdaptiveDifficulty (Φ = WMA - CP algorithm)
 		# This is the RULE-BASED ROLLING WINDOW ALGORITHM in action!
+		# IMPORTANT: capture played difficulty BEFORE add_performance() may update it,
+		# so the session log records what difficulty the player actually experienced.
+		var _sp_diff_played = AdaptiveDifficulty.get_current_difficulty() if AdaptiveDifficulty else "Unknown"
 		if AdaptiveDifficulty:
 			AdaptiveDifficulty.add_performance(accuracy, reaction_time, mistakes, game_name)
 		# Log SP game to SessionLogger for thesis defence export
 		var _session_logger = get_node_or_null("/root/SessionLogger")
 		if _session_logger and _session_logger.has_method("record_sp_game"):
-			var _sp_diff = AdaptiveDifficulty.get_current_difficulty() if AdaptiveDifficulty else "Unknown"
-			_session_logger.record_sp_game(game_name, round_score, accuracy, reaction_time, mistakes, _sp_diff, 0)
+			# Fetch actual droplets from SaveManager for accurate logging
+			var _droplets_earned: int = 0
+			var _sm = get_node_or_null("/root/SaveManager")
+			if _sm and _sm.has_method("get_droplets"):
+				_droplets_earned = int(_sm.get_droplets())
+			_session_logger.record_sp_game(game_name, round_score, accuracy, reaction_time, mistakes, _sp_diff_played, _droplets_earned)
 	else:
 		# Multiplayer uses CoopAdaptation (per-player difficulty with sync scoring)
 		# Note: In multiplayer, performance is tracked via submit_score RPC

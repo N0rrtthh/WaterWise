@@ -83,7 +83,54 @@ func _ready() -> void:
 			Callable(self, "_on_button_pressed_anim")
 			.bind(quit_button))
 
+	# Auto-play toggle — only visible when dev mode is enabled
+	var _sm = get_node_or_null("/root/SaveManager")
+	if _sm and bool(_sm.get_setting("dev_mode", false)):
+		_create_autoplay_toggle()
+
 	set_process(false)
+
+## Creates the AutoPlay toggle button overlay in the bottom-left of the main menu.
+## Pressing it toggles AutoPlayManager.auto_play_enabled for the next single-player session.
+func _create_autoplay_toggle() -> void:
+	# Container anchored bottom-left
+	var container := HBoxContainer.new()
+	container.name = "AutoPlayToggleContainer"
+	container.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+	container.position = Vector2(24, -60)
+	container.add_theme_constant_override("separation", 10)
+	add_child(container)
+
+	# Indicator dot
+	var dot := Label.new()
+	dot.name = "AutoPlayDot"
+	var is_on: bool = AutoPlayManager.is_auto_play_enabled() if AutoPlayManager else false
+	dot.text = "●"
+	dot.add_theme_font_size_override("font_size", 18)
+	dot.add_theme_color_override("font_color",
+		Color(0.2, 0.9, 0.3) if is_on else Color(0.55, 0.55, 0.55))
+	container.add_child(dot)
+
+	# Toggle button
+	var btn := Button.new()
+	btn.name = "AutoPlayToggleBtn"
+	btn.text = "🤖 Auto-Play: %s" % ("ON" if is_on else "OFF")
+	btn.add_theme_font_size_override("font_size", 16)
+	btn.custom_minimum_size = Vector2(190, 40)
+	btn.tooltip_text = "Enable automated gameplay for single-player performance testing"
+	container.add_child(btn)
+
+	btn.pressed.connect(func():
+		if not AutoPlayManager:
+			return
+		var enabled: bool = not AutoPlayManager.is_auto_play_enabled()
+		AutoPlayManager.set_auto_play_enabled(enabled)
+		btn.text = "🤖 Auto-Play: %s" % ("ON" if enabled else "OFF")
+		dot.add_theme_color_override("font_color",
+			Color(0.2, 0.9, 0.3) if enabled else Color(0.55, 0.55, 0.55))
+		if AudioManager:
+			AudioManager.play_click()
+	)
 
 func _ensure_fullscreen_backdrop() -> void:
 	var backdrop = get_node_or_null("RuntimeBackdrop") as ColorRect
@@ -116,9 +163,13 @@ func _on_language_changed(_new_lang: String) -> void:
 	_update_translations()
 
 func _animate_entrance() -> void:
-	modulate.a = 0.0
-	var tween = create_tween()
-	tween.tween_property(self, "modulate:a", 1.0, 0.8)
+	# Fade in only the UI panel — background/waves stay solid the whole time
+	# so no colored "lines" flash before the dark background appears.
+	var ui_node = get_node_or_null("UI")
+	if ui_node:
+		ui_node.modulate.a = 0.0
+		var tween = create_tween()
+		tween.tween_property(ui_node, "modulate:a", 1.0, 0.6)
 
 
 func _place_main_character_in_view() -> void:

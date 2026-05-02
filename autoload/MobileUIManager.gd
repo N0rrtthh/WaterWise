@@ -278,6 +278,8 @@ func _on_current_scene_changed(scene_root: Node) -> void:
 
 
 func _on_tree_changed() -> void:
+	if not is_inside_tree():
+		return
 	var tree = get_tree()
 	if not tree:
 		return

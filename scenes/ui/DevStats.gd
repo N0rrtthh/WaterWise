@@ -26,7 +26,9 @@ const COL_ACCENT    := Color(0.20, 0.80, 0.60, 1.0)
 var _scroll: ScrollContainer
 var _vbox: VBoxContainer
 var _export_btn: Button
+var _export_txt_btn: Button
 var _export_status_lbl: Label
+var _dir_input: LineEdit
 var _refresh_timer: Timer
 
 # Section labels that need live refresh
@@ -117,10 +119,10 @@ func _build_ui() -> void:
 	margin_wrap.add_child(_vbox)
 	_scroll.add_child(margin_wrap)
 
-	# Export bar at bottom
+	# Export bar at bottom (two rows: dir picker + export buttons)
 	var export_bar := PanelContainer.new()
 	export_bar.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
-	export_bar.offset_top = -80.0
+	export_bar.offset_top = -138.0
 	var ebar_style := StyleBoxFlat.new()
 	ebar_style.bg_color = Color(0.08, 0.12, 0.22, 1.0)
 	ebar_style.border_color = COL_ACCENT
@@ -132,31 +134,85 @@ func _build_ui() -> void:
 	export_bar.add_theme_stylebox_override("panel", ebar_style)
 	add_child(export_bar)
 
-	var ebar_hbox := HBoxContainer.new()
-	ebar_hbox.add_theme_constant_override("separation", 16)
-	export_bar.add_child(ebar_hbox)
+	var ebar_vbox := VBoxContainer.new()
+	ebar_vbox.add_theme_constant_override("separation", 8)
+	export_bar.add_child(ebar_vbox)
+
+	# ── Row 1: export directory picker ──────────────────────────────
+	var dir_row := HBoxContainer.new()
+	dir_row.add_theme_constant_override("separation", 10)
+	ebar_vbox.add_child(dir_row)
+
+	var dir_lbl := Label.new()
+	dir_lbl.text = "📁 Save to:"
+	dir_lbl.add_theme_font_size_override("font_size", 14)
+	dir_lbl.add_theme_color_override("font_color", COL_MUTED)
+	dir_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	dir_row.add_child(dir_lbl)
+
+	_dir_input = LineEdit.new()
+	var sl_node: Node = get_node_or_null("/root/SessionLogger")
+	_dir_input.text = sl_node.export_dir if sl_node else "user://session_logs/"
+	_dir_input.placeholder_text = "e.g. user://session_logs/ or /sdcard/Documents/"
+	_dir_input.custom_minimum_size = Vector2(420, 36)
+	_dir_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_dir_input.add_theme_font_size_override("font_size", 13)
+	dir_row.add_child(_dir_input)
+
+	var change_dir_btn := Button.new()
+	change_dir_btn.text = "✔ Apply"
+	change_dir_btn.custom_minimum_size = Vector2(100, 36)
+	change_dir_btn.add_theme_font_size_override("font_size", 14)
+	change_dir_btn.pressed.connect(_on_change_dir_pressed)
+	dir_row.add_child(change_dir_btn)
+
+	var reset_dir_btn := Button.new()
+	reset_dir_btn.text = "↺ Reset"
+	reset_dir_btn.custom_minimum_size = Vector2(90, 36)
+	reset_dir_btn.add_theme_font_size_override("font_size", 14)
+	reset_dir_btn.pressed.connect(func():
+		var _sl: Node = get_node_or_null("/root/SessionLogger")
+		if _sl and _sl.has_method("set_export_dir"):
+			_sl.set_export_dir("")
+			_dir_input.text = _sl.export_dir
+			_export_status_lbl.text = "↺ Reset to default: %s" % _sl.export_dir
+			_export_status_lbl.add_theme_color_override("font_color", COL_MUTED)
+	)
+	dir_row.add_child(reset_dir_btn)
+
+	# ── Row 2: export buttons + status ───────────────────────────────
+	var btn_row := HBoxContainer.new()
+	btn_row.add_theme_constant_override("separation", 12)
+	ebar_vbox.add_child(btn_row)
 
 	_export_btn = Button.new()
-	_export_btn.text = "💾 EXPORT SESSION LOG (JSON)"
-	_export_btn.custom_minimum_size = Vector2(280, 50)
-	_export_btn.add_theme_font_size_override("font_size", 18)
+	_export_btn.text = "💾 Export JSON"
+	_export_btn.custom_minimum_size = Vector2(190, 46)
+	_export_btn.add_theme_font_size_override("font_size", 17)
 	_export_btn.pressed.connect(_on_export_pressed)
-	ebar_hbox.add_child(_export_btn)
+	btn_row.add_child(_export_btn)
+
+	_export_txt_btn = Button.new()
+	_export_txt_btn.text = "📄 Export TXT"
+	_export_txt_btn.custom_minimum_size = Vector2(190, 46)
+	_export_txt_btn.add_theme_font_size_override("font_size", 17)
+	_export_txt_btn.pressed.connect(_on_export_txt_pressed)
+	btn_row.add_child(_export_txt_btn)
 
 	_export_status_lbl = Label.new()
-	_export_status_lbl.text = "No export yet. Press EXPORT to save."
+	_export_status_lbl.text = "No export yet. Choose a format above."
 	_export_status_lbl.add_theme_font_size_override("font_size", 14)
 	_export_status_lbl.add_theme_color_override("font_color", COL_MUTED)
 	_export_status_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_export_status_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD
-	ebar_hbox.add_child(_export_status_lbl)
+	btn_row.add_child(_export_status_lbl)
 
-	# Refresh hint
 	var refresh_hint := Label.new()
 	refresh_hint.text = "Auto-refreshes every 1s"
 	refresh_hint.add_theme_font_size_override("font_size", 12)
 	refresh_hint.add_theme_color_override("font_color", COL_MUTED)
-	ebar_hbox.add_child(refresh_hint)
+	refresh_hint.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	btn_row.add_child(refresh_hint)
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # POPULATE ALL SECTIONS
@@ -410,8 +466,8 @@ func _fill_mp_table(sl: Node) -> void:
 	_mp_table_vbox.add_child(_make_separator())
 
 	for r in records:
-		var p1d := r.get("p1", {})
-		var p2d := r.get("p2", {})
+		var p1d: Dictionary = r.get("p1", {})
+		var p2d: Dictionary = r.get("p2", {})
 		var line := "%-3d|  %-10d|  %-10d|  %-6s|  %-6.1f|  %-10.4f|  %-9s|  %-9s" % [
 			int(r.get("round_num", 0)),
 			int(p1d.get("score", 0)),
@@ -589,17 +645,35 @@ func _on_refresh_tick() -> void:
 # ACTIONS
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+func _on_change_dir_pressed() -> void:
+	if AudioManager:
+		AudioManager.play_click()
+	var new_dir: String = _dir_input.text.strip_edges()
+	if new_dir.is_empty():
+		_export_status_lbl.text = "⚠️ Path cannot be empty — use ↺ Reset to restore default."
+		_export_status_lbl.add_theme_color_override("font_color", COL_WARN)
+		return
+	var sl: Node = get_node_or_null("/root/SessionLogger")
+	if sl and sl.has_method("set_export_dir"):
+		sl.set_export_dir(new_dir)
+		_dir_input.text = sl.export_dir  # reflect normalised path (trailing /)
+		_export_status_lbl.text = "✅ Export dir set to: %s" % sl.export_dir
+		_export_status_lbl.add_theme_color_override("font_color", COL_GOOD)
+	else:
+		_export_status_lbl.text = "❌ SessionLogger not found"
+		_export_status_lbl.add_theme_color_override("font_color", COL_BAD)
+
 func _on_export_pressed() -> void:
 	if AudioManager:
 		AudioManager.play_click()
 	_export_btn.disabled = true
-	_export_status_lbl.text = "Exporting…"
+	_export_status_lbl.text = "Exporting JSON…"
 
 	var sl: Node = get_node_or_null("/root/SessionLogger")
 	if sl:
 		var path: String = sl.export_session()
 		if path.length() > 0:
-			_export_status_lbl.text = "✅ Saved: %s" % path
+			_export_status_lbl.text = "✅ JSON saved: %s" % path
 			_export_status_lbl.add_theme_color_override("font_color", COL_GOOD)
 		else:
 			_export_status_lbl.text = "❌ Export failed — check console"
@@ -609,6 +683,27 @@ func _on_export_pressed() -> void:
 		_export_status_lbl.add_theme_color_override("font_color", COL_BAD)
 
 	_export_btn.disabled = false
+
+func _on_export_txt_pressed() -> void:
+	if AudioManager:
+		AudioManager.play_click()
+	_export_txt_btn.disabled = true
+	_export_status_lbl.text = "Exporting TXT…"
+
+	var sl: Node = get_node_or_null("/root/SessionLogger")
+	if sl and sl.has_method("export_session_txt"):
+		var path: String = sl.export_session_txt()
+		if path.length() > 0:
+			_export_status_lbl.text = "✅ TXT saved: %s" % path
+			_export_status_lbl.add_theme_color_override("font_color", COL_GOOD)
+		else:
+			_export_status_lbl.text = "❌ TXT export failed — check console"
+			_export_status_lbl.add_theme_color_override("font_color", COL_BAD)
+	else:
+		_export_status_lbl.text = "❌ SessionLogger.export_session_txt() not available"
+		_export_status_lbl.add_theme_color_override("font_color", COL_BAD)
+
+	_export_txt_btn.disabled = false
 
 func _on_back_pressed() -> void:
 	if AudioManager:
@@ -642,12 +737,12 @@ func _gkv(grid: GridContainer, key: String, value: String, val_color: Color = CO
 	v.add_theme_color_override("font_color", val_color)
 	grid.add_child(v)
 
-func _make_label(text: String, size: int = 14, col: Color = COL_TEXT) -> Label:
+func _make_label(text: String, font_sz: int = 14, col: Color = COL_TEXT) -> Label:
 	var lbl := Label.new()
 	lbl.text = text
 	if FONT_BODY:
 		lbl.add_theme_font_override("font", FONT_BODY)
-	lbl.add_theme_font_size_override("font_size", size)
+	lbl.add_theme_font_size_override("font_size", font_sz)
 	lbl.add_theme_color_override("font_color", col)
 	return lbl
 
@@ -671,7 +766,7 @@ func _make_separator() -> HSeparator:
 func _fps_color(fps: float) -> Color:
 	if fps >= 60.0:
 		return COL_GOOD
-	elif fps >= 30.0:
+	if fps >= 30.0:
 		return COL_WARN
 	return COL_BAD
 
@@ -685,6 +780,6 @@ func _diff_color(diff: String) -> Color:
 func _phi_color(phi: float) -> Color:
 	if phi < 0.5:
 		return COL_BAD
-	elif phi > 0.85:
+	if phi > 0.85:
 		return COL_GOOD
 	return COL_WARN

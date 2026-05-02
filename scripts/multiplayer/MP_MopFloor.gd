@@ -9,6 +9,7 @@ var available_water: int = 0
 var tiles_mopped: int = 0
 var floor_tiles: Array = []
 var dirty_timer: Timer
+var water_indicator_label: Label
 
 func get_instructions() -> String:
 	return "🧹 MOP FLOOR\n\nClick dirty tiles to mop them with laundry water!\nTiles get dirty every 5 seconds.\n\n⚠️ Let 10 tiles stay dirty and lose 1 life!\n💧 Need water from partner to mop"
@@ -49,6 +50,7 @@ func _create_water_indicator() -> void:
 	label.text = "💧 x 0"
 	label.add_theme_font_size_override("font_size", 32)
 	vbox.add_child(label)
+	water_indicator_label = label
 
 func _create_floor() -> void:
 	for row in range(4):
@@ -94,8 +96,7 @@ func _make_tile_dirty() -> void:
 	var dirty_count = floor_tiles.filter(func(t): return t.get_meta("dirty", false)).size()
 	if dirty_count >= MAX_DIRTY_TILES:
 		_log("💩 Too many dirty tiles - lose 1 life!")
-		if NetworkManager:
-			NetworkManager.lose_life()
+		report_miss_to_host()
 		_clean_all_tiles()
 
 func _clean_all_tiles() -> void:
@@ -135,9 +136,8 @@ func _on_resource_received(_from_player: int, resource_type: String, amount: int
 		_log("📥 Received %d laundry water (Total: %d)" % [amount, available_water])
 
 func _update_water_display() -> void:
-	var label = get_node_or_null("PanelContainer/VBoxContainer/WaterLabel")
-	if label:
-		label.text = "💧 x %d" % available_water
+	if water_indicator_label:
+		water_indicator_label.text = "💧 x %d" % available_water
 
 func _on_game_over() -> void:
 	dirty_timer.stop()

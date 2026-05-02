@@ -40,6 +40,11 @@ PerformanceProfiler="*res://autoload/PerformanceProfiler.gd"
 NetworkFaultSimulator="*res://autoload/NetworkFaultSimulator.gd"
 ButtonAnimator="*res://autoload/ButtonAnimator.gd"
 SessionLogger="*res://autoload/SessionLogger.gd"
+AutoPlayManager="*res://autoload/AutoPlayManager.gd"
+
+[debug]
+
+gdscript/warnings/max_line_length=0
 
 [display]
 

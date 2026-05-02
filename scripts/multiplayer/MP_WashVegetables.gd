@@ -179,8 +179,7 @@ func _on_vegetable_missed() -> void:
 	if vegetables_missed >= MAX_MISSES:
 		_log("💔 Too many misses - lose 1 life!")
 		vegetables_missed = 0  # Reset counter
-		if NetworkManager:
-			NetworkManager.lose_life()  # Lose shared life
+		report_miss_to_host()  # Lose shared life
 
 func _play_wash_effect(pos: Vector2) -> void:
 	var particles = CPUParticles2D.new()

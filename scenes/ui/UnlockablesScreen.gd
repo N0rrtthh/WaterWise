@@ -86,6 +86,7 @@ var title_label: Label
 var currency_label: Label
 var back_button: Button
 var _selected_accessory_id: String = "character_default"
+var _selected_character_id: String = "droppy_blue"
 var _pool_floats: Array[Node2D] = []
 var _palm_leaves: Array[Polygon2D] = []
 var _waterpark_ambient_tweens: Array[Tween] = []
@@ -140,6 +141,8 @@ func _sync_from_save_manager() -> void:
 		_selected_accessory_id = str(save_mgr.get_selected_accessory())
 	if not _is_accessory_unlocked_local(_selected_accessory_id):
 		_selected_accessory_id = "character_default"
+	if save_mgr.has_method("get_selected_character"):
+		_selected_character_id = str(save_mgr.get_selected_character())
 
 	# Sync decorations
 	for i in range(decorations_data.size()):
@@ -694,11 +697,31 @@ func _create_character_card(data: Dictionary) -> PanelContainer:
 	# Cost/Status
 	if data.unlocked:
 		var status = Label.new()
-		status.text = _loc("shop_owned", "✅ OWNED")
+		if str(data.id) == _selected_character_id:
+			status.text = _loc("shop_active", "⭐ ACTIVE")
+			status.add_theme_color_override("font_color", Color(0.9, 0.7, 0.1))
+		else:
+			status.text = _loc("shop_owned", "✅ OWNED")
+			status.add_theme_color_override("font_color", Color(0.3, 0.7, 0.4))
 		status.add_theme_font_size_override("font_size", 14)
-		status.add_theme_color_override("font_color", Color(0.3, 0.7, 0.4))
 		status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		vbox.add_child(status)
+		if str(data.id) != _selected_character_id:
+			var use_btn = Button.new()
+			use_btn.text = _loc("shop_use", "▶️ Use")
+			use_btn.custom_minimum_size = Vector2(100, 32)
+			var use_style = StyleBoxFlat.new()
+			use_style.bg_color = Color(0.9, 0.55, 0.1)
+			use_style.corner_radius_top_left = 8
+			use_style.corner_radius_top_right = 8
+			use_style.corner_radius_bottom_left = 8
+			use_style.corner_radius_bottom_right = 8
+			use_btn.add_theme_stylebox_override("normal", use_style)
+			use_btn.add_theme_stylebox_override("hover", use_style)
+			use_btn.add_theme_font_size_override("font_size", 14)
+			use_btn.add_theme_color_override("font_color", Color.WHITE)
+			use_btn.pressed.connect(_on_use_character.bind(str(data.id)))
+			vbox.add_child(use_btn)
 	else:
 		var buy_btn = Button.new()
 		buy_btn.text = "💧 " + str(data.cost)
@@ -819,7 +842,7 @@ func _create_minigame_card(data: Dictionary) -> PanelContainer:
 	# Cost/Status
 	if data.unlocked:
 		var status = Label.new()
-		status.text = _loc("shop_unlocked", "✅ UNLOCKED")
+		status.text = _loc("shop_in_rotation", "✅ IN ROTATION")
 		status.add_theme_font_size_override("font_size", 14)
 		status.add_theme_color_override("font_color", Color(0.3, 0.7, 0.4))
 		status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -885,11 +908,31 @@ func _create_accessory_card(data: Dictionary) -> PanelContainer:
 
 	if data.unlocked:
 		var status = Label.new()
-		status.text = _loc("shop_owned", "✅ OWNED")
+		if str(data.id) == _selected_accessory_id:
+			status.text = _loc("shop_equipped", "⭐ EQUIPPED")
+			status.add_theme_color_override("font_color", Color(0.9, 0.7, 0.1))
+		else:
+			status.text = _loc("shop_owned", "✅ OWNED")
+			status.add_theme_color_override("font_color", Color(0.25, 0.7, 0.35))
 		status.add_theme_font_size_override("font_size", 14)
-		status.add_theme_color_override("font_color", Color(0.25, 0.7, 0.35))
 		status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		vbox.add_child(status)
+		if str(data.id) != _selected_accessory_id:
+			var equip_btn = Button.new()
+			equip_btn.text = _loc("shop_equip", "👕 Equip")
+			equip_btn.custom_minimum_size = Vector2(100, 32)
+			var equip_style = StyleBoxFlat.new()
+			equip_style.bg_color = Color(0.9, 0.55, 0.1)
+			equip_style.corner_radius_top_left = 8
+			equip_style.corner_radius_top_right = 8
+			equip_style.corner_radius_bottom_left = 8
+			equip_style.corner_radius_bottom_right = 8
+			equip_btn.add_theme_stylebox_override("normal", equip_style)
+			equip_btn.add_theme_stylebox_override("hover", equip_style)
+			equip_btn.add_theme_font_size_override("font_size", 14)
+			equip_btn.add_theme_color_override("font_color", Color.WHITE)
+			equip_btn.pressed.connect(_on_equip_accessory.bind(str(data.id)))
+			vbox.add_child(equip_btn)
 	else:
 		var buy_btn = Button.new()
 		buy_btn.text = "💧 " + str(data.cost)
@@ -935,6 +978,15 @@ func _on_decorations_tab() -> void:
 		AudioManager.play_click()
 	current_tab = "decorations"
 	_update_tab_styles()
+	_update_display()
+
+func _on_use_character(char_id: String) -> void:
+	if AudioManager:
+		AudioManager.play_click()
+	var save_mgr = get_node_or_null("/root/SaveManager")
+	if save_mgr and save_mgr.has_method("set_selected_character"):
+		save_mgr.set_selected_character(char_id)
+		_selected_character_id = char_id
 	_update_display()
 
 func _on_buy_character(char_id: String) -> void:

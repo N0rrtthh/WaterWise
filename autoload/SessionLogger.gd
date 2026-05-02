@@ -16,7 +16,10 @@ extends Node
 ##   Timeline   → Scene visits, session start/end, duration
 ##
 ## Exported automatically on app quit, and manually via Dev Stats page.
-## Files saved to: user://session_logs/session_YYYY-MM-DD_HH-MM-SS.json
+## JSON + TXT saved to the configured export directory (default: user://session_logs/).
+## Change export path via Settings > Dev Mode > "Log Export Path"
+## or call SessionLogger.set_export_dir(path) at runtime.
+## On Android, set an external path like "/sdcard/Documents/WaterWise/" for easy access.
 ## ═══════════════════════════════════════════════════════════════════
 
 signal log_exported(file_path: String)
@@ -97,6 +100,25 @@ const SNAPSHOT_INTERVAL: float = 5.0
 var _snapshot_timer: float = 0.0
 var _last_exported_path: String = ""
 
+## Configurable export directory.
+## Supports user:// paths or absolute paths (e.g. /sdcard/Documents/WaterWise/).
+## Loaded from SaveManager key "session_log_dir"; defaults to user://session_logs/
+var export_dir: String = "user://session_logs/"
+
+func set_export_dir(dir: String) -> void:
+	## Set a custom export directory and persist it in SaveManager.
+	## Pass an empty string to reset to the default.
+	if dir.strip_edges().is_empty():
+		export_dir = "user://session_logs/"
+	else:
+		export_dir = dir if dir.ends_with("/") else dir + "/"
+	if SaveManager:
+		SaveManager.set_setting("session_log_dir", export_dir)
+	print("\ud83d\udcc1 SessionLogger export dir set to: %s" % export_dir)
+
+func get_export_dir() -> String:
+	return export_dir
+
 ## Helper: snap a float to N decimal places.
 ## Godot has no global snapf() — use float.snapped(step) instead.
 ## Example: snapf(3.14159, 2) → 3.14
@@ -121,10 +143,19 @@ func _ready() -> void:
 		randi() % 9999
 	]
 
+	# Load configurable export directory from SaveManager (deferred so SM is ready)
+	call_deferred("_load_export_dir")
 	# Defer signal connections so all autoloads are ready
 	call_deferred("_connect_signals")
 
 	print("📋 SessionLogger ready — %s" % session_id)
+
+func _load_export_dir() -> void:
+	if SaveManager:
+		var saved_dir: String = SaveManager.get_setting("session_log_dir", "")
+		if not saved_dir.is_empty():
+			export_dir = saved_dir
+	print("📁 SessionLogger export dir: %s" % export_dir)
 
 func _connect_signals() -> void:
 	# AdaptiveDifficulty — SP algorithm events
@@ -567,28 +598,292 @@ func export_session() -> String:
 	}
 
 	# ── Write to file ─────────────────────────────────────────────────
-	var user_dir := DirAccess.open("user://")
-	if user_dir:
-		user_dir.make_dir_recursive("session_logs")
-
 	var dt := Time.get_datetime_string_from_system() \
 		.replace(":", "-").replace(" ", "_")
-	var filename := "user://session_logs/session_%s.json" % dt
-	var file := FileAccess.open(filename, FileAccess.WRITE)
 
-	if file:
-		file.store_string(JSON.stringify(report, "\t"))
-		file.close()
-		_last_exported_path = ProjectSettings.globalize_path(filename)
-		print("📊 SessionLogger export: %s" % _last_exported_path)
+	# Ensure the export directory exists (handles both user:// and absolute paths)
+	_ensure_export_dir(export_dir)
+
+	var json_path := export_dir + "session_%s.json" % dt
+	var txt_path  := export_dir + "session_%s.txt"  % dt
+
+	# Write JSON
+	var json_file := FileAccess.open(json_path, FileAccess.WRITE)
+	if json_file:
+		json_file.store_string(JSON.stringify(report, "\t"))
+		json_file.close()
+		_last_exported_path = ProjectSettings.globalize_path(json_path)
+		print("📊 SessionLogger JSON: %s" % _last_exported_path)
+	else:
+		push_error("SessionLogger: Failed to write JSON: %s" % json_path)
+
+	# Write TXT (human-readable summary alongside the JSON)
+	var txt_written := _write_txt_report(report, txt_path)
+	if txt_written:
+		print("📄 SessionLogger TXT:  %s" % ProjectSettings.globalize_path(txt_path))
+
+	if _last_exported_path != "":
 		log_exported.emit(_last_exported_path)
 		return _last_exported_path
 
-	push_error("SessionLogger: Failed to write %s" % filename)
+	push_error("SessionLogger: Export failed for %s" % json_path)
 	return ""
+
+## Ensure the export directory exists, handling both user:// and absolute paths.
+func _ensure_export_dir(dir_path: String) -> void:
+	if dir_path.begins_with("user://") or dir_path.begins_with("res://"):
+		var da := DirAccess.open("user://")
+		if da:
+			var rel := dir_path.replace("user://", "").trim_suffix("/")
+			da.make_dir_recursive(rel)
+	else:
+		DirAccess.make_dir_recursive_absolute(dir_path.trim_suffix("/"))
+
+## Write a concise human-readable .txt companion to the JSON export.
+func _write_txt_report(report: Dictionary, txt_path: String) -> bool:
+	var f := FileAccess.open(txt_path, FileAccess.WRITE)
+	if not f:
+		return false
+
+	var sep60 := "============================================================"
+	var sep40 := "----------------------------------------"
+
+	f.store_line(sep60)
+	f.store_line("  WATERWISE SESSION LOG")
+	f.store_line(sep60)
+	f.store_line("Session ID   : " + str(report.get("session_id", "")))
+	f.store_line("Start Time   : " + str(report.get("session_start", "")))
+	f.store_line("End Time     : " + str(report.get("session_end", "")))
+	f.store_line("Duration     : " + str(report.get("session_duration_formatted", "")))
+	f.store_line("")
+
+	# Device
+	var dev: Dictionary = report.get("device", {})
+	f.store_line("[DEVICE]")
+	f.store_line("  Platform   : " + str(dev.get("platform", "?")))
+	f.store_line("  Model      : " + str(dev.get("model", "?")))
+	f.store_line("  Processors : " + str(dev.get("processor_count", "?")))
+	f.store_line("  Resolution : %dx%d" % [
+		int(dev.get("screen_width", 0)), int(dev.get("screen_height", 0))
+	])
+	f.store_line("  Godot      : " + str(dev.get("godot_version", "?")))
+	f.store_line("")
+
+	# Gameplay
+	var gp: Dictionary = report.get("gameplay_summary", {})
+	f.store_line("[GAMEPLAY SUMMARY]")
+	f.store_line("  SP Games Played    : " + str(gp.get("sp_games_played", 0)))
+	f.store_line("  SP Total Score     : " + str(gp.get("sp_total_score", 0)))
+	f.store_line("  SP Avg Score       : " + str(gp.get("sp_avg_score", 0.0)))
+	f.store_line("  SP Avg Accuracy    : " + str(gp.get("sp_avg_accuracy_pct", 0.0)) + "%")
+	f.store_line("  SP Avg Reaction    : " + str(gp.get("sp_avg_reaction_time_s", 0.0)) + "s")
+	f.store_line("  MP Rounds Played   : " + str(gp.get("mp_rounds_played", 0)))
+	f.store_line("  MP Total Score     : " + str(gp.get("mp_total_score", 0)))
+	f.store_line("  MP Team Wins       : " + str(gp.get("mp_team_wins", 0)))
+	f.store_line("  Total Droplets     : " + str(gp.get("total_droplets_earned", 0)))
+	f.store_line("")
+
+	# SP Algorithm
+	var alg: Dictionary = report.get("sp_algorithm", {})
+	f.store_line("[SP ALGORITHM]")
+	f.store_line("  Algorithm          : " + str(alg.get("algorithm", "?")))
+	f.store_line("  Final Difficulty   : " + str(alg.get("final_difficulty", "?")))
+	f.store_line("  Final Phi (Φ)      : " + str(alg.get("final_phi", 0.0)))
+	f.store_line("  Final WMA          : " + str(alg.get("final_wma", 0.0)))
+	f.store_line("  Difficulty Changes : " + str(alg.get("total_difficulty_changes", 0)))
+	f.store_line("")
+
+	# MP Algorithm
+	var mp_alg: Dictionary = report.get("mp_algorithm", {})
+	f.store_line("[MP ALGORITHM]")
+	f.store_line("  P1 Difficulty      : " + str(mp_alg.get("p1_final_difficulty", "?")))
+	f.store_line("  P2 Difficulty      : " + str(mp_alg.get("p2_final_difficulty", "?")))
+	f.store_line("  Skill Gap          : " + str(mp_alg.get("skill_gap", 0.0)))
+	f.store_line("  Team Success Rate  : " + str(mp_alg.get("team_success_rate", 0.0)))
+	f.store_line("")
+
+	# Performance
+	var perf: Dictionary = report.get("performance", {})
+	var fps_d: Dictionary = perf.get("fps", {})
+	var mem_d: Dictionary = perf.get("memory", {})
+	var therm: Dictionary = perf.get("thermal", {})
+	var lat_d: Dictionary = perf.get("algorithm_latency", {})
+	f.store_line("[PERFORMANCE]")
+	f.store_line("  ISO 25010 Pass     : " + str(perf.get("iso_25010_compliant", false)))
+	f.store_line("  FPS Min/Avg/Max    : %s / %s / %s" % [
+		str(fps_d.get("minimum_observed", 0)),
+		str(fps_d.get("average_observed", 0)),
+		str(fps_d.get("maximum_observed", 0))
+	])
+	f.store_line("  FPS Pass           : " + str(fps_d.get("passed", false)))
+	f.store_line("  Memory Peak        : " + str(mem_d.get("peak_mb", 0.0)) + " MB")
+	f.store_line("  Memory Pass        : " + str(mem_d.get("passed", false)))
+	f.store_line("  CPU Temp Peak      : " + str(therm.get("peak_c", 0.0)) + " °C")
+	f.store_line("  Throttle Events    : " + str(therm.get("throttle_events", 0)))
+	f.store_line("  Algo Latency Avg   : " + str(lat_d.get("avg_ms", 0.0)) + " ms")
+	f.store_line("  Algo Latency Max   : " + str(lat_d.get("max_ms", 0.0)) + " ms")
+	f.store_line("")
+
+	# SP Game Records
+	var sp_games_arr: Array = report.get("sp_game_records", [])
+	f.store_line("[SP GAME RECORDS]  (%d games)" % sp_games_arr.size())
+	f.store_line("  #    | Game                  | Score | Acc%  | React | Diff   | Φ")
+	f.store_line("  " + sep40)
+	for rec in sp_games_arr:
+		f.store_line("  %-4d | %-21s | %-5d | %-5s | %-5s | %-6s | %s" % [
+			int(rec.get("game_num", 0)),
+			str(rec.get("game_name", "")).left(21),
+			int(rec.get("score", 0)),
+			str(snapf(float(rec.get("accuracy_pct", 0.0)), 1)),
+			str(snapf(float(rec.get("reaction_time_s", 0.0)), 2)) + "s",
+			str(rec.get("difficulty", "?")),
+			str(rec.get("phi_index", 0.0))
+		])
+	f.store_line("")
+
+	# MP Round Records
+	var mp_rounds_arr: Array = report.get("mp_round_records", [])
+	f.store_line("[MP ROUND RECORDS]  (%d rounds)" % mp_rounds_arr.size())
+	for rec in mp_rounds_arr:
+		var p1d: Dictionary = rec.get("p1", {})
+		var p2d: Dictionary = rec.get("p2", {})
+		f.store_line("  Round %-3d | Team %s | P1 score=%-4d | P2 score=%-4d | Sync=%.1f" % [
+			int(rec.get("round_num", 0)),
+			("WIN " if rec.get("team_success", false) else "LOSS"),
+			int(p1d.get("score", 0)),
+			int(p2d.get("score", 0)),
+			float(rec.get("sync_score", 0.0))
+		])
+	f.store_line("")
+
+	f.store_line(sep60)
+	f.store_line("  Export dir: " + export_dir)
+	f.store_line(sep60)
+	f.close()
+	return true
 
 func get_last_exported_path() -> String:
 	return _last_exported_path
+
+## Export ONLY a .txt human-readable summary (no JSON).
+## Returns the absolute path on success, empty string on failure.
+func export_session_txt() -> String:
+	_take_perf_snapshot()
+
+	# Re-use export_session() to build the full report dictionary, then
+	# write only the TXT file so we don't double-write JSON.
+	var end_unix := Time.get_unix_time_from_system()
+	var duration_sec := end_unix - session_start_unix
+
+	var vp_size := Vector2.ZERO
+	if get_viewport():
+		vp_size = get_viewport().get_visible_rect().size
+
+	var device_info: Dictionary = {
+		"platform": OS.get_name(), "model": OS.get_model_name(),
+		"processor_count": OS.get_processor_count(),
+		"processor_name": OS.get_processor_name(),
+		"godot_version": Engine.get_version_info().get("string", "?"),
+		"screen_width": int(vp_size.x), "screen_height": int(vp_size.y)
+	}
+
+	var fps_avg := _calc_fps_avg()
+	var drop_rate := _calc_drop_rate()
+	var algo_lat_avg := _get_algo_latency_avg()
+	var algo_lat_max := _get_algo_latency_max()
+	var batt := _get_battery_drain()
+	var throttles := _get_throttle_count()
+	var efficiency := _calc_efficiency_pct()
+	var iso_pass := _check_iso_pass()
+
+	var perf_summary: Dictionary = {
+		"iso_25010_compliant": iso_pass,
+		"fps": {"target": 60, "minimum_required": 30,
+			"minimum_observed": snapf(fps_min_session if fps_min_session < 9999.0 else 0.0, 1),
+			"maximum_observed": snapf(fps_max_session, 1), "average_observed": fps_avg,
+			"passed": fps_avg >= 30.0},
+		"memory": {"budget_mb": 200.0, "peak_mb": snapf(memory_peak_mb, 2),
+			"passed": memory_peak_mb <= 200.0},
+		"thermal": {"threshold_c": 45.0, "peak_c": snapf(cpu_temp_peak_c, 1),
+			"throttle_events": throttles, "throttle_details": get_throttle_events(),
+			"passed": cpu_temp_peak_c <= 45.0 and throttles == 0},
+		"algorithm_latency": {"budget_ms": 16.0, "avg_ms": algo_lat_avg,
+			"max_ms": algo_lat_max, "passed": algo_lat_max <= 16.0},
+		"dropped_frames": {"count": _get_dropped_frames(),
+			"total_frames": _get_total_frames(), "drop_rate_pct": drop_rate},
+		"battery_efficiency": {"measured_mah_per_min": batt,
+			"dl_baseline_mah_per_min": 10.0, "rule_based_savings_pct": efficiency,
+			"battery_source": PerformanceProfiler.battery_source if PerformanceProfiler else "N/A"},
+		"perf_warnings": perf_warnings
+	}
+
+	var sp_algo: Dictionary = {
+		"algorithm": "Rule-Based Rolling Window with Proficiency Index (Φ)",
+		"window_size": AdaptiveDifficulty.window_size if AdaptiveDifficulty else 5,
+		"warmup_games": AdaptiveDifficulty.min_games_before_adaptation if AdaptiveDifficulty else 3,
+		"final_difficulty": AdaptiveDifficulty.get_current_difficulty() if AdaptiveDifficulty else "N/A",
+		"final_phi": _get_current_phi(), "final_wma": _get_current_wma(),
+		"final_cp": _get_current_cp(),
+		"progressive_level": AdaptiveDifficulty.progressive_level if AdaptiveDifficulty else 0,
+		"total_difficulty_changes": sp_difficulty_changes.size(),
+		"difficulty_change_log": sp_difficulty_changes
+	}
+
+	var mp_metrics: Dictionary = {}
+	if CoopAdaptation and CoopAdaptation.has_method("get_team_metrics"):
+		mp_metrics = CoopAdaptation.get_team_metrics()
+
+	var mp_algo: Dictionary = {
+		"algorithm": "CoopAdaptation — Per-Player Φ + Skill Gap Co-Adaptation",
+		"skill_gap_threshold": 0.15,
+		"p1_final_difficulty": CoopAdaptation.get_player_difficulty(1) if CoopAdaptation else "N/A",
+		"p2_final_difficulty": CoopAdaptation.get_player_difficulty(2) if CoopAdaptation else "N/A",
+		"p1_phi": snapf(float(mp_metrics.get("player1_proficiency", 0.0)), 4),
+		"p2_phi": snapf(float(mp_metrics.get("player2_proficiency", 0.0)), 4),
+		"skill_gap": snapf(float(mp_metrics.get("skill_gap", 0.0)), 4),
+		"team_success_rate": snapf(float(mp_metrics.get("team_success_rate", 0.0)), 3),
+		"avg_sync_score": snapf(float(mp_metrics.get("avg_sync_score", 0.0)), 1),
+		"is_asymmetric_mode": bool(mp_metrics.get("is_asymmetric", false)),
+		"total_coop_adjustments": coop_difficulty_changes.size(),
+		"coop_adjustment_log": coop_difficulty_changes
+	}
+
+	var gameplay: Dictionary = {
+		"sp_games_played": sp_games_count, "sp_total_score": sp_total_score,
+		"sp_avg_score": snapf(float(sp_total_score) / max(sp_games_count, 1), 1),
+		"sp_avg_accuracy_pct": _calc_sp_avg_accuracy(),
+		"sp_avg_reaction_time_s": _calc_sp_avg_reaction_time(),
+		"mp_rounds_played": mp_rounds_count, "mp_total_score": mp_total_score,
+		"mp_team_wins": _count_mp_wins(), "mp_win_rate_pct": _calc_mp_win_rate(),
+		"total_droplets_earned": total_droplets_earned,
+		"scenes_visited_count": scenes_visited.size()
+	}
+
+	var report: Dictionary = {
+		"waterwise_session_log": true, "schema_version": "2.0",
+		"session_id": session_id, "session_start": session_start_iso,
+		"session_end": Time.get_datetime_string_from_system(),
+		"session_duration_sec": snapf(duration_sec, 1),
+		"session_duration_formatted": _format_duration(duration_sec),
+		"device": device_info, "gameplay_summary": gameplay,
+		"sp_algorithm": sp_algo, "mp_algorithm": mp_algo,
+		"performance": perf_summary, "sp_game_records": sp_games,
+		"mp_round_records": mp_rounds, "scenes_visited": scenes_visited,
+		"performance_snapshots": perf_snapshots
+	}
+
+	_ensure_export_dir(export_dir)
+	var dt := Time.get_datetime_string_from_system() \
+		.replace(":", "-").replace(" ", "_")
+	var txt_path := export_dir + "session_%s.txt" % dt
+
+	if _write_txt_report(report, txt_path):
+		var abs_path := ProjectSettings.globalize_path(txt_path)
+		print("📄 SessionLogger TXT (standalone): %s" % abs_path)
+		return abs_path
+
+	push_error("SessionLogger: TXT export failed for %s" % txt_path)
+	return ""
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # HELPERS
@@ -598,8 +893,8 @@ func _elapsed() -> float:
 	return snapf(Time.get_unix_time_from_system() - session_start_unix, 2)
 
 func _format_duration(sec: float) -> String:
-	var h := int(sec) / 3600
-	var m := (int(sec) % 3600) / 60
+	var h := int(sec / 3600.0)
+	var m := int((sec - h * 3600) / 60.0)
 	var s := int(sec) % 60
 	return "%02d:%02d:%02d" % [h, m, s]
 

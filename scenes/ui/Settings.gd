@@ -42,6 +42,8 @@ var dev_mode_check: CheckBox
 var dev_profiler_check: CheckBox
 var dev_algorithm_check: CheckBox
 var dev_stats_button: Button
+var erase_data_button: Button
+var autoplay_duration_spinbox: SpinBox
 
 var _feedback_tweens: Dictionary = {}
 var _panel_ambient_tween: Tween
@@ -675,6 +677,60 @@ func _setup_dev_mode_section() -> void:
 	dev_algorithm_check.toggled.connect(_on_dev_algorithm_toggled)
 	dev_grid.add_child(dev_algorithm_check)
 
+	var autoplay_label = Label.new()
+	_register_localized_text_control(
+		autoplay_label,
+		"settings_auto_play",
+		"Auto-Play Mode (Testing)"
+	)
+	autoplay_label.add_theme_font_size_override("font_size", 18)
+	dev_grid.add_child(autoplay_label)
+
+	var autoplay_check = CheckBox.new()
+	_register_localized_text_control(
+		autoplay_check,
+		"settings_enable",
+		"Enable"
+	)
+	autoplay_check.button_pressed = bool(
+		_get_dev_setting("auto_play_enabled", false)
+	)
+	autoplay_check.toggled.connect(_on_auto_play_toggled)
+	dev_grid.add_child(autoplay_check)
+
+	var duration_label = Label.new()
+	_register_localized_text_control(
+		duration_label,
+		"settings_auto_play_duration",
+		"Duration (0 = Unlimited)"
+	)
+	duration_label.add_theme_font_size_override("font_size", 18)
+	dev_grid.add_child(duration_label)
+
+	var duration_hbox = HBoxContainer.new()
+	duration_hbox.add_theme_constant_override("separation", 10)
+
+	autoplay_duration_spinbox = SpinBox.new()
+	autoplay_duration_spinbox.min_value = 0
+	autoplay_duration_spinbox.max_value = 180  # 3 hours max
+	autoplay_duration_spinbox.step = 5
+	autoplay_duration_spinbox.suffix = " min"
+	autoplay_duration_spinbox.custom_minimum_size = Vector2(150, 40)
+	autoplay_duration_spinbox.allow_greater = false
+	autoplay_duration_spinbox.allow_lesser = false
+	if AutoPlayManager:
+		autoplay_duration_spinbox.value = AutoPlayManager.get_auto_play_duration_minutes()
+	autoplay_duration_spinbox.value_changed.connect(_on_auto_play_duration_changed)
+	duration_hbox.add_child(autoplay_duration_spinbox)
+
+	var duration_hint = Label.new()
+	duration_hint.text = "(0 = ∞)"
+	duration_hint.add_theme_font_size_override("font_size", 14)
+	duration_hint.modulate = Color(0.7, 0.7, 0.7)
+	duration_hbox.add_child(duration_hint)
+
+	dev_grid.add_child(duration_hbox)
+
 	var note = Label.new()
 	_register_localized_text_control(
 		note,
@@ -693,6 +749,16 @@ func _setup_dev_mode_section() -> void:
 	dev_stats_button.disabled = not dev_mode_enabled
 	dev_stats_button.pressed.connect(_on_dev_stats_pressed)
 	vbox.add_child(dev_stats_button)
+
+	erase_data_button = Button.new()
+	erase_data_button.text = "🗑️ Erase All Data"
+	erase_data_button.custom_minimum_size = Vector2(0, 60)
+	erase_data_button.add_theme_font_size_override("font_size", 20)
+	erase_data_button.add_theme_color_override("font_color", Color(1.0, 0.3, 0.3))
+	erase_data_button.add_theme_color_override("font_hover_color", Color(1.0, 0.1, 0.1))
+	erase_data_button.disabled = not dev_mode_enabled
+	erase_data_button.pressed.connect(_on_erase_data_pressed)
+	vbox.add_child(erase_data_button)
 
 	_apply_dev_mode_visibility(dev_mode_enabled)
 
@@ -789,11 +855,24 @@ func _apply_dev_mode_visibility(enabled: bool) -> void:
 		dev_algorithm_check.disabled = not enabled
 	if dev_stats_button:
 		dev_stats_button.disabled = not enabled
+	if erase_data_button:
+		erase_data_button.disabled = not enabled
 
 func _on_dev_stats_pressed() -> void:
 	if AudioManager:
 		AudioManager.play_click()
 	get_tree().change_scene_to_file("res://scenes/ui/DevStats.tscn")
+
+func _on_erase_data_pressed() -> void:
+	if AudioManager:
+		AudioManager.play_click()
+	var save_mgr = get_node_or_null("/root/SaveManager")
+	if save_mgr and save_mgr.has_method("reset_all_data"):
+		save_mgr.reset_all_data()
+		print("[Settings] All data erased via dev mode.")
+	if AutoPlayManager:
+		AutoPlayManager.set_auto_play_enabled(false)
+	get_tree().reload_current_scene()
 
 func _sync_dev_overlay_state() -> void:
 	var dev_mode_enabled = _get_dev_setting("dev_mode", false)
@@ -835,6 +914,13 @@ func _on_dev_profiler_toggled(pressed: bool) -> void:
 	_set_dev_setting("dev_show_profiler", pressed)
 	_sync_dev_overlay_state()
 
+func _on_auto_play_duration_changed(value: float) -> void:
+	if not _get_dev_setting("dev_mode", false):
+		return
+	
+	if AutoPlayManager:
+		AutoPlayManager.set_auto_play_duration(value)
+
 func _on_dev_algorithm_toggled(pressed: bool) -> void:
 	if AudioManager:
 		AudioManager.play_click()
@@ -846,6 +932,18 @@ func _on_dev_algorithm_toggled(pressed: bool) -> void:
 
 	_set_dev_setting("dev_show_algorithm_overlay", pressed)
 	_sync_dev_overlay_state()
+
+func _on_auto_play_toggled(pressed: bool) -> void:
+	if AudioManager:
+		AudioManager.play_click()
+
+	if not _get_dev_setting("dev_mode", false):
+		return
+
+	_set_dev_setting("auto_play_enabled", pressed)
+	
+	if AutoPlayManager:
+		AutoPlayManager.set_auto_play_enabled(pressed)
 
 func _update_translations() -> void:
 	title_label.text = _loc("settings", "⚙️ SETTINGS")

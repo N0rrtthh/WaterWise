@@ -118,7 +118,9 @@ var settings: Dictionary = {
 	"auto_difficulty": true,
 	"dev_mode": false,
 	"dev_show_profiler": false,
-	"dev_show_algorithm_overlay": false
+	"dev_show_algorithm_overlay": false,
+	"auto_play_enabled": false,
+	"auto_play_duration": 0.0  # 0 = unlimited, otherwise seconds
 }
 
 # Session tracking (not saved)

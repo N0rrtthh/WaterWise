@@ -115,8 +115,7 @@ func _process(delta: float) -> void:
 				
 				if water_missed >= MAX_MISSED:
 					water_missed = 0
-					if NetworkManager:
-						NetworkManager.lose_life()
+					report_miss_to_host()
 
 func _on_water_caught(area: Area2D, stream: Area2D) -> void:
 	if not area.has_meta("capacity"):
@@ -149,7 +148,7 @@ func _send_container(container: Area2D) -> void:
 	
 	container.set_meta("current", 0)
 	container.get_node("Label").text = "0/%d" % amount
-	container.get_node("Visual").color = Color(0.5, 0.5, 0.5, 0.3)
+	container.get_node("Visual").modulate = Color(0.5, 0.5, 0.5, 0.3)
 
 func _on_game_over() -> void:
 	spawn_timer.stop()

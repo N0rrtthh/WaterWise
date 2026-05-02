@@ -10,6 +10,7 @@ var toilets_flushed: int = 0
 var unflushed_count: int = 0
 var toilets: Array = []
 var spawn_timer: Timer
+var water_indicator_label: Label
 
 func get_instructions() -> String:
 	return "🚽 FLUSH TOILETS\n\nClick on dirty toilets to flush them with shower water!\nToilets get dirty every 8 seconds.\n\n⚠️ Leave 3 toilets unflushed and lose 1 life!\n💧 Need water from partner to flush"
@@ -51,6 +52,7 @@ func _create_water_indicator() -> void:
 	label.text = "💧 x 0"
 	label.add_theme_font_size_override("font_size", 32)
 	vbox.add_child(label)
+	water_indicator_label = label
 
 func _create_toilets() -> void:
 	for i in range(6):
@@ -97,8 +99,7 @@ func _mark_toilet_dirty() -> void:
 	
 	if unflushed_count >= MAX_UNFLUSHED:
 		unflushed_count = 0
-		if NetworkManager:
-			NetworkManager.lose_life()
+		report_miss_to_host()
 
 func _on_toilet_clicked(_viewport: Node, event: InputEvent, _shape_idx: int, toilet: Area2D) -> void:
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
@@ -134,9 +135,8 @@ func _on_resource_received(_from_player: int, resource_type: String, amount: int
 		_log("📥 Received %d shower water (Total: %d)" % [amount, available_water])
 
 func _update_water_display() -> void:
-	var label = get_node_or_null("PanelContainer/VBoxContainer/WaterLabel")
-	if label:
-		label.text = "💧 x %d" % available_water
+	if water_indicator_label:
+		water_indicator_label.text = "💧 x %d" % available_water
 
 func _on_game_over() -> void:
 	spawn_timer.stop()
