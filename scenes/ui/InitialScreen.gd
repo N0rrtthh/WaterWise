@@ -36,7 +36,7 @@ var _loading_bar: ProgressBar
 var _loading_text: Label
 var _loading_started_ms: int = 0
 
-const MIN_LOADING_VISIBLE_MS: int = 500
+const MIN_LOADING_VISIBLE_MS: int = 0
 const UI_FONT_BRICK := preload("res://fonts/NTBrickSans.otf")
 
 
@@ -1606,8 +1606,8 @@ func _show_loading_overlay() -> void:
 	vbox.add_child(_loading_text)
 
 	_loading_bar = ProgressBar.new()
-	_loading_bar.custom_minimum_size = Vector2(0, 24)
-	_loading_bar.show_percentage = true
+	_loading_bar.custom_minimum_size = Vector2(0, 20)
+	_loading_bar.show_percentage = false
 	_loading_bar.value = 0.0
 	vbox.add_child(_loading_bar)
 
@@ -1737,28 +1737,70 @@ func _update_next_unlock_panel(current_droplets: int) -> void:
 	if not next_unlock_progress or not next_unlock_label:
 		return
 
-	var previous_threshold := 0
-	var next_threshold := -1
+	# Full unlock catalogue sorted by cost — characters + minigame bundles
+	const ALL_UNLOCKABLES: Array = [
+		{"cost": 50,  "name": "Pinky 💗",          "type": "character", "id": "pinky"},
+		{"cost": 100, "name": "Minty 🌿",           "type": "character", "id": "minty"},
+		{"cost": 100, "name": "Water Sort 🧪",       "type": "minigame",  "id": "water_sorting"},
+		{"cost": 120, "name": "Sun Hat 👒",           "type": "accessory", "id": "sun_hat"},
+		{"cost": 150, "name": "Sunny ☀️",             "type": "character", "id": "sunny"},
+		{"cost": 150, "name": "Sailboat 🛥️",          "type": "decoration","id": "boat"},
+		{"cost": 180, "name": "Cool Shades 🕶️",       "type": "accessory", "id": "cool_shades"},
+		{"cost": 200, "name": "Lavvy ✨",             "type": "character", "id": "lavvy"},
+		{"cost": 200, "name": "Fix Leaks 💧",         "type": "minigame",  "id": "leak_fix"},
+		{"cost": 220, "name": "Party Cap 🎉",         "type": "accessory", "id": "party_cap"},
+		{"cost": 260, "name": "Leaf Crown 🍃",        "type": "accessory", "id": "leaf_crown"},
+		{"cost": 300, "name": "Peachy 🍑",            "type": "character", "id": "peachy"},
+		{"cost": 300, "name": "Water Quiz ❓",        "type": "minigame",  "id": "water_quiz"},
+		{"cost": 320, "name": "Safety Helmet ⛑️",     "type": "accessory", "id": "safety_helmet"},
+		{"cost": 400, "name": "Cyanny 🌊",            "type": "character", "id": "cyanny"},
+		{"cost": 400, "name": "Bucket Relay 🪣",      "type": "minigame",  "id": "bucket_relay"},
+		{"cost": 500, "name": "Coral 🪸",             "type": "character", "id": "coral"},
+		{"cost": 500, "name": "Fun Games 🎉",         "type": "minigame",  "id": "fun_games"},
+	]
 
-	for threshold in CHARACTER_UNLOCK_THRESHOLDS:
-		if current_droplets < threshold:
-			next_threshold = threshold
+	var save_mgr = get_node_or_null("/root/SaveManager")
+
+	# Find the next item the player hasn't yet unlocked
+	var next_item: Dictionary = {}
+	for item in ALL_UNLOCKABLES:
+		if current_droplets >= int(item.cost):
+			continue  # Already affordable, skip unless not actually unlocked
+		# This item costs more than current droplets — check if already owned
+		var already_owned := false
+		if save_mgr:
+			match str(item.type):
+				"character":
+					already_owned = save_mgr.is_character_unlocked(str(item.id))
+				"minigame":
+					already_owned = save_mgr.is_minigame_unlocked(str(item.id))
+				"accessory":
+					already_owned = save_mgr.has_method("is_accessory_unlocked") \
+						and save_mgr.is_accessory_unlocked(str(item.id))
+				"decoration":
+					already_owned = save_mgr.has_method("is_decoration_unlocked") \
+						and save_mgr.is_decoration_unlocked(str(item.id))
+		if not already_owned:
+			next_item = item
 			break
-		previous_threshold = threshold
 
-	if next_threshold < 0:
+	if next_item.is_empty():
 		next_unlock_progress.value = 100.0
-		next_unlock_label.text = _loc(
-			"all_character_unlocks_owned",
-			"All character unlocks owned"
-		)
+		next_unlock_label.text = _loc("all_unlocks_owned", "🏆 All items unlocked!")
 		return
 
-	var segment = max(1, next_threshold - previous_threshold)
-	var in_segment = max(0, current_droplets - previous_threshold)
+	var next_cost: int = int(next_item.cost)
+	# Progress within [current_droplets, next_cost] based on how close we are
+	# Show progress from the previous milestone upward
+	var prev_cost := 0
+	for item in ALL_UNLOCKABLES:
+		if int(item.cost) < next_cost:
+			prev_cost = int(item.cost)
+	var segment: int = max(1, next_cost - prev_cost)
+	var in_segment: int = max(0, current_droplets - prev_cost)
 	next_unlock_progress.value = clamp((float(in_segment) / float(segment)) * 100.0, 0.0, 100.0)
-	var remaining = next_threshold - current_droplets
-	next_unlock_label.text = _loc("points_to_go", "%d points to go") % remaining
+	var remaining: int = next_cost - current_droplets
+	next_unlock_label.text = "%s\n💧 %d to go" % [str(next_item.name), remaining]
 
 
 # ── Helpers ─────────────────────────────────────────────────────────

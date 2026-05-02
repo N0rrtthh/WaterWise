@@ -98,6 +98,10 @@ func _ready() -> void:
 	
 	# Show instruction overlay, wait for tap to start
 	instruction_overlay.visible = true
+	
+	# Register with AutoPlayManager if enabled
+	if AutoPlayManager and AutoPlayManager.is_auto_play_enabled():
+		AutoPlayManager.register_game(self, game_name)
 	if AudioManager:
 		AudioManager.play_music("instruction", 0.25)
 	await _wait_for_input()
@@ -393,6 +397,10 @@ func end_game(success: bool = true) -> void:
 	timer_running = false
 	_hide_instruction_overlay()
 	get_tree().paused = false
+	
+	# Unregister from AutoPlayManager
+	if AutoPlayManager and AutoPlayManager.is_auto_play_enabled():
+		AutoPlayManager.unregister_game()
 	
 	# Stop the game timer so it can't double-trigger
 	if _game_timer and is_instance_valid(_game_timer):
@@ -1016,6 +1024,11 @@ func _create_instruction_overlay():
 	tween.tween_property(tap_label, "modulate:a", 1.0, 0.5)
 
 func _wait_for_input() -> void:
+	# Auto-play mode: skip instruction wait immediately
+	if AutoPlayManager and AutoPlayManager.is_auto_play_enabled():
+		await get_tree().process_frame
+		return
+
 	var mouse_was_down := Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
 	var touch_was_down := false
 	if InputMap.has_action("touch"):
@@ -1131,7 +1144,8 @@ func _create_pause_menu():
 
 	# Gentle pulse on the drop icon
 	var pulse = create_tween().set_loops()
-	pulse.tween_property(drop_icon, "modulate", Color(0.8, 0.9, 1.2), 0.8).set_trans(Tween.TRANS_SINE)
+	pulse.tween_property(drop_icon, "modulate", Color(0.8, 0.9, 1.2), 0.8)\
+		.set_trans(Tween.TRANS_SINE)
 	pulse.tween_property(drop_icon, "modulate", Color.WHITE, 0.8).set_trans(Tween.TRANS_SINE)
 
 	# ── Title ────────────────────────────────────────────────────────
@@ -1887,7 +1901,8 @@ func _show_round_score_page(success: bool, accuracy: float, _reaction_time: int)
 	if count_steps > 0:
 		score_display.text = str(prev_total)
 		for step in range(count_steps + 1):
-			var val = int(lerp(float(prev_total), float(session_total), float(step) / float(count_steps)))
+			var pct := float(step) / float(count_steps)
+			var val := int(lerp(float(prev_total), float(session_total), pct))
 			score_display.text = str(val)
 			if AudioManager and step % 3 == 0:
 				AudioManager.play_score_tick()

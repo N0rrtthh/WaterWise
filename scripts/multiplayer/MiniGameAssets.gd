@@ -72,15 +72,16 @@ static func create_toilet_texture(width: int, height: int) -> Texture2D:
 	
 	# Draw simple toilet shape
 	# Tank
-	for x in range(width/4, width*3/4):
-		for y in range(0, height/3):
+	for x in range(int(width/4.0), int(width*3/4.0)):
+		for y in range(0, int(height/3.0)):
 			img.set_pixel(x, y, white)
 	
 	# Bowl
-	for x in range(width/4, width*3/4):
-		for y in range(height/3, height):
+	for x in range(int(width/4.0), int(width*3/4.0)):
+		for y in range(int(height/3.0), height):
 			# Rounded bottom
-			if y < height * 0.8 or abs(x - width/2) < (width/4) * (1.0 - (float(y - height*0.8)/(height*0.2))):
+			var bowl_taper := (int(width/4.0)) * (1.0 - (float(y - height*0.8)/(height*0.2)))
+			if y < height * 0.8 or abs(x - int(width/2.0)) < bowl_taper:
 				img.set_pixel(x, y, white)
 				
 	return ImageTexture.create_from_image(img)
@@ -89,26 +90,26 @@ static func create_plant_texture(size: int, flower_color: Color) -> Texture2D:
 	var img = Image.create(size, size, false, Image.FORMAT_RGBA8)
 	img.fill(Color.TRANSPARENT)
 	
-	var center = Vector2(size/2, size/2)
+	var center = Vector2(int(size/2.0), int(size/2.0))
 	var green = Color(0.2, 0.8, 0.2)
 	
 	# Stem
-	for y in range(size/2, size):
-		for x in range(size/2 - 2, size/2 + 2):
+	for y in range(int(size/2.0), size):
+		for x in range(int(size/2.0) - 2, int(size/2.0) + 2):
 			img.set_pixel(x, y, green)
 			
 	# Leaves
 	for x in range(size):
-		for y in range(size/2, size):
-			if abs(x - size/2) < 20 and abs(y - size*0.7) < 10:
+		for y in range(int(size/2.0), size):
+			if abs(x - int(size/2.0)) < 20 and abs(y - size*0.7) < 10:
 				img.set_pixel(x, y, green)
 
 	# Flower
 	for x in range(size):
 		for y in range(size):
-			if Vector2(x, y).distance_to(center) < size/4:
+			if Vector2(x, y).distance_to(center) < int(size/4.0):
 				img.set_pixel(x, y, flower_color)
-			elif Vector2(x, y).distance_to(center) < size/6:
+			elif Vector2(x, y).distance_to(center) < int(size/6.0):
 				img.set_pixel(x, y, Color(0.3, 0.2, 0.1)) # Center
 				
 	return ImageTexture.create_from_image(img)

@@ -10,6 +10,8 @@ var aquarium_level: float = 0.0
 var aquarium_max: float = 100.0
 var empty_timer: float = 0.0
 var aquarium_visual: ColorRect
+var aquarium_label: Label
+var water_indicator_label: Label
 
 func get_instructions() -> String:
 	return "🐟 FILL AQUARIUM\n\nClick aquarium to add rainwater from your partner!\nFill to 100% to win.\nWater evaporates slowly - keep it above 5%.\n\n⚠️ Let aquarium stay empty for 20 seconds and lose 1 life!\n💧 Wait for partner to catch rain"
@@ -46,6 +48,7 @@ func _create_water_indicator() -> void:
 	label.text = "💧 x 0"
 	label.add_theme_font_size_override("font_size", 32)
 	vbox.add_child(label)
+	water_indicator_label = label
 	
 	var info = Label.new()
 	info.text = "Click aquarium to fill"
@@ -86,6 +89,7 @@ func _create_aquarium() -> void:
 	label.position = Vector2(-80, -240)
 	label.add_theme_font_size_override("font_size", 24)
 	aquarium.add_child(label)
+	aquarium_label = label
 	
 	aquarium.input_event.connect(_on_aquarium_clicked)
 
@@ -125,8 +129,7 @@ func _process(delta: float) -> void:
 		if empty_timer >= MAX_EMPTY_TIME:
 			_log("💀 Aquarium empty too long - lose 1 life!")
 			empty_timer = 0
-			if NetworkManager:
-				NetworkManager.lose_life()
+			report_miss_to_host()
 
 func _update_aquarium() -> void:
 	if aquarium_visual:
@@ -134,9 +137,8 @@ func _update_aquarium() -> void:
 		aquarium_visual.size.y = height
 		aquarium_visual.position.y = 200 - height
 	
-	var label = get_node_or_null("Area2D/Label")
-	if label:
-		label.text = "🐟 AQUARIUM\n%.0f%%" % (aquarium_level / aquarium_max * 100)
+	if aquarium_label:
+		aquarium_label.text = "🐟 AQUARIUM\n%.0f%%" % (aquarium_level / aquarium_max * 100)
 
 func _on_resource_received(_from_player: int, resource_type: String, amount: int, _quality: float) -> void:
 	if resource_type == "rainwater":
@@ -145,9 +147,8 @@ func _on_resource_received(_from_player: int, resource_type: String, amount: int
 		_log("📥 Received %d rainwater (Total: %d)" % [amount, available_water])
 
 func _update_water_display() -> void:
-	var label = get_node_or_null("PanelContainer/VBoxContainer/WaterLabel")
-	if label:
-		label.text = "💧 x %d" % available_water
+	if water_indicator_label:
+		water_indicator_label.text = "💧 x %d" % available_water
 
 func _on_game_over() -> void:
 	super._on_game_over()

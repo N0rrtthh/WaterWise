@@ -161,6 +161,14 @@ func _load_translations() -> void:
 			"en": "Show Algorithm Overlay (F12)",
 			"tl": "Ipakita ang Algorithm Overlay (F12)"
 		},
+		"settings_auto_play": {
+			"en": "Auto-Play Mode (Testing)",
+			"tl": "Auto-Play Mode (Pagsusulit)"
+		},
+		"settings_auto_play_duration": {
+			"en": "Duration (0 = Unlimited)",
+			"tl": "Tagal (0 = Walang Hangganan)"
+		},
 		"settings_show": {
 			"en": "Show",
 			"tl": "Ipakita"

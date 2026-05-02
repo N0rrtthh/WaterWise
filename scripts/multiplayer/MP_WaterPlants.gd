@@ -19,6 +19,7 @@ var wilt_timer: Timer
 var available_water: int = 0  # Water units received from P1
 var plants: Array = []
 var selected_plant: Area2D = null
+var water_indicator_label: Label = null
 
 var plant_types = [
 	{"name": "🌻 Sunflower", "color": Color(1.0, 0.9, 0.2)},
@@ -73,6 +74,7 @@ func _create_water_indicator() -> void:
 	water_label.text = "💧 x 0"
 	water_label.add_theme_font_size_override("font_size", 32)
 	vbox.add_child(water_label)
+	water_indicator_label = water_label
 	
 	var info = Label.new()
 	info.text = "Click plants to water"
@@ -80,14 +82,8 @@ func _create_water_indicator() -> void:
 	vbox.add_child(info)
 
 func _update_water_display() -> void:
-	# Find the WaterLabel dynamically since the PanelContainer path may vary
-	var water_label = null
-	for child in get_children():
-		if child is PanelContainer:
-			water_label = child.find_child("WaterLabel", true, false)
-			break
-	if water_label:
-		water_label.text = "💧 x %d" % available_water
+	if water_indicator_label:
+		water_indicator_label.text = "💧 x %d" % available_water
 
 func _spawn_plants() -> void:
 	# Spawn plants that need watering
@@ -211,8 +207,7 @@ func _check_wilted_plants() -> void:
 				if plants_wilted >= MAX_WILTED:
 					_log("💔 Too many wilted plants - lose 1 life!")
 					plants_wilted = 0
-					if NetworkManager:
-						NetworkManager.lose_life()
+					report_miss_to_host()
 
 func _on_resource_received(from_player: int, resource_type: String, amount: int, _quality: float) -> void:
 	# Receive dirty water from Player 1

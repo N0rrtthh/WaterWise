@@ -137,6 +137,54 @@ var header_panel: PanelContainer
 var scroll_hint_label: Label
 var _feedback_tweens: Dictionary = {}
 var _ambient_tweens: Array[Tween] = []
+var _current_tab: String = "singleplayer"  # "singleplayer" | "multiplayer"
+var _tab_sp_btn: Button
+var _tab_mp_btn: Button
+
+const MP_STAGE_TEMPLATE: Array[Dictionary] = [
+	{
+		"name": "🤝 Team Village",
+		"desc": "First co-op challenge — work together to catch the rain",
+		"minigames": ["CatchTheRain", "CoverTheDrum"],
+		"players": 2,
+		"unlock_id": "mp_stage_1",
+	},
+	{
+		"name": "🔧 Co-op Pipe District",
+		"desc": "Trace pipes and fix leaks as a team",
+		"minigames": ["TracePipePath", "PlugTheLeak", "FixLeak"],
+		"players": 2,
+		"unlock_id": "mp_stage_2",
+	},
+	{
+		"name": "🧪 Duo Sorting Lab",
+		"desc": "Sort water streams together faster",
+		"minigames": ["GreywaterSorter", "VegetableBath", "ScrubToSave"],
+		"players": 2,
+		"unlock_id": "mp_stage_3",
+	},
+	{
+		"name": "🚿 Partner Routine Zone",
+		"desc": "Coordinate daily water routines as a pair",
+		"minigames": ["WringItOut", "QuickShower", "SwipeTheSoap"],
+		"players": 2,
+		"unlock_id": "mp_stage_4",
+	},
+	{
+		"name": "🪣 Bucket Brigade Challenge",
+		"desc": "Pass buckets and time taps in sync",
+		"minigames": ["BucketBrigade", "TimingTap"],
+		"players": 2,
+		"unlock_id": "mp_stage_5",
+	},
+	{
+		"name": "🏆 Champion Co-op Path",
+		"desc": "Master all co-op skills together",
+		"minigames": ["CatchTheRain", "BucketBrigade", "DropletDash"],
+		"players": 2,
+		"unlock_id": "mp_stage_final",
+	},
+]
 
 func _ready():
 	_sync_stages_from_progress()
@@ -149,6 +197,7 @@ func _ready():
 	_create_stage_nodes()
 	_create_decorations()
 	_create_header()
+	_create_tab_bar()
 	_create_back_button()
 	_create_scroll_hint()
 	_start_roadmap_ambient_motion()
@@ -990,6 +1039,218 @@ func _create_decorations():
 		)
 		flower.z_index = -35
 		map_content.add_child(flower)
+
+func _create_tab_bar() -> void:
+	var tab_bar = HBoxContainer.new()
+	tab_bar.z_index = 60
+	tab_bar.add_theme_constant_override("separation", 6)
+	# Position below the header (header height ~60px)
+	tab_bar.position = Vector2(screen_size.x * 0.5 - 140.0, 66.0)
+	tab_bar.custom_minimum_size = Vector2(280, 42)
+	add_child(tab_bar)
+
+	_tab_sp_btn = _make_tab_button(_loc("roadmap_tab_singleplayer", "🎮 Single Player"), true)
+	_tab_mp_btn = _make_tab_button(_loc("roadmap_tab_multiplayer", "🤝 Multiplayer"), false)
+	tab_bar.add_child(_tab_sp_btn)
+	tab_bar.add_child(_tab_mp_btn)
+
+	_tab_sp_btn.pressed.connect(func():
+		if _current_tab == "singleplayer":
+			return
+		if AudioManager:
+			AudioManager.play_click()
+		_current_tab = "singleplayer"
+		_rebuild_for_tab()
+	)
+	_tab_mp_btn.pressed.connect(func():
+		if _current_tab == "multiplayer":
+			return
+		if AudioManager:
+			AudioManager.play_click()
+		_current_tab = "multiplayer"
+		_rebuild_for_tab()
+	)
+
+func _make_tab_button(label_text: String, active: bool) -> Button:
+	var btn = Button.new()
+	btn.text = label_text
+	btn.custom_minimum_size = Vector2(136, 40)
+	btn.add_theme_font_size_override("font_size", 15)
+	var style = StyleBoxFlat.new()
+	style.bg_color = Color(0.18, 0.52, 0.82) if active else Color(0.4, 0.55, 0.7, 0.85)
+	style.corner_radius_top_left = 10
+	style.corner_radius_top_right = 10
+	style.corner_radius_bottom_left = 10
+	style.corner_radius_bottom_right = 10
+	style.border_width_bottom = 4 if active else 0
+	style.border_color = Color(0.9, 0.8, 0.2) if active else Color.TRANSPARENT
+	btn.add_theme_stylebox_override("normal", style)
+	btn.add_theme_stylebox_override("hover", style)
+	btn.add_theme_stylebox_override("pressed", style)
+	btn.add_theme_color_override("font_color", Color.WHITE)
+	return btn
+
+func _rebuild_for_tab() -> void:
+	# Update tab button visuals
+	if _tab_sp_btn and _tab_mp_btn:
+		for btn in [_tab_sp_btn, _tab_mp_btn]:
+			var active = (btn == _tab_sp_btn and _current_tab == "singleplayer") \
+				or (btn == _tab_mp_btn and _current_tab == "multiplayer")
+			var style = StyleBoxFlat.new()
+			style.bg_color = Color(0.18, 0.52, 0.82) if active else Color(0.4, 0.55, 0.7, 0.85)
+			style.corner_radius_top_left = 10
+			style.corner_radius_top_right = 10
+			style.corner_radius_bottom_left = 10
+			style.corner_radius_bottom_right = 10
+			style.border_width_bottom = 4 if active else 0
+			style.border_color = Color(0.9, 0.8, 0.2) if active else Color.TRANSPARENT
+			btn.add_theme_stylebox_override("normal", style)
+			btn.add_theme_stylebox_override("hover", style)
+			btn.add_theme_stylebox_override("pressed", style)
+
+	# Clear existing map content children (keep background, terrain, decorations)
+	# but remove stage nodes and path lines so we can rebuild
+	for child in map_content.get_children():
+		if child.name.begins_with("Stage_") or child.name.begins_with("MapPath"):
+			child.queue_free()
+
+	# Remove old path lines
+	for child in map_content.get_children():
+		if child is Line2D:
+			child.queue_free()
+
+	await get_tree().process_frame
+
+	if _current_tab == "singleplayer":
+		_sync_stages_from_progress()
+		_create_map_path()
+		_create_stage_nodes()
+	else:
+		_sync_mp_stages()
+		_create_map_path()
+		_create_mp_stage_nodes()
+
+func _sync_mp_stages() -> void:
+	stages.clear()
+	var _games_played := 0
+	var droplets := 0
+	if SaveManager:
+		if SaveManager.has_method("get_total_games_played"):
+			_games_played = int(SaveManager.get_total_games_played())
+		if SaveManager.has_method("get_droplets"):
+			droplets = int(SaveManager.get_droplets())
+
+	# Multiplayer stages unlock progressively based on co-op games played
+	var mp_completed: int = 0
+	if SaveManager and SaveManager.player_data is Dictionary:
+		mp_completed = int(SaveManager.player_data.get("multiplayer_games_won", 0))
+
+	for i in range(MP_STAGE_TEMPLATE.size()):
+		var entry: Dictionary = MP_STAGE_TEMPLATE[i].duplicate(true)
+		var unlocked = (i == 0) or (mp_completed >= i)
+		var completed = mp_completed > i
+		var stars := 0
+		if completed:
+			@warning_ignore("integer_division")
+			var seed_val = float(mp_completed * 30 + droplets / 10 - i * 12) / 80.0
+			stars = clampi(1 + int(seed_val), 1, 3)
+		elif unlocked and mp_completed == i:
+			stars = 0
+		entry["unlocked"] = unlocked
+		entry["completed"] = completed
+		entry["stars"] = stars
+		stages.append(entry)
+
+func _create_mp_stage_nodes() -> void:
+	var stage_spacing = (total_map_height - 300) / stages.size()
+	for i in range(stages.size()):
+		var stage = stages[i]
+		var y = 180 + i * stage_spacing
+		var x_wave = sin(i * 0.7) * 100
+		var x = screen_size.x / 2 + x_wave
+		var node = _create_mp_stage_button(stage, i, Vector2(x, y))
+		node.name = "Stage_%d" % i
+		map_content.add_child(node)
+		node.scale = Vector2.ZERO
+		var tween = create_tween()
+		tween.tween_interval(i * 0.08)
+		tween.tween_property(node, "scale", Vector2.ONE, 0.4) \
+			.set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_BACK)
+
+func _create_mp_stage_button(stage: Dictionary, index: int, pos: Vector2) -> Control:
+	var container = Control.new()
+	container.position = pos - Vector2(60, 60)
+	container.custom_minimum_size = Vector2(120, 120)
+	container.z_index = 10
+
+	var visual = Node2D.new()
+	visual.position = Vector2(60, 60)
+	container.add_child(visual)
+
+	var bg_color: Color
+	var border_color: Color
+	var icon_bg: Color
+	if stage.completed:
+		bg_color = Color(0.3, 0.85, 0.4)
+		border_color = Color(0.2, 0.65, 0.3)
+		icon_bg = Color(0.25, 0.75, 0.35)
+	elif stage.unlocked:
+		bg_color = Color(0.85, 0.5, 1.0)
+		border_color = Color(0.65, 0.3, 0.8)
+		icon_bg = Color(0.75, 0.4, 0.9)
+	else:
+		bg_color = Color(0.5, 0.5, 0.55)
+		border_color = Color(0.4, 0.4, 0.45)
+		icon_bg = Color(0.45, 0.45, 0.5)
+
+	if stage.unlocked and not stage.completed:
+		var glow = _create_circle(65, Color(0.9, 0.7, 1.0, 0.4))
+		visual.add_child(glow)
+		var pulse = create_tween().set_loops()
+		pulse.tween_property(glow, "scale", Vector2(1.15, 1.15), 0.7).set_ease(Tween.EASE_IN_OUT)
+		pulse.tween_property(glow, "scale", Vector2(1.0, 1.0), 0.7).set_ease(Tween.EASE_IN_OUT)
+
+	visual.add_child(_create_circle(55, border_color))
+	visual.add_child(_create_circle(48, bg_color))
+	visual.add_child(_create_circle(35, icon_bg))
+
+	var icon = Label.new()
+	icon.text = "🔒" if not stage.unlocked else "🤝"
+	icon.add_theme_font_size_override("font_size", 30 if not stage.unlocked else 28)
+	if stage.unlocked:
+		icon.add_theme_color_override("font_color", Color.WHITE)
+	icon.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	icon.position = Vector2(-15, -22) + Vector2(60, 60)
+	container.add_child(icon)
+
+	if stage.completed and stage.stars > 0:
+		var stars = Label.new()
+		stars.text = "⭐".repeat(stage.stars)
+		stars.add_theme_font_size_override("font_size", 14)
+		stars.position = Vector2(60 - stage.stars * 9, 100)
+		container.add_child(stars)
+
+	# Players badge
+	var players_badge = Label.new()
+	players_badge.text = "👥 x%d" % int(stage.get("players", 2))
+	players_badge.add_theme_font_size_override("font_size", 11)
+	players_badge.add_theme_color_override("font_color", Color(0.9, 0.85, 1.0))
+	players_badge.position = Vector2(38, -22)
+	container.add_child(players_badge)
+
+	var name_panel = _create_name_panel(stage, index)
+	name_panel.position = Vector2(130, 30) if index % 2 == 0 else Vector2(-180, 30)
+	container.add_child(name_panel)
+
+	var btn = Button.new()
+	btn.flat = true
+	btn.custom_minimum_size = Vector2(120, 120)
+	btn.pressed.connect(func(): _on_stage_pressed(index))
+	btn.mouse_entered.connect(func(): _on_stage_hover(container, true))
+	btn.mouse_exited.connect(func(): _on_stage_hover(container, false))
+	container.add_child(btn)
+
+	return container
 
 func _create_header():
 	# Fixed header (not scrolling)

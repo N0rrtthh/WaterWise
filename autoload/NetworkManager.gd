@@ -1063,19 +1063,9 @@ func _execute_pause() -> void:
 		current_scene.call("_on_remote_pause")
 
 func request_resume() -> void:
-	# Request game resume (either player can resume, but host has priority)
-	if is_host:
-		_log("▶️ Resume requested by host")
-		rpc("_execute_resume")
-	else:
-		_log("▶️ Resume requested by Player %d" % local_player_id)
-		rpc_id(1, "_request_resume_from_client")
-
-@rpc("any_peer", "reliable")
-func _request_resume_from_client() -> void:
-	# Client requests host to resume
-	if is_host:
-		rpc("_execute_resume")
+	# Request game resume — any peer can broadcast resume (matches pause behaviour).
+	_log("▶️ Resume requested by Player %d" % local_player_id)
+	rpc("_execute_resume")
 
 @rpc("any_peer", "call_local", "reliable")
 func _execute_resume() -> void:
@@ -1349,6 +1339,7 @@ func _check_both_completed() -> void:
 			break
 	var my_score: int = my_data.get("score", 0)
 	if my_score > 0 and save_mgr and save_mgr.has_method("add_droplets"):
+		@warning_ignore("integer_division")
 		var earned: int = max(1, my_score / 10)
 		save_mgr.add_droplets(earned)
 		if gm and gm.has_method("add_session_droplets"):

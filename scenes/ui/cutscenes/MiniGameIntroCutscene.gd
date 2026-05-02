@@ -23,7 +23,7 @@ var anim_options: Dictionary = {
 var _current_game_key: String = ""
 
 func _loc(key: String, fallback: String) -> String:
-	if Localization:
+	if Localization and Localization.translations.has(key):
 		var translated = Localization.get_text(key)
 		if translated != key:
 			return translated
@@ -1481,9 +1481,9 @@ func _animate_rain_falling(parent: Node2D, delay: float) -> void:
 	for i in 5:
 		var r = parent.get_node_or_null("Rain_%d" % i)
 		if r:
-			var tr = create_tween()
-			tr.tween_interval(delay + i * 0.1)
-			var lp = tr.set_loops(4)
+			var tw = create_tween()
+			tw.tween_interval(delay + i * 0.1)
+			var lp = tw.set_loops(4)
 			lp.tween_property(r, "position:y", r.position.y + 25, 0.2).set_ease(Tween.EASE_IN)
 			lp.tween_property(r, "modulate:a", 0.0, 0.05)
 			lp.tween_callback(func():

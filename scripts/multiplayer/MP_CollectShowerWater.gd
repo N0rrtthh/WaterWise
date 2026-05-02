@@ -113,8 +113,7 @@ func _process(delta: float) -> void:
 				
 				if overflows >= MAX_OVERFLOW:
 					overflows = 0
-					if NetworkManager:
-						NetworkManager.lose_life()
+					report_miss_to_host()
 
 func _on_drop_hit_bucket(area: Area2D, drop: Area2D) -> void:
 	if not area.has_meta("water_level"):

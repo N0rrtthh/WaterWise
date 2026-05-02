@@ -9,6 +9,7 @@ var available_water: int = 0
 var sections_washed: int = 0
 var car_sections: Array = []
 var dirty_timer: float = 0.0
+var water_indicator_label: Label
 
 func get_instructions() -> String:
 	return "🚗 WASH CAR\n\nClick dirty car sections to wash them with dish water!\nSections get dirty over time.\n\n⚠️ Let a section stay dirty for 25 seconds and lose 1 life!\n💧 Need water from partner to wash"
@@ -45,6 +46,7 @@ func _create_water_indicator() -> void:
 	label.text = "💧 x 0"
 	label.add_theme_font_size_override("font_size", 32)
 	vbox.add_child(label)
+	water_indicator_label = label
 
 func _create_car() -> void:
 	var sections_data = [
@@ -107,8 +109,7 @@ func _process(_delta: float) -> void:
 				_log("💩 Section too dirty - lose 1 life!")
 				section.set_meta("dirty", false)
 				section.get_node("Visual").modulate = Color(0.8, 0.2, 0.2)
-				if NetworkManager:
-					NetworkManager.lose_life()
+				report_miss_to_host()
 
 func _on_section_clicked(_viewport: Node, event: InputEvent, _shape_idx: int, section: Area2D) -> void:
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
@@ -146,9 +147,8 @@ func _on_resource_received(_from_player: int, resource_type: String, amount: int
 		_log("📥 Received %d dish water (Total: %d)" % [amount, available_water])
 
 func _update_water_display() -> void:
-	var label = get_node_or_null("PanelContainer/VBoxContainer/WaterLabel")
-	if label:
-		label.text = "💧 x %d" % available_water
+	if water_indicator_label:
+		water_indicator_label.text = "💧 x %d" % available_water
 
 func _on_game_over() -> void:
 	super._on_game_over()

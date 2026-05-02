@@ -90,8 +90,7 @@ func _process(delta: float) -> void:
 				
 				if drops_missed >= MAX_MISSED:
 					drops_missed = 0
-					if NetworkManager:
-						NetworkManager.lose_life()
+					report_miss_to_host()
 
 func _on_drop_hit(area: Area2D, drop: Area2D) -> void:
 	if area != bucket:

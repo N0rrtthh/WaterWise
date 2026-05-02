@@ -127,11 +127,32 @@ func _ready() -> void:
 		battery_source = "android_real"
 	else:
 		battery_source = "desktop_estimate"
+	# Load configured battery capacity (allow setting to match actual test phone)
+	call_deferred("_load_battery_capacity")
 	_create_overlay()
 	_apply_saved_dev_visibility()
 	print("📈 PerformanceProfiler ready (ISO/IEC 25010 monitoring)")
 	print("   Press F11 to toggle performance overlay")
 	print("   Battery source: %s" % battery_source)
+
+## Configure the test phone's actual battery capacity in mAh.
+## Must be called before testing begins. Example: set_battery_capacity_mah(3000.0)
+## Persisted in SaveManager key "device_battery_mah".
+func set_battery_capacity_mah(mah: float) -> void:
+	_battery_capacity_mah = max(500.0, mah)
+	if SaveManager:
+		SaveManager.set_setting("device_battery_mah", _battery_capacity_mah)
+	print("🔋 Battery capacity set to %.0f mAh" % _battery_capacity_mah)
+
+func get_battery_capacity_mah() -> float:
+	return _battery_capacity_mah
+
+func _load_battery_capacity() -> void:
+	if SaveManager:
+		var saved: float = float(SaveManager.get_setting("device_battery_mah", 0.0))
+		if saved >= 500.0:
+			_battery_capacity_mah = saved
+			print("🔋 Battery capacity loaded from settings: %.0f mAh" % _battery_capacity_mah)
 
 func _create_overlay() -> void:
 	# Create an always-on-top CanvasLayer for the profiler overlay
