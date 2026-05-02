@@ -107,9 +107,13 @@ func _apply_difficulty_parameters() -> void:
 func _show_role_instructions() -> void:
 	# Show instructions based on player role
 	if player_role == "Collector":
-		task_label.text = "YOUR TASK: Place rainwater containers under roof gutters\nKung saan dumadaloy ang tubig-ulan mula sa bubong"
+		task_label.text = (
+				"YOUR TASK: Place rainwater containers under roof gutters\n"
+				+ "Kung saan dumadaloy ang tubig-ulan mula sa bubong")
 	elif player_role == "User":
-		task_label.text = "YOUR TASK: Use collected rainwater for toilet/plants\nGamitin ang tubig-ulan para sa inidoro at halaman"
+		task_label.text = (
+				"YOUR TASK: Use collected rainwater for toilet/plants\n"
+				+ "Gamitin ang tubig-ulan para sa inidoro at halaman")
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # COUNTDOWN AND GAME START
@@ -161,18 +165,17 @@ func _process(delta: float) -> void:
 	# Update accuracy display
 	if total_tasks > 0:
 		accuracy = float(completed_tasks) / float(total_tasks)
-		accuracy_label.text = "Completed: %d/%d (%.0f%%)" % [completed_tasks, total_tasks, accuracy * 100]
+		accuracy_label.text = (
+				"Completed: %d/%d (%.0f%%)" % [completed_tasks, total_tasks, accuracy * 100])
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # PLAYER 1 (COLLECTOR) GAME LOGIC
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func _generate_collector_game() -> void:
-	# Generate container placement game for Player 1
-	# TODO: Create visual house with gutters
-	# TODO: Generate placement spots (some correct, some incorrect)
-	# TODO: Allow drag-and-drop of containers
-	# For now, simplified version
+	# Generate container placement game for Player 1 (simplified implementation).
+	# Visual house/gutter layout and drag-and-drop placement are deferred to a
+	# future content pass; current version uses keyboard input for testing.
 	print("🪣 Collector game generated: Place %d containers" % containers_to_place)
 
 func _on_container_placed(_position: Vector2, is_correct: bool) -> void:
@@ -204,10 +207,9 @@ func _complete_collector_task() -> void:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func _generate_user_game() -> void:
-	# Generate water usage game for Player 2
-	# TODO: Show water usage scenarios (toilet, plants, drinking?, cooking?)
-	# TODO: Player must select correct uses (not drinking/cooking)
-	# For now, simplified version
+	# Generate water usage game for Player 2 (simplified implementation).
+	# Full scenario UI (toilet, plants, correct/incorrect use selection) is
+	# deferred to a future content pass; current version uses keyboard input.
 	print("💧 User game generated: %d water usage scenarios" % water_usage_scenarios)
 	
 	# Wait to receive water volume from Player 1
@@ -253,7 +255,8 @@ func _send_performance() -> void:
 	if is_instance_valid(GameManager):
 		GameManager.submit_coop_performance(accuracy, completion_time, errors)
 	
-	print("📊 Performance sent - Accuracy: %.2f, Time: %.2fs, Errors: %d" % [accuracy, completion_time, errors])
+	print("📊 Performance sent - Accuracy: %.2f, Time: %.2fs, Errors: %d"
+			% [accuracy, completion_time, errors])
 
 func _on_partner_performance_received(player_id: int, performance: Dictionary) -> void:
 	# Receive partner's performance
@@ -309,17 +312,21 @@ func _show_team_results() -> void:
 	var team_success = (accuracy > 0.5 and partner_accuracy > 0.5)
 	
 	# Get team metrics from CoopAdaptation
-	var _team_metrics = CoopAdaptation.get_team_metrics() if is_instance_valid(CoopAdaptation) else {}
+	var _team_metrics = (
+			CoopAdaptation.get_team_metrics() if is_instance_valid(CoopAdaptation) else {})
 	
 	print("🏁 TEAM RESULT: %s" % ("SUCCESS" if team_success else "FAILED"))
 	print("   Your Accuracy: %.2f" % accuracy)
 	print("   Partner Accuracy: %.2f" % partner_accuracy)
 	
-	# TODO: Show proper results screen
+	# Display results briefly then return to the multiplayer menu via GameManager
+	# so the disconnect/notice flow is consistent with other multiplayer games.
 	await get_tree().create_timer(3.0).timeout
-	
-	# Return to lobby
-	get_tree().change_scene_to_file("res://scenes/ui/MultiplayerLobby.tscn")
+
+	if GameManager and GameManager.has_method("return_to_multiplayer_menu"):
+		GameManager.return_to_multiplayer_menu()
+	else:
+		get_tree().change_scene_to_file("res://scenes/ui/MultiplayerLobby.tscn")
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # SIMPLIFIED GAME CONTROLS (FOR DEMONSTRATION)

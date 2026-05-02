@@ -8,11 +8,15 @@ extends Node
 ## ═══════════════════════════════════════════════════════════════════
 
 func _ready() -> void:
+	# This validation script is for editor/debug use only.
+	if not OS.is_debug_build():
+		return
+
 	print("\n" + "=".repeat(70))
 	print("GAME OBJECT SCALING VALIDATION")
 	print("=".repeat(70) + "\n")
 	
-	# Enable mobile mode
+	# Enable mobile mode (debug builds only)
 	MobileUIManager.enable_debug_mobile_mode(true)
 	
 	validate_interactive_object_scaling()
