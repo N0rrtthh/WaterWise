@@ -1224,7 +1224,12 @@ func start_round() -> void:
 	round_completion_status.clear()
 	_log("🎮 Round started")
 
-func report_player_completion(success: bool, score: int, accuracy: float = -1.0, reaction_time_ms: int = -1) -> void:
+func report_player_completion(
+	success: bool,
+	score: int,
+	accuracy: float = -1.0,
+	reaction_time_ms: int = -1
+) -> void:
 	# Report that local player has completed their game
 	if not round_in_progress:
 		round_in_progress = true
@@ -1248,7 +1253,13 @@ func report_player_completion(success: bool, score: int, accuracy: float = -1.0,
 	_check_both_completed()
 
 @rpc("any_peer", "reliable")
-func _sync_player_completion(peer_id: int, success: bool, score: int, accuracy: float = -1.0, reaction_time_ms: int = -1) -> void:
+func _sync_player_completion(
+	peer_id: int,
+	success: bool,
+	score: int,
+	accuracy: float = -1.0,
+	reaction_time_ms: int = -1
+) -> void:
 	# Receive completion report from remote player
 	round_completion_status[peer_id] = {
 		"success": success,

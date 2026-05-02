@@ -303,9 +303,9 @@ func _try_advance_story_screen() -> bool:
 	if story.get("_is_finishing"):
 		return true
 	# Advance to the next page / finish the story
-	if story.has_method("_advance_page"):
+	if story.has_method("advance_page"):
 		print("🤖 AutoPlay: advancing StoryScreen page")
-		story._advance_page()
+		story.advance_page()
 	return true
 
 func _find_story_screen_node(node: Node) -> Node:
@@ -1212,7 +1212,7 @@ func _play_droplet_dash(_delta: float) -> void:
 	var obstacles: Array = g.get("obstacles")
 	# Score each lane (higher = safer, fewer obstacles ahead)
 	var lane_scores: Array = []
-	for _lane_i in range(lane_count):
+	for lane_index in range(lane_count):
 		lane_scores.append(0.0)
 	if obstacles != null:
 		for obs in obstacles:
@@ -1360,7 +1360,10 @@ func register_multiplayer_game(game: Node, mode: String) -> void:
 	else:
 		auto_play_strategy = "tap"  # safe fallback
 	action_timer = 0.0
-	print("🤖 Auto-play registered MP game: %s (role: %s, strategy: %s)" % [game_name, mode, auto_play_strategy])
+	print(
+		"🤖 Auto-play registered MP game: %s (role: %s, strategy: %s)"
+		% [game_name, mode, auto_play_strategy]
+	)
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # STATS & REPORTING

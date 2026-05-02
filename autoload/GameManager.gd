@@ -1311,7 +1311,11 @@ func complete_minigame(
 		# This is the RULE-BASED ROLLING WINDOW ALGORITHM in action!
 		# IMPORTANT: capture played difficulty BEFORE add_performance() may update it,
 		# so the session log records what difficulty the player actually experienced.
-		var _sp_diff_played = AdaptiveDifficulty.get_current_difficulty() if AdaptiveDifficulty else "Unknown"
+		var _sp_diff_played = (
+			AdaptiveDifficulty.get_current_difficulty()
+			if AdaptiveDifficulty
+			else "Unknown"
+		)
 		if AdaptiveDifficulty:
 			AdaptiveDifficulty.add_performance(accuracy, reaction_time, mistakes, game_name)
 		# Log SP game to SessionLogger for thesis defence export
@@ -1322,7 +1326,15 @@ func complete_minigame(
 			var _sm = get_node_or_null("/root/SaveManager")
 			if _sm and _sm.has_method("get_droplets"):
 				_droplets_earned = int(_sm.get_droplets())
-			_session_logger.record_sp_game(game_name, round_score, accuracy, reaction_time, mistakes, _sp_diff_played, _droplets_earned)
+			_session_logger.record_sp_game(
+				game_name,
+				round_score,
+				accuracy,
+				reaction_time,
+				mistakes,
+				_sp_diff_played,
+				_droplets_earned
+			)
 	else:
 		# Multiplayer uses CoopAdaptation (per-player difficulty with sync scoring)
 		# Note: In multiplayer, performance is tracked via submit_score RPC
