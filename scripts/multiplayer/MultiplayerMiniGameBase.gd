@@ -496,6 +496,181 @@ func _setup_multiplayer_ui() -> void:
 	_create_countdown_overlay()
 	_create_instruction_overlay()
 	_create_controls_panel()
+	_setup_cutscene_player()
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# CUTSCENE SYSTEM
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+var cutscene_player: Node = null
+
+func _setup_cutscene_player() -> void:
+	## Initialize SimpleCutscenePlayer for win/fail animations
+	var SimpleCutscenePlayer = load("res://scripts/cutscenes/SimpleCutscenePlayer.gd")
+	if SimpleCutscenePlayer:
+		cutscene_player = SimpleCutscenePlayer.new()
+		cutscene_player.visible = false
+		cutscene_player.set_anchors_preset(Control.PRESET_FULL_RECT)
+		hud_layer.add_child(cutscene_player)
+
+func _show_success_cutscene() -> void:
+	## Show animated success cutscene
+	if AudioManager:
+		AudioManager.play_music("outcome_win", 0.18)
+	
+	if cutscene_player and cutscene_player.has_method("play_cutscene"):
+		cutscene_player.visible = true
+		cutscene_player.play_cutscene(game_name, 0)  # 0 = win
+		await cutscene_player.cutscene_finished
+		cutscene_player.visible = false
+
+func _show_failure_cutscene() -> void:
+	## Show animated failure cutscene
+	if AudioManager:
+		AudioManager.play_music("outcome_fail", 0.18)
+	
+	if cutscene_player and cutscene_player.has_method("play_cutscene"):
+		cutscene_player.visible = true
+		cutscene_player.play_cutscene(game_name, 1)  # 1 = fail
+		await cutscene_player.cutscene_finished
+		cutscene_player.visible = false
+
+func _show_scoring_page(success: bool) -> void:
+	## Show scoring/tally page with shared lives (like single-player)
+	var scoring_overlay = Control.new()
+	scoring_overlay.name = "ScoringOverlay"
+	scoring_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
+	hud_layer.add_child(scoring_overlay)
+	
+	# Frosted backdrop
+	var bg = ColorRect.new()
+	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	bg.color = Color(0.04, 0.08, 0.14, 0.92)
+	scoring_overlay.add_child(bg)
+	
+	var center = CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	scoring_overlay.add_child(center)
+	
+	# Card panel
+	var panel = PanelContainer.new()
+	var card_style = StyleBoxFlat.new()
+	card_style.bg_color = Color(0.96, 0.93, 0.87, 0.98)
+	card_style.corner_radius_top_left = 32
+	card_style.corner_radius_top_right = 32
+	card_style.corner_radius_bottom_left = 32
+	card_style.corner_radius_bottom_right = 32
+	card_style.border_width_left = 3
+	card_style.border_width_right = 3
+	card_style.border_width_top = 3
+	card_style.border_width_bottom = 3
+	card_style.border_color = Color(0.4, 0.72, 0.9, 0.6)
+	card_style.shadow_size = 12
+	card_style.shadow_color = Color(0, 0, 0, 0.25)
+	card_style.content_margin_left = 60
+	card_style.content_margin_right = 60
+	card_style.content_margin_top = 48
+	card_style.content_margin_bottom = 48
+	panel.add_theme_stylebox_override("panel", card_style)
+	center.add_child(panel)
+	
+	var vbox = VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 24)
+	vbox.custom_minimum_size = Vector2(600, 0)
+	panel.add_child(vbox)
+	
+	# Title
+	var title = Label.new()
+	title.text = "VICTORY!" if success else "DEFEAT"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 56)
+	title.add_theme_color_override(
+			"font_color",
+			Color(0.3, 0.8, 0.4) if success else Color(0.9, 0.3, 0.3))
+	title.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.3))
+	title.add_theme_constant_override("outline_size", 4)
+	vbox.add_child(title)
+	
+	# Separator
+	var sep1 = HSeparator.new()
+	vbox.add_child(sep1)
+	
+	# ═══════════════════════════════════════════════════════════════════
+	# SHARED LIVES DISPLAY (Key difference from single-player)
+	# ═══════════════════════════════════════════════════════════════════
+	var lives_box = HBoxContainer.new()
+	lives_box.alignment = BoxContainer.ALIGNMENT_CENTER
+	lives_box.add_theme_constant_override("separation", 12)
+	vbox.add_child(lives_box)
+	
+	var lives_icon = Label.new()
+	lives_icon.text = "❤️"
+	lives_icon.add_theme_font_size_override("font_size", 36)
+	lives_box.add_child(lives_icon)
+	
+	var lives_label = Label.new()
+	var team_lives = 3
+	if GameManager:
+		team_lives = GameManager.team_lives
+	elif NetworkManager:
+		team_lives = NetworkManager.team_lives
+	lives_label.text = "SHARED LIVES: %d" % team_lives
+	lives_label.add_theme_font_size_override("font_size", 32)
+	lives_label.add_theme_color_override("font_color", Color(0.9, 0.3, 0.3))
+	lives_box.add_child(lives_label)
+	
+	# Score display
+	var score_box = HBoxContainer.new()
+	score_box.alignment = BoxContainer.ALIGNMENT_CENTER
+	score_box.add_theme_constant_override("separation", 12)
+	vbox.add_child(score_box)
+	
+	var score_icon = Label.new()
+	score_icon.text = "⭐"
+	score_icon.add_theme_font_size_override("font_size", 36)
+	score_box.add_child(score_icon)
+	
+	var score_label = Label.new()
+	var global_score = 0
+	if GameManager and GameManager.has_method("get_global_score"):
+		global_score = GameManager.get_global_score()
+	elif NetworkManager and NetworkManager.has_method("get_total_score"):
+		global_score = NetworkManager.get_total_score()
+	score_label.text = "TEAM SCORE: %d" % global_score
+	score_label.add_theme_font_size_override("font_size", 32)
+	score_label.add_theme_color_override("font_color", Color(0.45, 0.38, 0.2))
+	score_box.add_child(score_label)
+	
+	# Separator
+	var sep2 = HSeparator.new()
+	vbox.add_child(sep2)
+	
+	# Continue message
+	var continue_label = Label.new()
+	continue_label.text = "Waiting for next game..." if success else "Better luck next time!"
+	continue_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	continue_label.add_theme_font_size_override("font_size", 24)
+	continue_label.add_theme_color_override("font_color", Color(0.5, 0.5, 0.5))
+	vbox.add_child(continue_label)
+	
+	# Animate entrance
+	scoring_overlay.modulate.a = 0.0
+	var tween = create_tween()
+	tween.tween_property(scoring_overlay, "modulate:a", 1.0, 0.5)
+	
+	# Wait 3 seconds
+	await get_tree().create_timer(3.0).timeout
+	
+	# Animate exit
+	var exit_tween = create_tween()
+	exit_tween.tween_property(scoring_overlay, "modulate:a", 0.0, 0.5)
+	await exit_tween.finished
+	
+	scoring_overlay.queue_free()
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# GAME OVERLAYS
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 
 func _create_pause_menu() -> void:
@@ -1058,6 +1233,89 @@ func end_game(success: bool) -> void:
 	
 	_log(" Game ended - %s" % ("Success" if success else "Failed"))
 	
+	# ═══════════════════════════════════════════════════════════════════
+	# RECORD PER-DEVICE METRICS TO SESSION LOGGER
+	# ═══════════════════════════════════════════════════════════════════
+	if SessionLogger and SessionLogger.has_method("record_mp_local_round"):
+		# Calculate local performance metrics
+		var my_accuracy: float = 0.0
+		if total_actions > 0:
+			my_accuracy = clamp(float(correct_actions) / float(total_actions), 0.0, 1.0)
+		elif win_quota > 0:
+			my_accuracy = clamp(float(local_score) / float(win_quota), 0.0, 1.0)
+		else:
+			my_accuracy = 1.0 if success else 0.0
+		
+		var my_reaction_time_ms: int = Time.get_ticks_msec() - game_started_time
+		if my_reaction_time_ms < 0:
+			my_reaction_time_ms = 0
+		
+		# Get local difficulty and Φ
+		var my_difficulty: String = "Medium"
+		var my_phi: float = 0.0
+		if CoopAdaptation:
+			my_difficulty = CoopAdaptation.get_player_difficulty(my_player_num)
+			var metrics = CoopAdaptation.get_team_metrics()
+			if my_player_num == 1:
+				my_phi = float(metrics.get("player1_proficiency", 0.0))
+			else:
+				my_phi = float(metrics.get("player2_proficiency", 0.0))
+		
+		# Get partner score (from G-Counter or NetworkManager)
+		var partner_score: int = 0
+		if GameManager and GameManager.has_method("get_global_score"):
+			var total_score = GameManager.get_global_score()
+			partner_score = max(0, total_score - local_score)
+		elif NetworkManager and NetworkManager.has_method("get_total_score"):
+			var total_score = NetworkManager.get_total_score()
+			partner_score = max(0, total_score - local_score)
+		
+		# Connection quality metrics are not exposed by ENetMultiplayerPeer's GDScript API.
+		# Latency and packet loss are logged at 0.0 as intentional placeholders;
+		# they do not affect gameplay or adaptive difficulty calculations.
+		var latency_ms: float = 0.0
+		var packet_loss_pct: float = 0.0
+		
+		# Get round number
+		var round_num: int = 1
+		if GameManager:
+			round_num = GameManager.mp_rounds_count + 1
+		elif NetworkManager:
+			round_num = NetworkManager.rounds_played + 1
+		
+		# Record to SessionLogger
+		SessionLogger.record_mp_local_round(
+			round_num,
+			game_name,
+			local_score,
+			my_accuracy,
+			my_reaction_time_ms,
+			mistakes_made,
+			my_difficulty,
+			my_phi,
+			partner_score,
+			success,
+			latency_ms,
+			packet_loss_pct
+		)
+		
+		_log("📊 Recorded per-device metrics: Score=%d, Acc=%.1f%%, RT=%dms" % [
+			local_score, my_accuracy * 100.0, my_reaction_time_ms
+		])
+	
+	# ═══════════════════════════════════════════════════════════════════
+	# SHOW CUTSCENE (like single-player)
+	# ═══════════════════════════════════════════════════════════════════
+	if success:
+		await _show_success_cutscene()
+	else:
+		await _show_failure_cutscene()
+	
+	# ═══════════════════════════════════════════════════════════════════
+	# SHOW SCORING PAGE (like single-player)
+	# ═══════════════════════════════════════════════════════════════════
+	await _show_scoring_page(success)
+	
 	# Show results/waiting overlay
 	_show_results_screen(success)
 	
@@ -1181,6 +1439,10 @@ func _on_player_left_session(_peer_id: int) -> void:
 	_disconnect_handled = true
 	_log(" Player left session - terminating for all players")
 	
+	# Record network event to SessionLogger
+	if SessionLogger and SessionLogger.has_method("record_mp_network_event"):
+		SessionLogger.record_mp_network_event("peer_disconnected", {"peer_id": _peer_id})
+	
 	game_active = false
 	
 	# Show disconnect message
@@ -1231,6 +1493,10 @@ func _on_server_disconnected() -> void:
 		return
 	_disconnect_handled = true
 	_log(" Server disconnected - terminating session")
+	
+	# Record network event to SessionLogger
+	if SessionLogger and SessionLogger.has_method("record_mp_network_event"):
+		SessionLogger.record_mp_network_event("server_disconnected", {})
 	
 	# Don't call _on_player_left_session to avoid duplicate UI
 	if NetworkManager:
@@ -1395,6 +1661,145 @@ func _create_controls_panel() -> void:
 func get_controls_text() -> String:
 	# Override this to provide game-specific controls
 	return "  Arrow Keys\n Click to interact\n Pause button"
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# VISUAL FEEDBACK & ANIMATIONS (Matching Single-Player Style)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+func play_success_effect() -> void:
+	## Flash screen green for correct action
+	_flash_screen(Color(0.3, 1.0, 0.3, 0.3))
+	
+	# Play success sound
+	if AudioManager:
+		AudioManager.play_collect()
+
+func play_mistake_effect() -> void:
+	## Flash screen red for mistake
+	_flash_screen(Color(1.0, 0.3, 0.3, 0.3))
+	
+	# Play damage sound
+	if AudioManager:
+		AudioManager.play_damage()
+	
+	# Screen shake (if enabled)
+	_shake_camera(0.5)
+
+func play_score_popup(amount: int, position: Vector2) -> void:
+	## Show animated score popup at position
+	var popup = Label.new()
+	popup.text = "+%d" % amount
+	popup.add_theme_font_size_override("font_size", 32)
+	popup.add_theme_color_override("font_color", Color(1.0, 0.95, 0.3))
+	popup.add_theme_color_override("font_outline_color", Color(0.0, 0.0, 0.0, 0.8))
+	popup.add_theme_constant_override("outline_size", 4)
+	popup.position = position
+	popup.z_index = 100
+	add_child(popup)
+	
+	# Animate: float up and fade out
+	var tween = create_tween()
+	tween.set_parallel(true)
+	tween.tween_property(popup, "position:y", position.y - 80, 0.8)\
+		.set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_CUBIC)
+	tween.tween_property(popup, "modulate:a", 0.0, 0.8)\
+		.set_ease(Tween.EASE_IN)
+	tween.tween_property(popup, "scale", Vector2(1.5, 1.5), 0.3)\
+		.set_ease(Tween.EASE_OUT)
+	tween.finished.connect(popup.queue_free)
+
+func animate_score_label() -> void:
+	## Bounce animation for score label when score increases
+	var score_lbl = hud_layer.get_node_or_null(
+			"MarginContainer/VBoxContainer/HBoxContainer"
+			+ "/PanelContainer3/MarginContainer/HBoxContainer/ScoreLabel")
+	if not score_lbl:
+		return
+	
+	var original_scale = score_lbl.scale
+	var tween = create_tween()
+	tween.tween_property(score_lbl, "scale", Vector2(1.3, 1.3), 0.1)\
+		.set_ease(Tween.EASE_OUT)
+	tween.tween_property(score_lbl, "scale", original_scale, 0.15)\
+		.set_ease(Tween.EASE_IN).set_trans(Tween.TRANS_BOUNCE)
+
+func animate_life_lost() -> void:
+	## Shake and pulse animation for lives label when life is lost
+	var lives_lbl = hud_layer.get_node_or_null(
+			"MarginContainer/VBoxContainer/HBoxContainer"
+			+ "/PanelContainer2/MarginContainer/HBoxContainer/LivesLabel")
+	if not lives_lbl:
+		return
+	
+	# Pulse red
+	var tween = create_tween()
+	tween.tween_property(lives_lbl, "modulate", Color(2.0, 0.3, 0.3), 0.1)
+	tween.tween_property(lives_lbl, "modulate", Color.WHITE, 0.3)
+	
+	# Scale pulse
+	var original_scale = lives_lbl.scale
+	tween.parallel().tween_property(lives_lbl, "scale", Vector2(1.4, 1.4), 0.1)
+	tween.tween_property(lives_lbl, "scale", original_scale, 0.2)\
+		.set_trans(Tween.TRANS_ELASTIC).set_ease(Tween.EASE_OUT)
+
+func animate_timer_warning() -> void:
+	## Flash timer red when time is running low
+	var timer_lbl = hud_layer.get_node_or_null(
+			"MarginContainer/VBoxContainer/HBoxContainer"
+			+ "/PanelContainer/MarginContainer/HBoxContainer/TimerLabel")
+	if not timer_lbl:
+		return
+	
+	var tween = create_tween()
+	tween.tween_property(timer_lbl, "modulate", Color(2.0, 0.3, 0.3), 0.2)
+	tween.tween_property(timer_lbl, "modulate", Color.WHITE, 0.2)
+
+func _flash_screen(color: Color) -> void:
+	## Create a full-screen flash effect
+	var flash = ColorRect.new()
+	flash.color = color
+	flash.set_anchors_preset(Control.PRESET_FULL_RECT)
+	flash.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	flash.z_index = 90
+	
+	# Add to HUD layer if available, otherwise add to scene
+	if hud_layer:
+		hud_layer.add_child(flash)
+	else:
+		add_child(flash)
+	
+	var tween = create_tween()
+	tween.tween_property(flash, "modulate:a", 0.0, 0.3)
+	tween.finished.connect(flash.queue_free)
+
+func _shake_camera(intensity: float) -> void:
+	## Shake the camera for impact feedback
+	# Check if screen shake is enabled
+	if AccessibilityManager and AccessibilityManager.has_method("is_screen_shake_enabled"):
+		if not AccessibilityManager.is_screen_shake_enabled():
+			return
+	elif SaveManager and SaveManager.has_method("is_screen_shake_enabled"):
+		if not SaveManager.is_screen_shake_enabled():
+			return
+	
+	var camera = get_viewport().get_camera_2d()
+	if not camera:
+		return
+	
+	var original_offset = camera.offset
+	var tween = create_tween()
+	
+	for i in range(5):
+		tween.tween_property(camera, "offset", original_offset + Vector2(
+			randf_range(-intensity * 10, intensity * 10),
+			randf_range(-intensity * 10, intensity * 10)
+		), 0.05)
+	
+	tween.tween_property(camera, "offset", original_offset, 0.05)
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# LOGGING
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func _log(message: String) -> void:
 	# Internal logging
