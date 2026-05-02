@@ -1044,7 +1044,10 @@ func end_game(success: bool) -> void:
 	game_active = false
 	
 	# Unregister from AutoPlayManager
-	if AutoPlayManager and (AutoPlayManager.is_auto_play_enabled() or AutoPlayManager.is_mp_auto_play_enabled()):
+	if AutoPlayManager and (
+		AutoPlayManager.is_auto_play_enabled()
+		or AutoPlayManager.is_mp_auto_play_enabled()
+	):
 		AutoPlayManager.unregister_game()
 	
 	_log(" Game ended - %s" % ("Success" if success else "Failed"))
@@ -1479,10 +1482,18 @@ func _show_game_over_screen() -> void:
 	var _go_rounds: int = 0
 	var _nm_ok_go: bool = NetworkManager != null and NetworkManager.is_multiplayer_connected()
 	if _nm_ok_go:
-		_go_score = NetworkManager.get_total_score() if NetworkManager.has_method("get_total_score") else 0
+		_go_score = (
+			NetworkManager.get_total_score()
+			if NetworkManager.has_method("get_total_score")
+			else 0
+		)
 		_go_rounds = NetworkManager.rounds_survived if "rounds_survived" in NetworkManager else 0
 	elif GameManager:
-		_go_score = GameManager.get_global_score() if GameManager.has_method("get_global_score") else local_score
+		_go_score = (
+			GameManager.get_global_score()
+			if GameManager.has_method("get_global_score")
+			else local_score
+		)
 		_go_rounds = 0
 	var score_label = Label.new()
 	score_label.text = "Final Score: %d\nRounds Survived: %d" % [_go_score, _go_rounds]
@@ -1745,8 +1756,16 @@ func _show_round_summary(
 
 	# Team totals
 	var _nm_ok_rs2: bool = NetworkManager != null and NetworkManager.is_multiplayer_connected()
-	var _rs_lives: int = NetworkManager.team_lives if _nm_ok_rs2 else (GameManager.team_lives if GameManager else 0)
-	var _rs_rounds: int = NetworkManager.rounds_survived if (_nm_ok_rs2 and "rounds_survived" in NetworkManager) else 0
+	var _rs_lives: int = (
+		NetworkManager.team_lives
+		if _nm_ok_rs2
+		else (GameManager.team_lives if GameManager else 0)
+	)
+	var _rs_rounds: int = (
+		NetworkManager.rounds_survived
+		if (_nm_ok_rs2 and "rounds_survived" in NetworkManager)
+		else 0
+	)
 	var total_label = Label.new()
 	total_label.text = "⭐ Team: %d   ❤ x%d   Rounds: %d" % [
 		p1_score + p2_score, _rs_lives, _rs_rounds
