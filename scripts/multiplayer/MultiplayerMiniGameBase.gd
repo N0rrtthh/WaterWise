@@ -38,6 +38,7 @@ var my_role: String = ""
 var partner_role: String = ""
 var local_score: int = 0
 var is_waiting_for_partner: bool = false
+var _disconnect_handled: bool = false
 
 # Performance tracking for CoopAdaptation
 var mistakes_made: int = 0
@@ -129,6 +130,11 @@ func _ready() -> void:
 			NetworkManager.player_disconnected.connect(_on_player_left_session)
 		if not NetworkManager.server_disconnected.is_connected(_on_server_disconnected):
 			NetworkManager.server_disconnected.connect(_on_server_disconnected)
+	# Also listen for MultiplayerAPI disconnects (GameManager path fallback)
+	if not multiplayer.peer_disconnected.is_connected(_on_player_left_session):
+		multiplayer.peer_disconnected.connect(_on_player_left_session)
+	if not multiplayer.server_disconnected.is_connected(_on_server_disconnected):
+		multiplayer.server_disconnected.connect(_on_server_disconnected)
 	# Connect GameManager resource-pass signal (GM path)
 	if GameManager and not _nm_has_role:
 		if not GameManager.gm_resource_received.is_connected(_on_resource_received):
@@ -1170,6 +1176,9 @@ func _on_remote_resume() -> void:
 
 func _on_player_left_session(_peer_id: int) -> void:
 	# Handle when any player leaves - terminate session for both players
+	if _disconnect_handled:
+		return
+	_disconnect_handled = true
 	_log(" Player left session - terminating for all players")
 	
 	game_active = false
@@ -1218,6 +1227,9 @@ func _on_player_left_session(_peer_id: int) -> void:
 
 func _on_server_disconnected() -> void:
 	# Handle when server disconnects (Host quits)
+	if _disconnect_handled:
+		return
+	_disconnect_handled = true
 	_log(" Server disconnected - terminating session")
 	
 	# Don't call _on_player_left_session to avoid duplicate UI
