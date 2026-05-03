@@ -112,10 +112,13 @@ func _ready() -> void:
 	_build_title()
 	_setup_signboard_highscore()
 	_apply_responsive_layout()
+	if is_instance_valid(top_right_panel):
+		top_left_panel.visible = false
 	_animate_entrance()
 	_animate_waves()
 	_animate_clouds()
 	_spawn_decorations()
+
 
 	# Re-layout when viewport resizes (mobile rotation, window drag, etc.)
 	get_viewport().size_changed.connect(_on_viewport_resized)
@@ -684,26 +687,20 @@ func _setup_signboard_highscore() -> void:
 	_signboard_label.z_index = 8
 	add_child(_signboard_label)
 
-	# Set the score text — show highest score across all minigames
+	# Set the score text — show highest recorded score across all minigames
 	var score_value := 0
-	if SaveManager and SaveManager.has_method("get_high_score"):
-		# Check all known minigame names (must match the game_name values in each .gd file)
-		var game_ids = [
-			"Catch The Rain", "Filter Builder", "Cloud Catcher",
-			"Cover The Drum", "Droplet Dash", "Greywater Sorter",
-			"Mud Pie Maker", "Plug The Leak", "Quick Shower",
-			"Rice Wash Rescue", "Scrub To Save", "Spot The Speck",
-			"Swipe The Soap", "Thirsty Plant", "Timing Tap",
-			"Toilet Tank Fix", "Trace Pipe Path", "Turn Off Tap",
-			"Vegetable Bath", "Water Memory", "Water Plant",
-			"Wring It Out", "Bucket Brigade", "Fix the Leak",
-		]
-		for gid in game_ids:
-			var hs_result = SaveManager.call("get_high_score", gid)
+	if SaveManager:
+		var hs_dict = SaveManager.high_scores
+		if hs_dict is Dictionary:
+			for record in hs_dict.values():
+				if record is Dictionary:
+					var s = int(record.get("score", 0))
+					if s > score_value:
+						score_value = s
+		elif SaveManager.has_method("get_high_score"):
+			var hs_result = SaveManager.get_high_score()
 			if hs_result is Dictionary:
-				var s = int(hs_result.get("score", 0))
-				if s > score_value:
-					score_value = s
+				score_value = int(hs_result.get("score", 0))
 
 	# Also check session high_score from GameManager as a fallback
 	if GameManager and GameManager.high_score > score_value:

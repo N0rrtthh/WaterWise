@@ -279,6 +279,10 @@ func record_mp_local_round(
 	packet_loss_pct: float = 0.0
 ) -> void:
 	## Record local player's performance in this MP round
+	var connection_metrics_note := (
+		"latency and packet_loss are placeholders (0.0) - "
+		+ "ENet does not expose these via GDScript"
+	)
 	var record: Dictionary = {
 		"round_num": round_num,
 		"game_name": game_name,
@@ -300,7 +304,7 @@ func record_mp_local_round(
 		# Connection metrics (note: latency/packet_loss are placeholders, ENet doesn't expose these)
 		"latency_ms": snapf(latency_ms, 1),
 		"packet_loss_pct": snapf(packet_loss_pct, 2),
-		"connection_metrics_note": "latency and packet_loss are placeholders (0.0) — ENet does not expose these via GDScript"
+			"connection_metrics_note": connection_metrics_note
 	}
 	mp_local_performance.append(record)
 	
@@ -332,7 +336,7 @@ func record_mp_network_event(event_type: String, details: Dictionary = {}) -> vo
 func _get_local_player_num() -> int:
 	if GameManager:
 		return GameManager.local_player_num
-	elif NetworkManager:
+	if NetworkManager:
 		return NetworkManager.get_local_player_num()
 	return 0
 
@@ -342,8 +346,8 @@ func _get_local_player_num() -> int:
 
 func _on_sp_difficulty_changed(old_diff: String, new_diff: String, reason: String) -> void:
 	var metrics: Dictionary = {}
-	if AdaptiveDifficulty and AdaptiveDifficulty.has_method("_calculate_window_metrics"):
-		metrics = AdaptiveDifficulty._calculate_window_metrics()
+	if AdaptiveDifficulty and AdaptiveDifficulty.has_method("get_window_metrics"):
+		metrics = AdaptiveDifficulty.get_window_metrics()
 
 	sp_difficulty_changes.append({
 		"elapsed_sec": _elapsed(),
@@ -436,6 +440,7 @@ func _on_perf_warning(metric: String, value: float, threshold: float) -> void:
 func _take_perf_snapshot() -> void:
 	if not PerformanceProfiler:
 		return
+	var thermal_source := PerformanceProfiler.get_thermal_source()
 
 	var snap: Dictionary = {
 		"elapsed_sec": _elapsed(),
@@ -443,7 +448,7 @@ func _take_perf_snapshot() -> void:
 		"fps_avg": snapf(PerformanceProfiler.fps_avg, 1),
 		"memory_mb": snapf(PerformanceProfiler.memory_current_mb, 2),
 		"cpu_temp_c": snapf(PerformanceProfiler.cpu_temp_c, 1),
-		"thermal_source": PerformanceProfiler._thermal_source,
+		"thermal_source": thermal_source,
 		"battery_pct": PerformanceProfiler.battery_pct_current,
 		"battery_mah": snapf(PerformanceProfiler.estimated_battery_mah, 3),
 		"battery_mah_per_min": snapf(PerformanceProfiler.battery_drain_per_min, 3),
@@ -482,6 +487,9 @@ func get_current_summary() -> Dictionary:
 	var lat_max: float = PerformanceProfiler.algo_latency_max_ms if PerformanceProfiler else 0.0
 	var batt: float = PerformanceProfiler.battery_drain_per_min if PerformanceProfiler else 0.0
 	var _ratio: float = PerformanceProfiler.rule_based_vs_dl_ratio if PerformanceProfiler else 0.0
+	var final_difficulty := "N/A"
+	if AdaptiveDifficulty:
+		final_difficulty = AdaptiveDifficulty.get_current_difficulty()
 
 	return {
 		"session_id": session_id,
@@ -494,7 +502,7 @@ func get_current_summary() -> Dictionary:
 		"mp_total_score": mp_total_score,
 		"total_droplets": total_droplets_earned,
 		# SP Algorithm
-		"sp_difficulty": AdaptiveDifficulty.get_current_difficulty() if AdaptiveDifficulty else "N/A",
+		"sp_difficulty": final_difficulty,
 		"phi": _get_current_phi(),
 		"wma": _get_current_wma(),
 		"cp": _get_current_cp(),
@@ -587,6 +595,12 @@ func export_session() -> String:
 	var temp_stats := _calc_snapshot_stats("cpu_temp_c", 1)
 	var mem_stats := _calc_snapshot_stats("memory_mb", 2)
 	var batt_pct_stats := _calc_snapshot_stats("battery_pct", 1, true, -1.0)
+	var thermal_source := "unknown"
+	var thermal_data_available := false
+	if PerformanceProfiler:
+		thermal_source = PerformanceProfiler.get_thermal_source()
+		thermal_data_available = PerformanceProfiler.has_thermal_sensor_data()
+	var thermal_passed := cpu_temp_peak_c <= 45.0 and throttles == 0
 
 	var perf_summary: Dictionary = {
 		"iso_25010_compliant": iso_pass,
@@ -615,13 +629,9 @@ func export_session() -> String:
 			"average_c": temp_stats.get("avg", 0.0),
 			"throttle_events": throttles,
 			"throttle_details": get_throttle_events(),
-			"thermal_source": PerformanceProfiler._thermal_source if PerformanceProfiler else "unknown",
-			"data_available": (PerformanceProfiler._thermal_source == "sensor") if PerformanceProfiler else false,
-			"passed": (
-				(cpu_temp_peak_c <= 45.0 and throttles == 0)
-				if (PerformanceProfiler and PerformanceProfiler._thermal_source == "sensor")
-				else "N/A (no sensor data)"
-			)
+			"thermal_source": thermal_source,
+			"data_available": thermal_data_available,
+			"passed": thermal_passed if thermal_data_available else false
 		},
 		"algorithm_latency": {
 			"budget_ms": 16.0,
@@ -654,11 +664,14 @@ func export_session() -> String:
 	}
 
 	# ── SP algorithm summary ──────────────────────────────────────────
+	var final_difficulty := "N/A"
+	if AdaptiveDifficulty:
+		final_difficulty = AdaptiveDifficulty.get_current_difficulty()
 	var sp_algo: Dictionary = {
 		"algorithm": "Rule-Based Rolling Window with Proficiency Index (Φ)",
 		"window_size": AdaptiveDifficulty.window_size if AdaptiveDifficulty else 5,
 		"warmup_games": AdaptiveDifficulty.min_games_before_adaptation if AdaptiveDifficulty else 3,
-		"final_difficulty": AdaptiveDifficulty.get_current_difficulty() if AdaptiveDifficulty else "N/A",
+		"final_difficulty": final_difficulty,
 		"final_phi": _get_current_phi(),
 		"final_wma": _get_current_wma(),
 		"final_cp": _get_current_cp(),
@@ -880,7 +893,7 @@ func _write_txt_report(report: Dictionary, txt_path: String) -> bool:
 	f.store_line("  Thermal Source     : " + str(therm.get("thermal_source", "unknown")))
 	f.store_line("  Algo Latency Avg   : " + str(lat_d.get("avg_ms", 0.0)) + " ms")
 	f.store_line("  Algo Latency Max   : " + str(lat_d.get("max_ms", 0.0)) + " ms")
-	f.store_line("  Battery % Start/Min/Avg/Max: %s / %s / %s / %s" % [
+	f.store_line("  Battery %% Start/Min/Avg/Max: %s / %s / %s / %s" % [
 		str(batt_d.get("start_pct", -1)),
 		str(batt_d.get("minimum_pct", -1)),
 		str(batt_d.get("average_pct", -1)),
@@ -963,6 +976,9 @@ func export_session_txt() -> String:
 	var temp_stats := _calc_snapshot_stats("cpu_temp_c", 1)
 	var mem_stats := _calc_snapshot_stats("memory_mb", 2)
 	var batt_pct_stats := _calc_snapshot_stats("battery_pct", 1, true, -1.0)
+	var thermal_source := "unknown"
+	if PerformanceProfiler:
+		thermal_source = PerformanceProfiler.get_thermal_source()
 
 	var perf_summary: Dictionary = {
 		"iso_25010_compliant": iso_pass,
@@ -984,7 +1000,7 @@ func export_session_txt() -> String:
 			"peak_c": temp_stats.get("max", snapf(cpu_temp_peak_c, 1)),
 			"average_c": temp_stats.get("avg", 0.0),
 			"throttle_events": throttles, "throttle_details": get_throttle_events(),
-			"thermal_source": PerformanceProfiler._thermal_source if PerformanceProfiler else "unknown",
+			"thermal_source": thermal_source,
 			"passed": cpu_temp_peak_c <= 45.0 and throttles == 0},
 		"algorithm_latency": {"budget_ms": 16.0, "avg_ms": algo_lat_avg,
 			"max_ms": algo_lat_max, "passed": algo_lat_max <= 16.0},
@@ -1006,11 +1022,14 @@ func export_session_txt() -> String:
 		"perf_warnings": perf_warnings
 	}
 
+	var final_difficulty := "N/A"
+	if AdaptiveDifficulty:
+		final_difficulty = AdaptiveDifficulty.get_current_difficulty()
 	var sp_algo: Dictionary = {
 		"algorithm": "Rule-Based Rolling Window with Proficiency Index (Φ)",
 		"window_size": AdaptiveDifficulty.window_size if AdaptiveDifficulty else 5,
 		"warmup_games": AdaptiveDifficulty.min_games_before_adaptation if AdaptiveDifficulty else 3,
-		"final_difficulty": AdaptiveDifficulty.get_current_difficulty() if AdaptiveDifficulty else "N/A",
+		"final_difficulty": final_difficulty,
 		"final_phi": _get_current_phi(), "final_wma": _get_current_wma(),
 		"final_cp": _get_current_cp(),
 		"progressive_level": AdaptiveDifficulty.progressive_level if AdaptiveDifficulty else 0,
@@ -1088,18 +1107,18 @@ func _format_duration(sec: float) -> String:
 	return "%02d:%02d:%02d" % [h, m, s]
 
 func _get_current_phi() -> float:
-	if AdaptiveDifficulty and AdaptiveDifficulty.has_method("_calculate_window_metrics"):
-		return snapf(AdaptiveDifficulty._calculate_window_metrics().get("proficiency_index", 0.0), 4)
+	if AdaptiveDifficulty and AdaptiveDifficulty.has_method("get_window_metrics"):
+		return snapf(AdaptiveDifficulty.get_window_metrics().get("proficiency_index", 0.0), 4)
 	return 0.0
 
 func _get_current_wma() -> float:
-	if AdaptiveDifficulty and AdaptiveDifficulty.has_method("_calculate_window_metrics"):
-		return snapf(AdaptiveDifficulty._calculate_window_metrics().get("weighted_accuracy", 0.0), 4)
+	if AdaptiveDifficulty and AdaptiveDifficulty.has_method("get_window_metrics"):
+		return snapf(AdaptiveDifficulty.get_window_metrics().get("weighted_accuracy", 0.0), 4)
 	return 0.0
 
 func _get_current_cp() -> float:
-	if AdaptiveDifficulty and AdaptiveDifficulty.has_method("_calculate_window_metrics"):
-		return snapf(AdaptiveDifficulty._calculate_window_metrics().get("consistency_penalty", 0.0), 4)
+	if AdaptiveDifficulty and AdaptiveDifficulty.has_method("get_window_metrics"):
+		return snapf(AdaptiveDifficulty.get_window_metrics().get("consistency_penalty", 0.0), 4)
 	return 0.0
 
 
@@ -1192,7 +1211,7 @@ func _calc_efficiency_pct() -> float:
 
 func _check_iso_pass() -> bool:
 	if PerformanceProfiler:
-		return PerformanceProfiler._check_iso_compliance()
+		return PerformanceProfiler.check_iso_compliance()
 	return false
 
 func _calc_sp_avg_accuracy() -> float:

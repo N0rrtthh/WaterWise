@@ -1094,7 +1094,6 @@ func get_algorithm_status() -> Dictionary:
 	var required_games = _get_effective_min_games()
 	var session_games = performance_history.size()
 	var lifetime_games = _get_lifetime_games_played()
-	
 	var status = {
 		# Current State
 		"current_difficulty": current_difficulty,
@@ -1105,22 +1104,19 @@ func get_algorithm_status() -> Dictionary:
 		"lifetime_games_played": lifetime_games,
 		"min_games_before_adaptation": required_games,
 		"games_until_algorithm_activation": max(0, required_games - performance_window.size()),
-		
 		# Algorithm Metrics (if available)
 		"proficiency_index": metrics.get("proficiency_index", 0.0),
 		"weighted_accuracy": metrics.get("weighted_accuracy", 0.0),
 		"consistency_penalty": metrics.get("consistency_penalty", 0.0),
 		"std_deviation": metrics.get("std_deviation", 0.0),
-		
 		# Window Data (for visualization)
 		"window_accuracies": [],
 		"window_times": [],
-		
 		# Status Messages (human-readable)
 		"status_message": "",
 		"algorithm_active": performance_window.size() >= required_games
 	}
-	
+
 	# Populate window data for visualization
 	for i in range(performance_window.size()):
 		var perf = performance_window[i]
@@ -1130,7 +1126,7 @@ func get_algorithm_status() -> Dictionary:
 			"game_name": perf.get("game_name", "Game")
 		})
 		status["window_times"].append(perf["reaction_time"])
-	
+
 	# Generate status message
 	if performance_window.size() < required_games:
 		var games_left = required_games - performance_window.size()
@@ -1152,8 +1148,11 @@ func get_algorithm_status() -> Dictionary:
 			status["status_message"] = (
 				"Algorithm: FLOW STATE (Φ=%.2f)"
 				+ " → Medium difficulty") % phi
-	
+
 	return status
+
+func get_window_metrics() -> Dictionary:
+	return _get_window_metrics()
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # JUICE SYSTEM (Game Feel)
