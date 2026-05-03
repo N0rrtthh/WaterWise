@@ -2954,3 +2954,10 @@ func _shake_camera(intensity: float) -> void:
 				randf_range(-intensity * 10, intensity * 10)
 			), 0.05)
 		tween.tween_property(camera, "offset", original_offset, 0.05)
+
+## Utility: Make a Control node fill the full viewport even under a Node2D parent.
+## Use this instead of set_anchors_preset(Control.PRESET_FULL_RECT) when the parent
+## is a Node2D, because anchors require a Control parent to work.
+func make_fullscreen_rect(rect: Control) -> void:
+	rect.position = Vector2.ZERO
+	rect.size = get_viewport_rect().size
