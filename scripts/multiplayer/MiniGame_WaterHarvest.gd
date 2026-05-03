@@ -1,5 +1,5 @@
 class_name MiniGameWaterHarvest
-extends Node2D
+extends "res://scripts/multiplayer/MultiplayerMiniGameEffects.gd"
 
 ## ═══════════════════════════════════════════════════════════════════
 ## WATER HARVESTING - Dual-Mode Multiplayer Water Reuse Game
@@ -151,8 +151,7 @@ YOUR ROLE: Catch falling rainwater drops!
 ⚠️ WARNING: Missing drops loses a life!
 
 🌧️ Work together with your partner to harvest water!""" % current_settings.get("quota", 20)
-	else:
-		return """🧹 WATER FILTER
+	return """🧹 WATER FILTER
 
 YOUR ROLE: Remove dirt from collected water!
 

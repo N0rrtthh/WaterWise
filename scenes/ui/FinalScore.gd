@@ -391,15 +391,32 @@ func _on_continue() -> void:
 		).set_ease(Tween.EASE_IN)
 		tw.parallel().tween_property(_droplet, "scale", Vector2(1.3, 0.5), 0.15)
 		tw.parallel().tween_property(_droplet, "modulate:a", 0.0, 0.25)
+	
 	if GameManager:
+		# ═══════════════════════════════════════════════════════════════
+		# CRITICAL FIX: Double-check game mode before routing
+		# Prevent single player from ever going to multiplayer lobby
+		# ═══════════════════════════════════════════════════════════════
+		print("🎮 FinalScore: Game mode is %s" % GameManager.GameMode.keys()[GameManager.current_game_mode])
+		
 		if GameManager.current_game_mode == GameManager.GameMode.MULTIPLAYER_COOP:
-			if NetworkManager and NetworkManager.has_method("disconnect_multiplayer"):
-				NetworkManager.disconnect_multiplayer()
-			if GameManager.has_method("return_to_multiplayer_lobby"):
-				GameManager.return_to_multiplayer_lobby()
+			# Verify we actually have a multiplayer connection
+			if NetworkManager and NetworkManager.is_multiplayer_connected():
+				print("✅ Multiplayer mode confirmed - going to lobby")
+				if NetworkManager.has_method("disconnect_multiplayer"):
+					NetworkManager.disconnect_multiplayer()
+				if GameManager.has_method("return_to_multiplayer_lobby"):
+					GameManager.return_to_multiplayer_lobby()
+				else:
+					GameManager.transition_to_scene("res://scenes/ui/MultiplayerLobby.tscn")
+				return
 			else:
-				GameManager.transition_to_scene("res://scenes/ui/MultiplayerLobby.tscn")
-			return
+				# No multiplayer connection but mode is set to multiplayer - fix it!
+				print("⚠️ Game mode was MULTIPLAYER but no connection - forcing SINGLE_PLAYER")
+				GameManager.current_game_mode = GameManager.GameMode.SINGLE_PLAYER
+		
+		# Single player - always go to InitialScreen
+		print("✅ Single player mode - going to InitialScreen")
 		GameManager.transition_to_scene("res://scenes/ui/InitialScreen.tscn")
 	else:
 		get_tree().change_scene_to_file("res://scenes/ui/InitialScreen.tscn")

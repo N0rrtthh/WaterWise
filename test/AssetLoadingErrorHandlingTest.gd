@@ -1,4 +1,4 @@
-extends GutTest
+extends "res://test/GutTest.gd"
 
 ## Test suite for asset loading error handling in AnimatedCutscenePlayer
 ##

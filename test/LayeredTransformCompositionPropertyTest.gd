@@ -1,4 +1,4 @@
-extends GutTest
+extends "res://test/GutTest.gd"
 
 ## Property-Based Test for Layered Transform Composition
 ## **Validates: Requirements 1.6**

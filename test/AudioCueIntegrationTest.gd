@@ -1,4 +1,4 @@
-extends GutTest
+extends "res://test/GutTest.gd"
 
 ## Unit tests for audio cue integration in AnimatedCutscenePlayer
 ## Tests audio triggering, synchronization, and contextual sound selection
@@ -30,10 +30,22 @@ func test_audio_manager_exists():
 
 
 func test_audio_manager_has_required_methods():
-	assert_true(AudioManager.has_method("play_success"), "AudioManager should have play_success method")
-	assert_true(AudioManager.has_method("play_failure"), "AudioManager should have play_failure method")
-	assert_true(AudioManager.has_method("play_water_splash"), "AudioManager should have play_water_splash method")
-	assert_true(AudioManager.has_method("play_water_drop"), "AudioManager should have play_water_drop method")
+	assert_true(
+		AudioManager.has_method("play_success"),
+		"AudioManager should have play_success method"
+	)
+	assert_true(
+		AudioManager.has_method("play_failure"),
+		"AudioManager should have play_failure method"
+	)
+	assert_true(
+		AudioManager.has_method("play_water_splash"),
+		"AudioManager should have play_water_splash method"
+	)
+	assert_true(
+		AudioManager.has_method("play_water_drop"),
+		"AudioManager should have play_water_drop method"
+	)
 
 
 # ============================================================================
@@ -199,7 +211,10 @@ func test_multiple_audio_cues_in_sequence():
 func test_win_cutscene_uses_success_sounds():
 	# Win cutscenes should use success-related sounds
 	# This is verified by the default win.json configuration
-	var has_custom = cutscene_player.has_custom_cutscene("TestMinigame", CutsceneTypes.CutsceneType.WIN)
+	var has_custom = cutscene_player.has_custom_cutscene(
+		"TestMinigame",
+		CutsceneTypes.CutsceneType.WIN
+	)
 	
 	# Play win cutscene (will use default)
 	cutscene_player.play_cutscene("TestMinigame", CutsceneTypes.CutsceneType.WIN)

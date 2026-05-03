@@ -35,7 +35,11 @@ func _apply_difficulty_settings() -> void:
 
 func _ready():
 	game_name = "Rice Wash Rescue"
-	game_instruction_text = Localization.get_text("rice_wash_rescue_instructions") if Localization else "FOLLOW the moving pot with the basin!\nCatch all the rice water! 🍚"
+	var fallback_text = "FOLLOW the moving pot with the basin!\nCatch all the rice water! 🍚"
+	if Localization:
+		game_instruction_text = Localization.get_text("rice_wash_rescue_instructions")
+	else:
+		game_instruction_text = fallback_text
 	game_duration = 18.0
 	game_mode = "survival"  # Survive until timer ends - missed drops are OK
 	show_quota = false  # No percentage display
@@ -156,8 +160,13 @@ func _process(delta):
 	# Player controls basin — always track mouse or touch (no button hold required)
 	# Also works for AutoPlay (which warps mouse X to pot position)
 	var target_x := basin_node.position.x
-	if Input.get_touch_count() > 0:
-		target_x = Input.get_touch_position(0).x
+	var has_touch := (
+		TouchInputManager
+		and TouchInputManager.has_method("get_touch_count")
+		and TouchInputManager.get_touch_count() > 0
+	)
+	if has_touch and TouchInputManager.has_method("get_touch_position"):
+		target_x = TouchInputManager.get_touch_position(0).x
 	else:
 		var viewport = get_viewport()
 		if viewport:

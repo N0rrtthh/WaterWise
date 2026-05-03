@@ -1,5 +1,5 @@
 class_name MiniGameLeafSort
-extends Node2D
+extends "res://scripts/multiplayer/MultiplayerMiniGameEffects.gd"
 
 ## 
 ## MINIGAME_LEAF_SORT.GD - Multiplayer Leaf Sorting Game
@@ -122,8 +122,7 @@ YOUR ROLE: Catch falling clean leaves!
 ⚠️ WARNING: Missing leaves loses a life!
 
 💚 Work together with your partner to reach the quota!""" % current_settings.get("quota", 20)
-	else:
-		return """🍂 DIRTY LEAF REMOVER
+	return """🍂 DIRTY LEAF REMOVER
 
 YOUR ROLE: Remove dirty leaves from the water!
 
@@ -141,9 +140,6 @@ YOUR ROLE: Remove dirty leaves from the water!
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # GAME SETUP
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-	
-	_create_pause_ui()
-	_start_game()
 
 func _is_host() -> bool:
 	# Helper: Check if this player is the host

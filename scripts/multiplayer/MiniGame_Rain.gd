@@ -1,5 +1,5 @@
 class_name MiniGameRain
-extends Node2D
+extends "res://scripts/multiplayer/MultiplayerMiniGameEffects.gd"
 
 ## 
 ## MINIGAME_RAIN.GD - Dual-Mode Water Reuse Game
@@ -195,8 +195,7 @@ YOUR ROLE: Catch falling water drops!
 ⚠️ WARNING: Missing water or catching acid loses a life!
 
 💧 Work together with your partner to reach the quota!""" % current_settings.get("quota", 20)
-	else:
-		return """🍃 LEAF CLEANER
+	return """🍃 LEAF CLEANER
 
 YOUR ROLE: Remove dirty leaves from water!
 
@@ -345,6 +344,25 @@ func _update_lives_display() -> void:
 		lives_label.text = "".repeat(GameManager.team_lives)
 	else:
 		lives_label.text = ""
+
+func animate_life_lost() -> void:
+	if not lives_label:
+		return
+	var tween = create_tween()
+	tween.tween_property(lives_label, "modulate", Color(2.0, 0.3, 0.3), 0.1)
+	tween.tween_property(lives_label, "modulate", Color.WHITE, 0.3)
+
+	var original_scale = lives_label.scale
+	tween.parallel().tween_property(lives_label, "scale", Vector2(1.4, 1.4), 0.1)
+	var scale_tween = tween.tween_property(lives_label, "scale", original_scale, 0.2)
+	scale_tween.set_trans(Tween.TRANS_ELASTIC).set_ease(Tween.EASE_OUT)
+
+func animate_timer_warning() -> void:
+	if not timer_label:
+		return
+	var tween = create_tween()
+	tween.tween_property(timer_label, "modulate", Color(2.0, 0.3, 0.3), 0.2)
+	tween.tween_property(timer_label, "modulate", Color.WHITE, 0.2)
 
 func _update_quota_bar() -> void:
 	# Update the quota progress bar.

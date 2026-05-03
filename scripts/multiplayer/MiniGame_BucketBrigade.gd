@@ -1,5 +1,5 @@
 class_name MiniGameBucketBrigade
-extends Node2D
+extends "res://scripts/multiplayer/MultiplayerMiniGameEffects.gd"
 
 ## ═══════════════════════════════════════════════════════════════════
 ## MINIGAME_BUCKET_BRIGADE.GD - Multiplayer Bucket Passing Game
@@ -109,8 +109,7 @@ YOUR ROLE: Fill buckets with water!
 ⚠️ WARNING: Work efficiently to avoid wasting time!
 
 💧 Work together - you fill, partner empties!""" % current_settings.get("quota", 20)
-	else:
-		return """🚰 BUCKET EMPTIER
+	return """🚰 BUCKET EMPTIER
 
 YOUR ROLE: Empty filled buckets!
 
@@ -303,7 +302,9 @@ func _empty_bucket_over_time(index: int) -> void:
 		
 		# ✨ VISUAL FEEDBACK: Success effect + score popup
 		play_success_effect()
-		var bucket_pos = bucket["node"].global_position if bucket.has("node") else Vector2(screen_size.x / 2, screen_size.y / 2)
+		var bucket_pos = Vector2(screen_size.x / 2, screen_size.y / 2)
+		if bucket.has("node"):
+			bucket_pos = bucket["node"].global_position
 		play_score_popup(1, bucket_pos)
 		animate_score_label()
 		
