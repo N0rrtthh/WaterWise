@@ -61,10 +61,12 @@ func get_next_unlocked_chapter() -> Dictionary:
 	var games_played := 0
 	if GameManager:
 		games_played = GameManager.minigames_played_this_session
-	for chapter in _chapters:
-		var threshold: int = chapter.get("unlocks_after_games", 0)
-		if games_played >= threshold:
-			_current_chapter = chapter
+	if _chapters.is_empty():
+		return {}
+	
+	# Endless looping logic: 1 chapter every 5 games
+	var chapter_index = (games_played / 5) % _chapters.size()
+	_current_chapter = _chapters[chapter_index]
 	return _current_chapter
 
 func set_chapter(chapter: Dictionary) -> void:

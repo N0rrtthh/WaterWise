@@ -1,0 +1,922 @@
+{
+	"device": {
+		"godot_version": "4.6-stable (official)",
+		"model": "M2007J20CG",
+		"platform": "Android",
+		"processor_count": 6,
+		"processor_name": "",
+		"screen_height": 1080,
+		"screen_width": 2400
+	},
+	"gameplay_summary": {
+		"mp_rounds_played": 0,
+		"mp_team_wins": 0,
+		"mp_total_score": 0,
+		"mp_win_rate_pct": 0.0,
+		"scenes_visited_count": 0,
+		"sp_avg_accuracy_pct": 0.0,
+		"sp_avg_reaction_time_s": 0.0,
+		"sp_avg_score": 0.0,
+		"sp_games_played": 0,
+		"sp_total_score": 0,
+		"total_droplets_earned": 0
+	},
+	"mp_algorithm": {
+		"algorithm": "CoopAdaptation — Per-Player Φ + Skill Gap Co-Adaptation",
+		"avg_sync_score": 100.0,
+		"coop_adjustment_log": [],
+		"is_asymmetric_mode": false,
+		"p1_final_difficulty": "Medium",
+		"p1_phi": 0.5,
+		"p2_final_difficulty": "Medium",
+		"p2_phi": 0.5,
+		"skill_gap": 0.0,
+		"skill_gap_threshold": 0.15,
+		"team_success_rate": 0.0,
+		"total_coop_adjustments": 0
+	},
+	"mp_connection_metrics": [],
+	"mp_local_performance": {
+		"avg_latency_ms": 0.0,
+		"avg_packet_loss_pct": 0.0,
+		"local_peer_id": 1,
+		"local_player_num": 0,
+		"my_avg_accuracy_pct": 0.0,
+		"my_avg_reaction_time_s": 0.0,
+		"my_avg_score": 0.0,
+		"my_total_mistakes": 0,
+		"my_total_score": 0,
+		"network_events_count": 0,
+		"rounds_played": 0,
+		"team_wins": 0,
+		"win_rate_pct": 0.0
+	},
+	"mp_local_round_records": [],
+	"mp_network_events": [],
+	"mp_round_records": [],
+	"performance": {
+		"algorithm_latency": {
+			"avg_ms": 0.0,
+			"budget_ms": 16.0,
+			"max_ms": 0.0,
+			"passed": true
+		},
+		"battery": {
+			"average_pct": -1.0,
+			"battery_source": "android_sysfs",
+			"maximum_pct": -1.0,
+			"minimum_pct": -1.0,
+			"start_pct": -1.0,
+			"total_estimated_mah": 0.0
+		},
+		"battery_efficiency": {
+			"battery_source": "android_sysfs",
+			"dl_baseline_mah_per_min": 10.0,
+			"measured_mah_per_min": 0.0,
+			"rule_based_savings_pct": 0.0
+		},
+		"dropped_frames": {
+			"count": 263,
+			"drop_rate_pct": 98.5,
+			"total_frames": 267
+		},
+		"fps": {
+			"average_observed": 30.0,
+			"maximum_observed": 30.0,
+			"minimum_observed": 30.0,
+			"minimum_required": 30,
+			"passed": false,
+			"start_observed": 30.0,
+			"target": 60
+		},
+		"iso_25010_compliant": true,
+		"memory": {
+			"average_mb": 81.4,
+			"budget_mb": 200.0,
+			"minimum_mb": 81.39,
+			"passed": true,
+			"peak_mb": 81.41,
+			"start_mb": 81.39
+		},
+		"perf_warnings": [
+			{
+				"elapsed_sec": 2.04,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 1.0
+			},
+			{
+				"elapsed_sec": 2.06,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 1.0
+			},
+			{
+				"elapsed_sec": 2.13,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 1.0
+			},
+			{
+				"elapsed_sec": 2.14,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 1.0
+			},
+			{
+				"elapsed_sec": 2.16,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 1.0
+			},
+			{
+				"elapsed_sec": 2.18,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 1.0
+			},
+			{
+				"elapsed_sec": 2.21,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 1.0
+			},
+			{
+				"elapsed_sec": 2.24,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 1.0
+			},
+			{
+				"elapsed_sec": 2.28,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 1.0
+			},
+			{
+				"elapsed_sec": 2.31,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 1.0
+			},
+			{
+				"elapsed_sec": 2.35,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 1.0
+			},
+			{
+				"elapsed_sec": 2.38,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 1.0
+			},
+			{
+				"elapsed_sec": 2.41,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 1.0
+			},
+			{
+				"elapsed_sec": 2.45,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 1.0
+			},
+			{
+				"elapsed_sec": 2.48,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 1.0
+			},
+			{
+				"elapsed_sec": 2.51,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 13.0
+			},
+			{
+				"elapsed_sec": 2.55,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 13.0
+			},
+			{
+				"elapsed_sec": 2.58,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 13.0
+			},
+			{
+				"elapsed_sec": 2.61,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 13.0
+			},
+			{
+				"elapsed_sec": 2.65,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 13.0
+			},
+			{
+				"elapsed_sec": 2.68,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 13.0
+			},
+			{
+				"elapsed_sec": 2.71,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 13.0
+			},
+			{
+				"elapsed_sec": 2.75,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 13.0
+			},
+			{
+				"elapsed_sec": 2.79,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 13.0
+			},
+			{
+				"elapsed_sec": 2.81,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 13.0
+			},
+			{
+				"elapsed_sec": 2.84,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 13.0
+			},
+			{
+				"elapsed_sec": 2.92,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 13.0
+			},
+			{
+				"elapsed_sec": 2.93,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 13.0
+			},
+			{
+				"elapsed_sec": 2.96,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 13.0
+			},
+			{
+				"elapsed_sec": 2.98,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 13.0
+			},
+			{
+				"elapsed_sec": 3.01,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 13.0
+			},
+			{
+				"elapsed_sec": 3.04,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 13.0
+			},
+			{
+				"elapsed_sec": 3.09,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 13.0
+			},
+			{
+				"elapsed_sec": 3.12,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 13.0
+			},
+			{
+				"elapsed_sec": 3.16,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 13.0
+			},
+			{
+				"elapsed_sec": 3.18,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 13.0
+			},
+			{
+				"elapsed_sec": 3.21,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 13.0
+			},
+			{
+				"elapsed_sec": 3.24,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 13.0
+			},
+			{
+				"elapsed_sec": 3.28,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 13.0
+			},
+			{
+				"elapsed_sec": 3.31,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 13.0
+			},
+			{
+				"elapsed_sec": 3.35,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 13.0
+			},
+			{
+				"elapsed_sec": 3.51,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 13.0
+			},
+			{
+				"elapsed_sec": 3.57,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 27.0
+			},
+			{
+				"elapsed_sec": 3.63,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 27.0
+			},
+			{
+				"elapsed_sec": 3.67,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 27.0
+			},
+			{
+				"elapsed_sec": 3.7,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 27.0
+			},
+			{
+				"elapsed_sec": 3.73,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 27.0
+			},
+			{
+				"elapsed_sec": 3.74,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 27.0
+			},
+			{
+				"elapsed_sec": 3.76,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 27.0
+			},
+			{
+				"elapsed_sec": 3.8,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 27.0
+			},
+			{
+				"elapsed_sec": 3.84,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 27.0
+			},
+			{
+				"elapsed_sec": 3.88,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 27.0
+			},
+			{
+				"elapsed_sec": 3.9,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 27.0
+			},
+			{
+				"elapsed_sec": 3.94,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 27.0
+			},
+			{
+				"elapsed_sec": 3.96,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 27.0
+			},
+			{
+				"elapsed_sec": 4.0,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 27.0
+			},
+			{
+				"elapsed_sec": 4.04,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 27.0
+			},
+			{
+				"elapsed_sec": 4.07,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 27.0
+			},
+			{
+				"elapsed_sec": 4.1,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 27.0
+			},
+			{
+				"elapsed_sec": 4.14,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 27.0
+			},
+			{
+				"elapsed_sec": 4.17,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 27.0
+			},
+			{
+				"elapsed_sec": 4.2,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 27.0
+			},
+			{
+				"elapsed_sec": 4.24,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 27.0
+			},
+			{
+				"elapsed_sec": 4.27,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 27.0
+			},
+			{
+				"elapsed_sec": 4.3,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 27.0
+			},
+			{
+				"elapsed_sec": 4.34,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 27.0
+			},
+			{
+				"elapsed_sec": 4.37,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 27.0
+			},
+			{
+				"elapsed_sec": 4.4,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 27.0
+			},
+			{
+				"elapsed_sec": 4.44,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 27.0
+			},
+			{
+				"elapsed_sec": 4.47,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 27.0
+			},
+			{
+				"elapsed_sec": 4.79,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 28.0
+			},
+			{
+				"elapsed_sec": 4.81,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 28.0
+			},
+			{
+				"elapsed_sec": 4.84,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 28.0
+			},
+			{
+				"elapsed_sec": 4.86,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 28.0
+			},
+			{
+				"elapsed_sec": 4.88,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 28.0
+			},
+			{
+				"elapsed_sec": 4.91,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 28.0
+			},
+			{
+				"elapsed_sec": 4.94,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 28.0
+			},
+			{
+				"elapsed_sec": 4.97,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 28.0
+			},
+			{
+				"elapsed_sec": 5.01,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 28.0
+			},
+			{
+				"elapsed_sec": 5.06,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 28.0
+			},
+			{
+				"elapsed_sec": 5.08,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 28.0
+			},
+			{
+				"elapsed_sec": 5.11,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 28.0
+			},
+			{
+				"elapsed_sec": 5.14,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 28.0
+			},
+			{
+				"elapsed_sec": 5.17,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 28.0
+			},
+			{
+				"elapsed_sec": 5.21,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 28.0
+			},
+			{
+				"elapsed_sec": 5.24,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 28.0
+			},
+			{
+				"elapsed_sec": 5.27,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 28.0
+			},
+			{
+				"elapsed_sec": 5.31,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 28.0
+			},
+			{
+				"elapsed_sec": 5.35,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 28.0
+			},
+			{
+				"elapsed_sec": 5.38,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 28.0
+			},
+			{
+				"elapsed_sec": 5.41,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 28.0
+			},
+			{
+				"elapsed_sec": 5.44,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 28.0
+			},
+			{
+				"elapsed_sec": 5.47,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 28.0
+			},
+			{
+				"elapsed_sec": 5.51,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 23.0
+			},
+			{
+				"elapsed_sec": 5.55,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 23.0
+			},
+			{
+				"elapsed_sec": 5.57,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 23.0
+			},
+			{
+				"elapsed_sec": 5.61,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 23.0
+			},
+			{
+				"elapsed_sec": 5.64,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 23.0
+			},
+			{
+				"elapsed_sec": 5.67,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 23.0
+			},
+			{
+				"elapsed_sec": 5.71,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 23.0
+			},
+			{
+				"elapsed_sec": 5.74,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 23.0
+			},
+			{
+				"elapsed_sec": 5.77,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 23.0
+			},
+			{
+				"elapsed_sec": 5.81,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 23.0
+			},
+			{
+				"elapsed_sec": 5.84,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 23.0
+			},
+			{
+				"elapsed_sec": 5.87,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 23.0
+			},
+			{
+				"elapsed_sec": 5.91,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 23.0
+			},
+			{
+				"elapsed_sec": 5.94,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 23.0
+			},
+			{
+				"elapsed_sec": 5.97,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 23.0
+			},
+			{
+				"elapsed_sec": 6.01,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 23.0
+			},
+			{
+				"elapsed_sec": 6.05,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 23.0
+			},
+			{
+				"elapsed_sec": 6.08,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 23.0
+			},
+			{
+				"elapsed_sec": 6.11,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 23.0
+			},
+			{
+				"elapsed_sec": 6.14,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 23.0
+			},
+			{
+				"elapsed_sec": 6.17,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 23.0
+			},
+			{
+				"elapsed_sec": 6.21,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 23.0
+			},
+			{
+				"elapsed_sec": 6.24,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 23.0
+			},
+			{
+				"elapsed_sec": 6.27,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 23.0
+			},
+			{
+				"elapsed_sec": 6.31,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 23.0
+			},
+			{
+				"elapsed_sec": 6.34,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 23.0
+			},
+			{
+				"elapsed_sec": 6.39,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 23.0
+			},
+			{
+				"elapsed_sec": 6.41,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 23.0
+			},
+			{
+				"elapsed_sec": 6.44,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 23.0
+			},
+			{
+				"elapsed_sec": 6.47,
+				"metric": "fps_critical",
+				"threshold": 30.0,
+				"value": 23.0
+			}
+		],
+		"thermal": {
+			"average_c": 0.0,
+			"data_available": false,
+			"minimum_c": 0.0,
+			"passed": "N/A (no sensor data)",
+			"peak_c": 0.0,
+			"start_c": 0.0,
+			"thermal_source": "unavailable",
+			"threshold_c": 45.0,
+			"throttle_details": [
+				{
+					"clock_ratio": 0.216666666666667,
+					"cpu_temp_c": 0.0,
+					"elapsed_sec": 2.805,
+					"fps": 13.0,
+					"measurement_note": "clock_ratio derived from FPS/target_FPS (behavioral proxy, not actual CPU frequency)",
+					"timestamp": 1777814960.11565
+				}
+			],
+			"throttle_events": 1
+		}
+	},
+	"performance_snapshots": [
+		{
+			"algo_latency_avg_ms": 0.0,
+			"algo_latency_max_ms": 0.0,
+			"battery_mah": 0.0,
+			"battery_mah_per_min": 0.0,
+			"battery_pct": -1,
+			"clock_speed_ratio": 0.383,
+			"cpu_temp_c": 0.0,
+			"dropped_frames_total": 134,
+			"elapsed_sec": 6.97,
+			"fps": 30.0,
+			"fps_avg": 26.0,
+			"frame_time_ms": 32.06,
+			"is_throttling": true,
+			"memory_mb": 81.39,
+			"thermal_source": "unavailable",
+			"total_frames": 138
+		},
+		{
+			"algo_latency_avg_ms": 0.0,
+			"algo_latency_max_ms": 0.0,
+			"battery_mah": 0.0,
+			"battery_mah_per_min": 0.0,
+			"battery_pct": -1,
+			"clock_speed_ratio": 0.5,
+			"cpu_temp_c": 0.0,
+			"dropped_frames_total": 263,
+			"elapsed_sec": 11.31,
+			"fps": 30.0,
+			"fps_avg": 30.0,
+			"frame_time_ms": 33.33,
+			"is_throttling": true,
+			"memory_mb": 81.41,
+			"thermal_source": "unavailable",
+			"total_frames": 267
+		}
+	],
+	"scenes_visited": [],
+	"schema_version": "2.0",
+	"session_duration_formatted": "00:00:11",
+	"session_duration_sec": 11.3,
+	"session_end": "2026-05-03T21:29:28",
+	"session_id": "WW_20260503T212917_9883",
+	"session_start": "2026-05-03T21:29:17",
+	"sp_algorithm": {
+		"algorithm": "Rule-Based Rolling Window with Proficiency Index (Φ)",
+		"difficulty_change_log": [],
+		"final_cp": 0.0,
+		"final_difficulty": "Easy",
+		"final_phi": 0.0,
+		"final_wma": 0.0,
+		"progressive_level": 0,
+		"total_difficulty_changes": 0,
+		"warmup_games": 5,
+		"window_size": 5
+	},
+	"sp_game_records": [],
+	"waterwise_session_log": true
+}

@@ -1310,9 +1310,10 @@ func _should_show_story() -> bool:
 	if current_game_mode == GameMode.MULTIPLAYER_COOP:
 		return false
 	
-	for threshold in STORY_THRESHOLDS:
-		if minigames_played_this_session == threshold and threshold not in _story_shown_at:
+	if minigames_played_this_session > 0 and minigames_played_this_session % 5 == 0:
+		if minigames_played_this_session not in _story_shown_at:
 			return true
+			
 	return false
 
 func _show_story_then_continue() -> void:
