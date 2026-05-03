@@ -97,6 +97,9 @@ func _get_target_size() -> Vector2:
 
 func _start_pulse_animation() -> void:
 	## Start pulsing animation for the indicator.
+	if pulse_duration <= 0.0:
+		pulse_duration = 1.0
+		
 	var tween = create_tween().set_loops()
 	tween.tween_property(self, "modulate:a", 0.2, pulse_duration / 2.0)
 	tween.tween_property(self, "modulate:a", 0.5, pulse_duration / 2.0)

@@ -151,6 +151,9 @@ static func fade_out(node: CanvasItem, duration: float = 0.5) -> void:
 static func pulse(node: Node2D, scale_amount: float = 1.1, duration: float = 1.0) -> void:
 	var original_scale = node.scale
 	
+	if duration <= 0.0:
+		duration = 1.0
+		
 	var tween = node.create_tween().set_loops()
 	tween.tween_property(node, "scale", original_scale * scale_amount, duration * 0.5)
 	tween.tween_property(node, "scale", original_scale, duration * 0.5)

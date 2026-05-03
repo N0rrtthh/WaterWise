@@ -88,12 +88,16 @@ func _load_translations() -> void:
 			"tl": "🏆 LEADERBOARD"
 		},
 		"leaderboard_empty": {
-			"en": "No scores yet.",
-			"tl": "Wala pang scores."
+			"en": "No single-player scores yet.",
+			"tl": "Wala pang score sa single-player."
+		},
+		"leaderboard_summary": {
+			"en": "Best score: %d | Runs saved: %d",
+			"tl": "Pinakamataas na puntos: %d | Naitalang runs: %d"
 		},
 		"leaderboard_score_row": {
-			"en": "%d. %s - %d pts",
-			"tl": "%d. %s - %d pts"
+			"en": "%d. Tier %s | %d pts",
+			"tl": "%d. Tier %s | %d pts"
 		},
 		
 		# Settings
@@ -434,8 +438,8 @@ func _load_translations() -> void:
 			"tl": "PINAKAMATAAS NA PUNTOS"
 		},
 		"finalscore_top_score_row": {
-			"en": "%d. %s - %d pts",
-			"tl": "%d. %s - %d pts"
+			"en": "%d. Tier %s | %d pts",
+			"tl": "%d. Tier %s | %d pts"
 		},
 		"finalscore_no_rounds_played": {
 			"en": "No rounds played.",

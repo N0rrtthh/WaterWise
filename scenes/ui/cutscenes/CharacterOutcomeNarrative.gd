@@ -180,8 +180,9 @@ func _run_parallel_vfx() -> void:
 	var length = 3.5 / speed
 
 	# ── SCREEN SHAKE on entry (impact feel) ──
-	# Use character_label offset instead of moving self (which breaks full-rect layout)
-	var shake_target = character_label if character_label else self
+	var shake_target: Control = self
+	if character_label:
+		shake_target = character_label
 	var shake_base = shake_target.position
 	if success:
 		var jolt = create_tween()

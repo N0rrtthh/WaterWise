@@ -1287,6 +1287,9 @@ func _on_exit_pressed():
 
 	if GameManager:
 		GameManager.mark_welcome_shown()
+		if GameManager.has_method("return_to_main_menu"):
+			GameManager.return_to_main_menu()
+			return
 	get_tree().change_scene_to_file("res://scenes/ui/InitialScreen.tscn")
 
 ## DWTD-style quit tally — shows your session score before leaving
@@ -2899,6 +2902,9 @@ func _show_game_over() -> void:
 	# Return to initial screen
 	if GameManager:
 		GameManager.mark_welcome_shown()
+		if GameManager.has_method("return_to_main_menu"):
+			GameManager.return_to_main_menu()
+			return
 	get_tree().change_scene_to_file("res://scenes/ui/InitialScreen.tscn")
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
