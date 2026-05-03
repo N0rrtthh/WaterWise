@@ -83,6 +83,18 @@ func _load_translations() -> void:
 			"en": "HIGHSCORE",
 			"tl": "HIGHSCORE"
 		},
+		"leaderboard_title": {
+			"en": "🏆 LEADERBOARD",
+			"tl": "🏆 LEADERBOARD"
+		},
+		"leaderboard_empty": {
+			"en": "No scores yet.",
+			"tl": "Wala pang scores."
+		},
+		"leaderboard_score_row": {
+			"en": "%d. %s - %d pts",
+			"tl": "%d. %s - %d pts"
+		},
 		
 		# Settings
 		"language": {
@@ -422,8 +434,8 @@ func _load_translations() -> void:
 			"tl": "PINAKAMATAAS NA PUNTOS"
 		},
 		"finalscore_top_score_row": {
-			"en": "%d. %d pts",
-			"tl": "%d. %d pts"
+			"en": "%d. %s - %d pts",
+			"tl": "%d. %s - %d pts"
 		},
 		"finalscore_no_rounds_played": {
 			"en": "No rounds played.",
