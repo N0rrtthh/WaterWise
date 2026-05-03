@@ -1,4 +1,4 @@
-extends GutTest
+extends "res://test/GutTest.gd"
 
 ## Unit tests for text overlay animation system
 ##

@@ -299,6 +299,13 @@ func get_swipe_direction_name(direction: Vector2) -> String:
 func get_touch_count() -> int:
 	return active_touches.size()
 
+func get_touch_position(index: int) -> Vector2:
+	if active_touches.has(index):
+		var touch_data = active_touches[index]
+		if touch_data.has("current_position"):
+			return touch_data["current_position"]
+	return Vector2.ZERO
+
 func is_multi_touch() -> bool:
 	return active_touches.size() > 1
 

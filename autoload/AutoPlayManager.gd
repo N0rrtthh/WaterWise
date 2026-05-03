@@ -403,6 +403,22 @@ func _navigate_ui(delta: float) -> void:
 
 	# ── Multiplayer Lobby / Menu ───────────────────────────────────
 	if "MultiplayerLobby" in path or "MultiplayerMenu" in path:
+		# ═══════════════════════════════════════════════════════════════
+		# CRITICAL FIX: If we're in single player mode, exit multiplayer immediately
+		# AutoPlay should never be in multiplayer when single player is active
+		# ═══════════════════════════════════════════════════════════════
+		if GameManager and GameManager.current_game_mode == GameManager.GameMode.SINGLE_PLAYER:
+			print("🤖 AutoNav: ERROR - In multiplayer screen but game mode is SINGLE_PLAYER!")
+			print("🤖 AutoNav: Forcing return to InitialScreen...")
+			var back_btn: Button = _find_button_recursive(scene, ["BackButton", "DisconnectButton"])
+			if back_btn:
+				back_btn.pressed.emit()
+			else:
+				# Force scene change if no back button
+				if GameManager.has_method("return_to_main_menu"):
+					GameManager.return_to_main_menu()
+			return
+		
 		# If a StartGameButton is present and enabled (2 players connected), start the game
 		var start_btn: Button = _find_button_recursive(scene, ["StartGameButton"])
 		if start_btn and not start_btn.disabled:

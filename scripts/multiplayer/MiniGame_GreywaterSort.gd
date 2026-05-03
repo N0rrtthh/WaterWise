@@ -1,5 +1,5 @@
 class_name MiniGameGreywaterSort
-extends Node2D
+extends "res://scripts/multiplayer/MultiplayerMiniGameEffects.gd"
 
 ## ═══════════════════════════════════════════════════════════════════
 ## GREYWATER SORTING - Dual-Mode Water Reuse Game
@@ -108,7 +108,7 @@ func _ready() -> void:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func get_instructions() -> String:
-	if my_mode == PlayerMode.MODE_1_SORTER:
+	if my_mode == PlayerMode.MODE_1_COLLECTOR:
 		return """♻️ GREYWATER SORTER
 
 YOUR ROLE: Sort greywater into the tank!
@@ -124,8 +124,7 @@ YOUR ROLE: Sort greywater into the tank!
 ⚠️ WARNING: Sorting bad water loses a life!
 
 💚 Work together with your partner to reuse water safely!""" % current_settings.get("quota", 20)
-	else:
-		return """⚙️ FILTER ACTIVATOR
+	return """⚙️ FILTER ACTIVATOR
 
 YOUR ROLE: Activate water filters!
 

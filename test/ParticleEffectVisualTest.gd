@@ -131,37 +131,37 @@ func _input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed:
 		match event.keycode:
 			KEY_1:
-				_spawn_sparkles()
+				await _spawn_sparkles()
 			KEY_2:
-				_spawn_water_drops()
+				await _spawn_water_drops()
 			KEY_3:
-				_spawn_stars()
+				await _spawn_stars()
 			KEY_4:
-				_spawn_smoke()
+				await _spawn_smoke()
 			KEY_5:
-				_spawn_splash()
+				await _spawn_splash()
 			KEY_C:
-				_spawn_contextual_win()
+				await _spawn_contextual_win()
 
 
 func _spawn_sparkles() -> void:
-	_spawn_particle(CutsceneTypes.ParticleType.SPARKLES, "Sparkles")
+	await _spawn_particle(CutsceneTypes.ParticleType.SPARKLES, "Sparkles")
 
 
 func _spawn_water_drops() -> void:
-	_spawn_particle(CutsceneTypes.ParticleType.WATER_DROPS, "Water Drops")
+	await _spawn_particle(CutsceneTypes.ParticleType.WATER_DROPS, "Water Drops")
 
 
 func _spawn_stars() -> void:
-	_spawn_particle(CutsceneTypes.ParticleType.STARS, "Stars")
+	await _spawn_particle(CutsceneTypes.ParticleType.STARS, "Stars")
 
 
 func _spawn_smoke() -> void:
-	_spawn_particle(CutsceneTypes.ParticleType.SMOKE, "Smoke")
+	await _spawn_particle(CutsceneTypes.ParticleType.SMOKE, "Smoke")
 
 
 func _spawn_splash() -> void:
-	_spawn_particle(CutsceneTypes.ParticleType.SPLASH, "Splash")
+	await _spawn_particle(CutsceneTypes.ParticleType.SPLASH, "Splash")
 
 
 func _spawn_contextual_win() -> void:
@@ -170,7 +170,7 @@ func _spawn_contextual_win() -> void:
 		"TestMinigame"
 	)
 	var type_name = _get_particle_type_name(particle_type)
-	_spawn_particle(particle_type, "Win Context: " + type_name)
+	await _spawn_particle(particle_type, "Win Context: " + type_name)
 
 
 func _spawn_contextual_fail() -> void:
@@ -179,7 +179,7 @@ func _spawn_contextual_fail() -> void:
 		"TestMinigame"
 	)
 	var type_name = _get_particle_type_name(particle_type)
-	_spawn_particle(particle_type, "Fail Context: " + type_name)
+	await _spawn_particle(particle_type, "Fail Context: " + type_name)
 
 
 func _spawn_contextual_water_intro() -> void:
@@ -188,7 +188,7 @@ func _spawn_contextual_water_intro() -> void:
 		"CatchTheRain"
 	)
 	var type_name = _get_particle_type_name(particle_type)
-	_spawn_particle(particle_type, "Water Intro: " + type_name)
+	await _spawn_particle(particle_type, "Water Intro: " + type_name)
 
 
 func _spawn_particle(particle_type: CutsceneTypes.ParticleType, label: String) -> void:
@@ -199,7 +199,7 @@ func _spawn_particle(particle_type: CutsceneTypes.ParticleType, label: String) -
 	_clear_particles()
 	
 	# Spawn new particles
-	current_particles = character.spawn_particles(particle_type, 2.0)
+	current_particles = await character.spawn_particles(particle_type, 2.0)
 	
 	# Apply adaptive density
 	if current_particles:

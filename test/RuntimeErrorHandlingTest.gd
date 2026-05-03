@@ -1,4 +1,4 @@
-extends GutTest
+extends "res://test/GutTest.gd"
 
 ## Test suite for runtime error handling in the animated cutscene system
 ## Validates Requirement 12.5: Runtime error handling
