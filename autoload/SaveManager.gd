@@ -342,9 +342,10 @@ func get_sp_session_scores(limit: int = 0) -> Array:
 	return scores
 
 func get_sp_session_high_score() -> int:
-	if sp_session_scores.is_empty():
-		return 0
-	return int(sp_session_scores[0])
+	var best_score := 0
+	for score in sp_session_scores:
+		best_score = max(best_score, int(score))
+	return best_score
 
 func get_high_score(game_id: String = "catch_rain") -> Dictionary:
 	if high_scores.has(game_id):

@@ -17,6 +17,7 @@ extends Control
 @onready var multiplayer_button = $UI/ButtonContainer/MultiplayerButton
 @onready var customize_button = $UI/TopRight/CustomizeButton
 @onready var store_button = $UI/TopRight/StoreButton
+@onready var leaderboard_button = $UI/TopRight/LeaderboardButton
 @onready var roadmap_button = $UI/TopRight/RoadmapButton
 @onready var settings_button = $UI/TopRight/SettingsButton
 @onready var welcome_popup = $WelcomePopup
@@ -111,6 +112,7 @@ func _ready() -> void:
 	_spawn_characters()
 	_build_title()
 	_setup_signboard_highscore()
+	_bind_highscore_updates()
 	_apply_responsive_layout()
 	if is_instance_valid(top_right_panel):
 		top_left_panel.visible = false
@@ -141,6 +143,7 @@ func _ready() -> void:
 	_connect_button_if_needed(multiplayer_button, "_on_multiplayer_button_pressed")
 	_connect_button_if_needed(customize_button, "_on_customize_button_pressed")
 	_connect_button_if_needed(store_button, "_on_store_button_pressed")
+	_connect_button_if_needed(leaderboard_button, "_on_leaderboard_button_pressed")
 	_connect_button_if_needed(roadmap_button, "_on_roadmap_button_pressed")
 	_connect_button_if_needed(settings_button, "_on_settings_button_pressed")
 	_connect_button_if_needed(close_button, "_on_close_popup_pressed")
@@ -316,12 +319,15 @@ func _apply_responsive_layout() -> void:
 		top_right_panel.offset_top = safe_top + 10.0
 		top_right_panel.offset_bottom = top_right_panel.offset_top + (66.0 if portrait else 70.0)
 		top_right_panel.offset_right = -safe_right - 12.0
-		top_right_panel.offset_left = -((340.0 if portrait else 390.0) + safe_right)
+		top_right_panel.offset_left = -((380.0 if portrait else 430.0) + safe_right)
 		top_right_panel.add_theme_constant_override("separation", 8 if portrait else 12)
 
 	if store_button:
 		store_button.custom_minimum_size = Vector2(64, 64) if portrait else Vector2(70, 70)
 		store_button.add_theme_font_size_override("font_size", 30 if portrait else 34)
+	if leaderboard_button:
+		leaderboard_button.custom_minimum_size = Vector2(64, 64) if portrait else Vector2(70, 70)
+		leaderboard_button.add_theme_font_size_override("font_size", 30 if portrait else 34)
 	if roadmap_button:
 		roadmap_button.custom_minimum_size = Vector2(64, 64) if portrait else Vector2(70, 70)
 		roadmap_button.add_theme_font_size_override("font_size", 30 if portrait else 34)
@@ -687,9 +693,23 @@ func _setup_signboard_highscore() -> void:
 	_signboard_label.z_index = 8
 	add_child(_signboard_label)
 
-	# Set score text from persisted SINGLE-PLAYER records only.
-	var score_value := _get_single_player_high_score()
+	_refresh_signboard_highscore()
 
+
+func _bind_highscore_updates() -> void:
+	if not SaveManager:
+		return
+	var cb := Callable(self, "_refresh_signboard_highscore")
+	if SaveManager.has_signal("data_loaded") and not SaveManager.data_loaded.is_connected(cb):
+		SaveManager.data_loaded.connect(cb)
+	if SaveManager.has_signal("data_saved") and not SaveManager.data_saved.is_connected(cb):
+		SaveManager.data_saved.connect(cb)
+
+
+func _refresh_signboard_highscore() -> void:
+	if not _signboard_label or not is_instance_valid(_signboard_label):
+		return
+	var score_value := _get_single_player_high_score()
 	_signboard_label.text = "%s\n%d" % [
 		_loc("initial_highscore_sign", "HIGHSCORE"),
 		score_value
@@ -1678,6 +1698,12 @@ func _on_store_pressed() -> void:
 	_go_to_scene(["res://scenes/ui/UnlockablesScreen.tscn"])
 
 
+func _on_leaderboard_pressed() -> void:
+	if AudioManager:
+		AudioManager.play_click()
+	_go_to_scene(["res://scenes/ui/LeaderboardScreen.tscn"])
+
+
 func _on_roadmap_pressed() -> void:
 	if AudioManager:
 		AudioManager.play_click()
@@ -1742,6 +1768,10 @@ func _on_customize_button_pressed() -> void:
 
 func _on_store_button_pressed() -> void:
 	_on_store_pressed()
+
+
+func _on_leaderboard_button_pressed() -> void:
+	_on_leaderboard_pressed()
 
 
 func _on_roadmap_button_pressed() -> void:
