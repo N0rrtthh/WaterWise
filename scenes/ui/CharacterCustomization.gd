@@ -63,6 +63,11 @@ var _wave_layers: Array[TextureRect] = []
 var _ambient_layer_tweens: Array[Tween] = []
 var _feedback_tweens: Dictionary = {}
 
+var _accessory_scroll: ScrollContainer
+var _acc_dragging: bool = false
+var _acc_drag_start_x: float = 0.0
+var _acc_scroll_start: int = 0
+
 
 func _ready() -> void:
 	await get_tree().process_frame
@@ -427,6 +432,7 @@ func _build_runtime_ui() -> void:
 	acc_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 	acc_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	root_vbox.add_child(acc_scroll)
+	_accessory_scroll = acc_scroll
 
 	_accessory_grid = HBoxContainer.new()
 	_accessory_grid.add_theme_constant_override("separation", 8)
@@ -481,6 +487,25 @@ func _build_runtime_ui() -> void:
 
 	_setup_interaction_feedback()
 	_apply_ui_theme()
+
+
+func _input(event: InputEvent) -> void:
+	if not _accessory_scroll:
+		return
+
+	if event is InputEventScreenTouch:
+		var touch = event as InputEventScreenTouch
+		if touch.pressed:
+			if _accessory_scroll.get_global_rect().has_point(touch.position):
+				_acc_dragging = true
+				_acc_drag_start_x = touch.position.x
+				_acc_scroll_start = _accessory_scroll.scroll_horizontal
+		else:
+			_acc_dragging = false
+	elif event is InputEventScreenDrag and _acc_dragging:
+		var drag = event as InputEventScreenDrag
+		var delta = _acc_drag_start_x - drag.position.x
+		_accessory_scroll.scroll_horizontal = int(_acc_scroll_start + delta)
 
 
 func _make_arrow_button(symbol: String) -> Button:

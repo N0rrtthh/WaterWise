@@ -77,6 +77,11 @@ var estimated_battery_mah: float = 0.0
 var _battery_start_pct: int = -1  # -1 = not yet sampled
 var _battery_capacity_mah: float = 4000.0  # Typical budget Android phone
 var battery_source: String = "estimate"  # "android_real" or "estimate"
+var battery_pct_current: int = -1
+var battery_pct_start: int = -1
+var battery_pct_min: int = 101
+var battery_pct_max: int = 0
+var battery_pct_samples: Array[int] = []
 
 ## ── THERMAL PROFILING (Paper: Instrumental Profiling) ──
 ## T_cpu: CPU temperature logged at 1-second intervals
@@ -240,9 +245,16 @@ func _process(delta: float) -> void:
 	if OS.get_name() == "Android":
 		# Read real battery percentage from sysfs
 		var batt_pct = _read_android_battery_percent()
-		if batt_pct >= 0 and _battery_start_pct < 0:
-			_battery_start_pct = batt_pct  # Record starting level
-			battery_source = "android_real"
+		if batt_pct >= 0:
+			battery_pct_current = batt_pct
+			if _battery_start_pct < 0:
+				_battery_start_pct = batt_pct  # Record starting level
+				battery_source = "android_real"
+			if battery_pct_start < 0:
+				battery_pct_start = batt_pct
+			battery_pct_min = min(battery_pct_min, batt_pct)
+			battery_pct_max = max(battery_pct_max, batt_pct)
+			battery_pct_samples.append(batt_pct)
 		if _battery_start_pct >= 0 and batt_pct >= 0:
 			# Typical phone battery ~4000mAh. % drop → mAh consumed
 			var pct_drop = _battery_start_pct - batt_pct
@@ -409,12 +421,21 @@ func _take_snapshot() -> void:
 		"dropped_frames": dropped_frames,
 		"total_frames": total_frames,
 		"battery_mah": estimated_battery_mah,
+		"battery_pct": battery_pct_current,
 		"cpu_temp_c": cpu_temp_c,
 		"clock_speed_ratio": clock_speed_ratio,
 		"is_throttling": is_throttling,
 		"battery_drain_per_min": battery_drain_per_min,
 	}
 	snapshots.append(snap)
+	battery_readings.append({
+		"timestamp": snap["timestamp"],
+		"elapsed_sec": session_elapsed_sec,
+		"battery_pct": battery_pct_current,
+		"battery_mah": estimated_battery_mah,
+		"battery_drain_per_min": battery_drain_per_min,
+		"source": battery_source,
+	})
 	profiling_snapshot.emit(snap)
 
 ## Get full session data for thesis evaluation
@@ -459,7 +480,11 @@ func export_session_report() -> Dictionary:
 			"meets_limit": (
 				estimated_battery_mah <= MAX_BATTERY_MAH_PER_5MIN
 			),
-			"measurement_source": battery_source
+			"measurement_source": battery_source,
+			"start_pct": battery_pct_start,
+			"min_pct": battery_pct_min if battery_pct_min <= 100 else -1,
+			"max_pct": battery_pct_max,
+			"avg_pct": _calc_battery_pct_avg()
 		},
 		"thermal": {
 			"cpu_temp_c": cpu_temp_c,
@@ -498,6 +523,15 @@ func _check_iso_compliance() -> bool:
 		algo_latency_max_ms <= MAX_ALGO_LATENCY_MS and
 		cpu_temp_peak <= MAX_CPU_TEMP_C
 	)
+
+
+func _calc_battery_pct_avg() -> float:
+	if battery_pct_samples.is_empty():
+		return -1.0
+	var total := 0.0
+	for p in battery_pct_samples:
+		total += float(p)
+	return total / float(battery_pct_samples.size())
 
 
 func _build_mobile_context() -> Dictionary:

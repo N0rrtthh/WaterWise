@@ -43,6 +43,7 @@ var dev_profiler_check: CheckBox
 var dev_algorithm_check: CheckBox
 var dev_stats_button: Button
 var erase_data_button: Button
+var export_data_button: Button
 var autoplay_duration_spinbox: SpinBox
 
 var _feedback_tweens: Dictionary = {}
@@ -760,6 +761,16 @@ func _setup_dev_mode_section() -> void:
 	erase_data_button.pressed.connect(_on_erase_data_pressed)
 	vbox.add_child(erase_data_button)
 
+	# Add export button (Android only)
+	if OS.has_feature("android"):
+		var export_button = Button.new()
+		export_button.text = "📤 Export Game Data"
+		export_button.custom_minimum_size = Vector2(0, 60)
+		export_button.add_theme_font_size_override("font_size", 20)
+		export_button.disabled = not dev_mode_enabled
+		export_button.set_script(load("res://scenes/ui/ExportDataButton.gd"))
+		vbox.add_child(export_button)
+
 	_apply_dev_mode_visibility(dev_mode_enabled)
 
 func _get_accessibility_setting(key: String, default_val: bool = false) -> bool:
@@ -857,6 +868,8 @@ func _apply_dev_mode_visibility(enabled: bool) -> void:
 		dev_stats_button.disabled = not enabled
 	if erase_data_button:
 		erase_data_button.disabled = not enabled
+	if export_data_button:
+		export_data_button.disabled = not enabled
 
 func _on_dev_stats_pressed() -> void:
 	if AudioManager:

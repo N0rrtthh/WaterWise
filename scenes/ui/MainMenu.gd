@@ -55,6 +55,11 @@ func _ready() -> void:
 	# Apply mobile UI scaling if on mobile platform
 	if MobileUIManager and MobileUIManager.is_mobile_platform():
 		_apply_mobile_ui_scaling()
+
+	# Keep layout stable on any phone viewport and orientation updates.
+	if not get_viewport().size_changed.is_connected(_on_viewport_resized):
+		get_viewport().size_changed.connect(_on_viewport_resized)
+	_on_viewport_resized()
 	
 	# Connect to language changes
 	if Localization:
@@ -201,6 +206,10 @@ func _start_character_animation() -> void:
 	var base_rotation = deg_to_rad(18.0)
 	character.rotation = base_rotation
 
+	var is_mobile := MobileUIManager and MobileUIManager.is_mobile_platform()
+	var move_amp := 15.0 if not is_mobile else 8.0
+	var arm_wave_enabled := not is_mobile
+
 	# ROTATION - separate looping tween
 	var rotation_tween = create_tween().set_loops()
 	_character_tweens.append(rotation_tween)
@@ -216,16 +225,16 @@ func _start_character_animation() -> void:
 	var position_tween = create_tween().set_loops()
 	_character_tweens.append(position_tween)
 	var pt1 = position_tween.tween_property(
-		character, "position:y", base_y - 15.0, 1.0)
+		character, "position:y", base_y - move_amp, 1.0)
 	pt1.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
 	var pt2 = position_tween.tween_property(
-		character, "position:y", base_y + 15.0, 1.0)
+		character, "position:y", base_y + move_amp, 1.0)
 	pt2.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
 
 	# ARM WAVE animation
 	var left_arm = character.get_node_or_null("LeftArm")
 	var right_arm = character.get_node_or_null("RightArm")
-	if left_arm:
+	if arm_wave_enabled and left_arm:
 		var la_base_rot = left_arm.rotation
 		var arm_tw_l = create_tween().set_loops()
 		_character_tweens.append(arm_tw_l)
@@ -235,7 +244,7 @@ func _start_character_animation() -> void:
 		arm_tw_l.tween_property(
 			left_arm, "rotation", la_base_rot - deg_to_rad(10.0), 0.6
 		).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
-	if right_arm:
+	if arm_wave_enabled and right_arm:
 		var ra_base_rot = right_arm.rotation
 		var arm_tw_r = create_tween().set_loops()
 		_character_tweens.append(arm_tw_r)
@@ -426,10 +435,30 @@ func _apply_mobile_ui_scaling() -> void:
 		MobileUIManager.apply_mobile_scaling(subtitle_label)
 	
 	# Apply safe area margins to root UI container
-	# (LayoutManager not available; handled by MobileUIManager directly)
+	var ui_root = get_node_or_null("UI") as Control
+	if ui_root:
+		var safe := MobileUIManager.get_safe_area_margins()
+		ui_root.offset_left = float(safe.get("left", 0.0))
+		ui_root.offset_top = float(safe.get("top", 0.0))
+		ui_root.offset_right = -float(safe.get("right", 0.0))
+		ui_root.offset_bottom = -float(safe.get("bottom", 0.0))
 	
 	# Enable haptic feedback for buttons
 	if TouchInputManager:
 		TouchInputManager.enable_haptics_for_scene(self)
 	
 	print("📱 Mobile UI scaling applied to MainMenu")
+
+
+func _on_viewport_resized() -> void:
+	_place_main_character_in_view()
+	if MobileUIManager and MobileUIManager.is_mobile_platform():
+		_apply_mobile_ui_scaling()
+
+	# Reposition autoplay dev toggle above bottom safe area.
+	var toggle = get_node_or_null("AutoPlayToggleContainer") as Control
+	if toggle:
+		var safe_bottom := 0.0
+		if MobileUIManager and MobileUIManager.has_method("get_safe_area_margins"):
+			safe_bottom = float(MobileUIManager.get_safe_area_margins().get("bottom", 0.0))
+		toggle.position = Vector2(24, -60 - safe_bottom)
