@@ -51,6 +51,9 @@ var high_scores: Dictionary = {
 	# "game_id": { "score": 0, "accuracy": 0.0, "best_time": 999 }
 }
 
+# Single-player session score history (for leaderboards)
+var sp_session_scores: Array = []
+
 # Unlocked Content
 var unlocked_content: Dictionary = {
 	"characters": ["droppy_blue"],
@@ -165,6 +168,7 @@ func save_all_data() -> void:
 		"save_version": SAVE_VERSION,
 		"player": player_data,
 		"high_scores": high_scores,
+		"sp_session_scores": sp_session_scores,
 		"unlocked": unlocked_content,
 		"achievements": achievements
 	}
@@ -221,6 +225,9 @@ func _merge_data(data: Dictionary) -> void:
 	
 	if data.has("high_scores"):
 		high_scores = data.high_scores
+
+	if data.has("sp_session_scores"):
+		sp_session_scores = data.sp_session_scores
 	
 	if data.has("unlocked"):
 		for key in data.unlocked:
@@ -319,6 +326,25 @@ func record_game_result(game_id: String, score: int, accuracy: float, time_secon
 	save_all_data()
 	
 	return is_new_record
+
+func record_sp_session_score(score: int) -> void:
+	if score < 0:
+		return
+	sp_session_scores.append(score)
+	sp_session_scores.sort_custom(func(a, b): return int(a) > int(b))
+	save_all_data()
+
+func get_sp_session_scores(limit: int = 0) -> Array:
+	var scores := sp_session_scores.duplicate()
+	scores.sort_custom(func(a, b): return int(a) > int(b))
+	if limit > 0 and scores.size() > limit:
+		return scores.slice(0, limit)
+	return scores
+
+func get_sp_session_high_score() -> int:
+	if sp_session_scores.is_empty():
+		return 0
+	return int(sp_session_scores[0])
 
 func get_high_score(game_id: String = "catch_rain") -> Dictionary:
 	if high_scores.has(game_id):
@@ -634,6 +660,7 @@ func reset_all_data() -> void:
 	}
 	
 	high_scores = {}
+	sp_session_scores = []
 	
 	unlocked_content = {
 		"characters": ["droppy_blue"],
@@ -646,6 +673,12 @@ func reset_all_data() -> void:
 		achievements[id].unlocked = false
 
 	reset_session_stats()
+
+	if GameManager:
+		GameManager.high_score = 0
+		GameManager.water_droplets = 0
+		if GameManager.has_method("save_persistent_data"):
+			GameManager.save_persistent_data()
 	
 	save_all_data()
 	print("🗑️ All data reset")

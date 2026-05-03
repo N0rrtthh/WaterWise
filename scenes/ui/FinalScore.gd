@@ -42,7 +42,7 @@ func _should_show_particles() -> bool:
 
 func _ready() -> void:
 	var total = GameManager.session_score if GameManager else 0
-	var high = GameManager.high_score if GameManager else 0
+	var high = _get_sp_high_score()
 	var is_record = total >= high and total > 0
 	var rounds = GameManager.round_scores if GameManager else []
 
@@ -50,6 +50,7 @@ func _ready() -> void:
 	_init_labels(total, high)
 	_build_mascot(total, rounds)
 	_build_round_breakdown(rounds)
+	_build_score_leaderboard()
 	_animate_entrance(total, is_record)
 	continue_btn.text = _loc("continue", "CONTINUE")
 
@@ -340,6 +341,31 @@ func _build_round_breakdown(rounds: Array) -> void:
 		lbl.add_theme_color_override("font_color", Color(0.85, 0.9, 1))
 		vbox.add_child(lbl)
 
+func _build_score_leaderboard() -> void:
+	if GameManager and GameManager.current_game_mode != GameManager.GameMode.SINGLE_PLAYER:
+		return
+	var scores = _get_sp_top_scores(5)
+	if scores.is_empty():
+		return
+	var vbox = $CenterContainer/VBoxContainer
+	var spacer = Control.new()
+	spacer.custom_minimum_size = Vector2(0, 12)
+	vbox.add_child(spacer)
+	var header = Label.new()
+	header.text = _loc("finalscore_top_scores", "TOP SCORES")
+	header.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	header.add_theme_font_size_override("font_size", 26)
+	header.add_theme_color_override("font_color", Color(1, 0.9, 0.6))
+	vbox.add_child(header)
+
+	for i in range(scores.size()):
+		var lbl = Label.new()
+		lbl.text = _fmt_loc("finalscore_top_score_row", "%d. %d pts", [i + 1, int(scores[i])])
+		lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		lbl.add_theme_font_size_override("font_size", 18)
+		lbl.add_theme_color_override("font_color", Color(0.9, 0.95, 1))
+		vbox.add_child(lbl)
+
 
 # ── Helpers ────────────────────────────────────────────────────────
 
@@ -378,6 +404,18 @@ func _summary_line(score: int, rounds: Array) -> String:
 	if avg >= 40.0:
 		return _loc("finalscore_summary_good", "Good effort. Keep building combos!")
 	return _loc("finalscore_summary_rough", "Rough run. Bounce back next session!")
+
+func _get_sp_high_score() -> int:
+	if SaveManager and SaveManager.has_method("get_sp_session_high_score"):
+		return int(SaveManager.get_sp_session_high_score())
+	if GameManager:
+		return int(GameManager.high_score)
+	return 0
+
+func _get_sp_top_scores(limit: int) -> Array:
+	if SaveManager and SaveManager.has_method("get_sp_session_scores"):
+		return SaveManager.get_sp_session_scores(limit)
+	return []
 
 
 func _on_continue() -> void:

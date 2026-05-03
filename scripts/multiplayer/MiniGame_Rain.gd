@@ -335,7 +335,10 @@ func _setup_role_ui() -> void:
 	_update_lives_display()
 	
 	# Register with AutoPlayManager
-	if AutoPlayManager and AutoPlayManager.is_auto_play_enabled():
+	if AutoPlayManager and (
+		AutoPlayManager.is_auto_play_enabled()
+		or AutoPlayManager.is_mp_auto_play_enabled()
+	):
 		AutoPlayManager.register_game(self, "MiniGame_Rain")
 
 func _update_lives_display() -> void:
