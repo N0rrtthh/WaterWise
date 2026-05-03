@@ -92,6 +92,11 @@ var _palm_leaves: Array[Polygon2D] = []
 var _waterpark_ambient_tweens: Array[Tween] = []
 var _feedback_tweens: Dictionary = {}
 
+var _scroll_container: ScrollContainer
+var _scroll_dragging: bool = false
+var _scroll_drag_start_y: float = 0.0
+var _scroll_start_value: int = 0
+
 func _ready() -> void:
 	_sync_from_save_manager()
 	_setup_waterpark_background()
@@ -520,6 +525,7 @@ func _setup_ui() -> void:
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	vbox.add_child(scroll)
+	_scroll_container = scroll
 	
 	grid_container = GridContainer.new()
 	grid_container.columns = 4
@@ -547,6 +553,31 @@ func _setup_ui() -> void:
 	back_button.add_theme_color_override("font_color", Color.WHITE)
 	back_button.pressed.connect(_on_back_pressed)
 	vbox.add_child(back_button)
+
+
+func _input(event: InputEvent) -> void:
+	if not _scroll_container:
+		return
+
+	if event is InputEventScreenTouch:
+		var touch = event as InputEventScreenTouch
+		if touch.pressed:
+			if _scroll_container.get_global_rect().has_point(touch.position):
+				_scroll_dragging = true
+				_scroll_drag_start_y = touch.position.y
+				_scroll_start_value = _scroll_container.scroll_vertical
+		else:
+			_scroll_dragging = false
+	elif event is InputEventScreenDrag and _scroll_dragging:
+		var drag = event as InputEventScreenDrag
+		var delta = _scroll_drag_start_y - drag.position.y
+		_scroll_container.scroll_vertical = int(_scroll_start_value + delta)
+	elif event is InputEventMouseButton:
+		var mb = event as InputEventMouseButton
+		if mb.button_index == MOUSE_BUTTON_WHEEL_UP:
+			_scroll_container.scroll_vertical -= 60
+		elif mb.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+			_scroll_container.scroll_vertical += 60
 
 func _create_tab_button(text: String, active: bool) -> Button:
 	var btn = Button.new()

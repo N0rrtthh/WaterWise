@@ -227,15 +227,49 @@ func transition_to_scene(scene_path: String, duration: float = 0.4) -> void:
 
 	_is_transitioning = true
 	_transition_rect.mouse_filter = Control.MOUSE_FILTER_STOP
+	
 	# Fade to themed tint.
 	var fade_out = create_tween().set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
 	fade_out.tween_property(_transition_rect, "color:a", fade_alpha, fade_duration)
 	await fade_out.finished
-	# Change scene
-	get_tree().change_scene_to_file(scene_path)
+	
+	# ═══════════════════════════════════════════════════════════════════
+	# MOBILE OPTIMIZATION: Async scene loading to prevent frame drops
+	# Old: get_tree().change_scene_to_file() blocks main thread (200-500ms)
+	# New: ResourceLoader.load_threaded_request() loads in background
+	# ═══════════════════════════════════════════════════════════════════
+	var is_mobile = OS.has_feature("mobile") or OS.has_feature("android") or OS.has_feature("ios")
+	
+	if is_mobile:
+		# Async loading for mobile
+		ResourceLoader.load_threaded_request(scene_path)
+		
+		# Poll until loaded (non-blocking)
+		var status = ResourceLoader.load_threaded_get_status(scene_path)
+		while status == ResourceLoader.THREAD_LOAD_IN_PROGRESS:
+			await get_tree().process_frame
+			status = ResourceLoader.load_threaded_get_status(scene_path)
+		
+		if status == ResourceLoader.THREAD_LOAD_LOADED:
+			var packed_scene = ResourceLoader.load_threaded_get(scene_path)
+			if packed_scene:
+				get_tree().change_scene_to_packed(packed_scene)
+			else:
+				push_error("Failed to get loaded scene: %s" % scene_path)
+				_is_transitioning = false
+				return
+		else:
+			push_error("Failed to load scene: %s (status: %d)" % [scene_path, status])
+			_is_transitioning = false
+			return
+	else:
+		# Synchronous loading for desktop (faster, no need for async)
+		get_tree().change_scene_to_file(scene_path)
+	
 	# Wait a frame for the new scene to load
 	await get_tree().process_frame
 	await get_tree().process_frame
+	
 	# Fade from themed tint.
 	var fade_in = create_tween().set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 	fade_in.tween_property(_transition_rect, "color:a", 0.0, reveal_duration)
@@ -1128,6 +1162,14 @@ func _should_show_story() -> bool:
 	if current_game_mode == GameMode.MULTIPLAYER_COOP:
 		return false
 	
+	# ═══════════════════════════════════════════════════════════════════
+	# MOBILE FIX: Disable story screens on mobile devices
+	# Story screens cause blue screen bug after 2 games on Android/iOS
+	# Story screens are optional narrative elements, safe to skip on mobile
+	# ═══════════════════════════════════════════════════════════════════
+	if OS.has_feature("mobile") or OS.has_feature("android") or OS.has_feature("ios"):
+		return false
+	
 	for threshold in STORY_THRESHOLDS:
 		if minigames_played_this_session == threshold and threshold not in _story_shown_at:
 			return true
@@ -1139,27 +1181,61 @@ func _show_story_then_continue() -> void:
 	_story_transition_active = true
 	_story_shown_at.append(minigames_played_this_session)
 	var story_path := "res://scenes/ui/StoryScreen.tscn"
+	
+	# ═══════════════════════════════════════════════════════════════════
+	# MOBILE FIX: Better error handling for story screen loading
+	# ═══════════════════════════════════════════════════════════════════
 	if not ResourceLoader.exists(story_path):
+		print("⚠️ Story screen not found at: %s" % story_path)
 		_story_transition_active = false
 		_launch_next_minigame_internal()
 		return
-	var story_scene = load(story_path).instantiate()
+	
+	var story_scene_resource = load(story_path)
+	if not story_scene_resource:
+		print("⚠️ Story screen failed to load, skipping...")
+		_story_transition_active = false
+		_launch_next_minigame_internal()
+		return
+	
+	var story_scene = story_scene_resource.instantiate()
+	if not story_scene:
+		print("⚠️ Story screen failed to instantiate, skipping...")
+		_story_transition_active = false
+		_launch_next_minigame_internal()
+		return
+	
 	var scene_root := get_tree().current_scene
 	if scene_root == null:
+		print("⚠️ No current scene, skipping story...")
+		story_scene.queue_free()
 		_story_transition_active = false
 		_launch_next_minigame_internal()
 		return
+	
 	var story_layer := CanvasLayer.new()
 	story_layer.name = "StoryScreenLayer"
 	story_layer.layer = 200
 	story_layer.add_child(story_scene)
 	scene_root.add_child(story_layer)
-	story_scene.story_finished.connect(func():
+	
+	# Connect story finished signal with error handling
+	if story_scene.has_signal("story_finished"):
+		story_scene.story_finished.connect(func():
+			if is_instance_valid(story_layer):
+				story_layer.queue_free()
+			_story_transition_active = false
+			_launch_next_minigame_internal()
+		, CONNECT_ONE_SHOT)
+	else:
+		# No signal, use timeout fallback
+		print("⚠️ Story scene has no story_finished signal, using timeout...")
+		await get_tree().create_timer(5.0).timeout
 		if is_instance_valid(story_layer):
 			story_layer.queue_free()
 		_story_transition_active = false
 		_launch_next_minigame_internal()
-	, CONNECT_ONE_SHOT)
+	
 	story_scene.tree_exited.connect(func():
 		_story_transition_active = false
 	, CONNECT_ONE_SHOT)
@@ -1481,7 +1557,6 @@ func _finalize_session_for_logging() -> void:
 			"adaptive_window_size": int(adaptive_summary.get("games_in_window", 0)),
 			"adaptive_min_games": int(adaptive_summary.get("min_games_before_adaptation", 0)),
 		})
-		PerformanceProfiler.export_session_log_to_file()
 
 	if AdaptiveDifficulty:
 		if AdaptiveDifficulty.has_method("export_to_json_file"):
