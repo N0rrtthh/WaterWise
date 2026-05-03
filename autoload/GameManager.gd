@@ -1686,8 +1686,11 @@ func _show_final_score() -> void:
 	_save_data()
 
 	var save_mgr = get_node_or_null("/root/SaveManager")
-	if save_mgr and current_game_mode == GameMode.SINGLE_PLAYER:
-		if save_mgr.has_method("record_sp_session_score"):
+	if save_mgr:
+		var is_connected_multiplayer_session := current_game_mode == GameMode.MULTIPLAYER_COOP \
+			and NetworkManager \
+			and NetworkManager.is_multiplayer_connected()
+		if not is_connected_multiplayer_session and save_mgr.has_method("record_sp_session_score"):
 			save_mgr.record_sp_session_score(session_score)
 
 	_finalize_session_for_logging()
