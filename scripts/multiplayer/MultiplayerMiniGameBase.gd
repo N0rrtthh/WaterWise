@@ -1201,16 +1201,33 @@ func _update_timer_display() -> void:
 
 func _on_time_up() -> void:
 	# Called when time runs out
-	_log(" Time up!")
-	# Default behavior: If quota exists and not met, fail. Else success.
+	_log("⏰ Time up!")
+	
+	# ═══════════════════════════════════════════════════════════════════
+	# BUG FIX: Check GLOBAL/TEAM score, not just local_score
+	# In multiplayer, scores are distributed via G-Counter across players
+	# ═══════════════════════════════════════════════════════════════════
+	var team_score: int = local_score  # Fallback to local if no manager
+	
+	# Get global score from GameManager (G-Counter) or NetworkManager
+	if GameManager and GameManager.has_method("get_global_score"):
+		team_score = GameManager.get_global_score()
+	elif NetworkManager and NetworkManager.has_method("get_total_score"):
+		team_score = NetworkManager.get_total_score()
+	
+	_log("📊 Final Score: Team=%d, Local=%d, Quota=%d" % [team_score, local_score, win_quota])
+	
+	# Check win condition based on TEAM score
 	if win_quota > 0:
-		if local_score >= win_quota:
+		if team_score >= win_quota:
+			_log("✅ TEAM WIN! Score %d >= Quota %d" % [team_score, win_quota])
 			end_game(true)
 		else:
-			_log(" Quota not met (%d/%d)" % [local_score, win_quota])
+			_log("❌ TEAM FAIL! Score %d < Quota %d" % [team_score, win_quota])
 			end_game(false)
 	else:
-		end_game(true) # Survival success
+		# No quota = survival mode, reaching time limit is success
+		end_game(true)
 
 func _on_countdown_complete() -> void:
 	# Called when countdown reaches GO

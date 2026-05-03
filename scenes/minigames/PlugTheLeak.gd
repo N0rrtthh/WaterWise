@@ -12,6 +12,10 @@ var plug_rate: float = 15.0
 var num_pipes: int = 3
 var active_leak: Node2D = null
 
+var _touch_active: bool = false
+var _touch_position: Vector2 = Vector2.ZERO
+var _touch_index: int = -1
+
 func _apply_difficulty_settings() -> void:
 	super._apply_difficulty_settings()
 
@@ -161,8 +165,11 @@ func _process(delta):
 	
 	var viewport = get_viewport()
 	if viewport == null: return
-	var mouse_pos = viewport.get_mouse_position()
+	var hold_pos = viewport.get_mouse_position()
 	var is_holding = Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
+	if _touch_active:
+		hold_pos = _touch_position
+		is_holding = true
 	
 	for pipe in pipes:
 		if not is_instance_valid(pipe): continue
@@ -175,7 +182,7 @@ func _process(delta):
 			# Check if player is holding on this pipe
 			var pipe_rect = Rect2(pipe.position - Vector2(50, 50), Vector2(100, 100))
 			
-			if is_holding and pipe_rect.has_point(mouse_pos):
+			if is_holding and pipe_rect.has_point(hold_pos):
 				# Plugging the leak
 				var progress = pipe.get_meta("plug_progress") + plug_rate * delta
 				pipe.set_meta("plug_progress", progress)
@@ -217,6 +224,26 @@ func _process(delta):
 	# Check for failure
 	if water_wasted >= max_water_waste:
 		end_game(false)
+
+
+func _input(event: InputEvent) -> void:
+	if not game_active:
+		return
+
+	if event is InputEventScreenTouch:
+		var touch = event as InputEventScreenTouch
+		if touch.pressed:
+			if _touch_index == -1:
+				_touch_index = touch.index
+				_touch_active = true
+				_touch_position = touch.position
+		elif touch.index == _touch_index:
+			_touch_active = false
+			_touch_index = -1
+	elif event is InputEventScreenDrag:
+		var drag = event as InputEventScreenDrag
+		if drag.index == _touch_index:
+			_touch_position = drag.position
 
 func _start_random_leak():
 	if not game_active: return

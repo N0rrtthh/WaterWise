@@ -48,7 +48,7 @@ signal safe_area_changed(margins: Dictionary)
 
 ## Orientation
 @export var enforce_landscape_only: bool = true
-@export var allow_reverse_landscape: bool = true
+@export var allow_reverse_landscape: bool = false
 
 ## Performance
 @export var mobile_particle_reduction: float = 0.4
@@ -106,6 +106,7 @@ func _ready() -> void:
 		is_portrait = false
 	_calculate_safe_area()
 	_load_config_if_exists()
+	_apply_mobile_performance_profile()
 	
 	# Connect to viewport size changes
 	get_viewport().size_changed.connect(_on_viewport_size_changed)
@@ -299,6 +300,7 @@ func adapt_scene_for_mobile(scene_root: Node) -> void:
 		LayoutManagerUtil.apply_safe_area_margins(safe_target, safe_area_margins)
 
 	_apply_mobile_layout_hints(scene_root, _resolve_button_min_size())
+	_apply_mobile_scene_optimizations(scene_root)
 
 	if TouchInputManager and TouchInputManager.has_method("enable_haptics_for_scene"):
 		TouchInputManager.enable_haptics_for_scene(scene_root)
@@ -312,11 +314,24 @@ func _find_safe_area_target(scene_root: Node) -> Control:
 		var ui_child = scene_root.get_node_or_null("UI")
 		if ui_child and ui_child is Control:
 			return ui_child as Control
+		var margin_child = scene_root.get_node_or_null("MarginContainer")
+		if margin_child and margin_child is Control:
+			return margin_child as Control
+		var center_child = scene_root.get_node_or_null("CenterContainer")
+		if center_child and center_child is Control:
+			return center_child as Control
 		return scene_root as Control
 
 	var direct_ui = scene_root.get_node_or_null("UI")
 	if direct_ui and direct_ui is Control:
 		return direct_ui as Control
+
+	var direct_margin = scene_root.get_node_or_null("MarginContainer")
+	if direct_margin and direct_margin is Control:
+		return direct_margin as Control
+	var direct_center = scene_root.get_node_or_null("CenterContainer")
+	if direct_center and direct_center is Control:
+		return direct_center as Control
 
 	for child in scene_root.get_children():
 		if child is Control:
@@ -333,6 +348,31 @@ func _resolve_button_min_size() -> Vector2:
 		if wants_large_targets:
 			target_size = Vector2(max(target_size.x, 120.0), max(target_size.y, 80.0))
 	return target_size
+
+
+func _apply_mobile_performance_profile() -> void:
+	# Apply baseline performance limits for mobile hardware.
+	if is_mobile:
+		Engine.max_fps = max(20, mobile_target_fps)
+		PerformanceManager.set_max_tweens(get_max_tweens())
+	else:
+		Engine.max_fps = 0
+
+
+func _apply_mobile_scene_optimizations(scene_root: Node) -> void:
+	if not scene_root or not is_mobile:
+		return
+	if scene_root.has_meta("_mobile_optimized"):
+		return
+	_optimize_particles_recursive(scene_root)
+	scene_root.set_meta("_mobile_optimized", true)
+
+
+func _optimize_particles_recursive(node: Node) -> void:
+	if node is GPUParticles2D:
+		PerformanceManager.optimize_particle_system_for_mobile(node)
+	for child in node.get_children():
+		_optimize_particles_recursive(child)
 
 
 func _apply_mobile_layout_hints(node: Node, button_minimum_size: Vector2) -> void:
@@ -812,6 +852,7 @@ func _on_viewport_size_changed() -> void:
 	if _should_force_landscape():
 		is_portrait = false
 	_calculate_safe_area()  # This now emits safe_area_changed signal
+	_apply_mobile_performance_profile()
 	
 	# Emit signals if state changed
 	if old_is_mobile != is_mobile:

@@ -441,6 +441,9 @@ func _take_perf_snapshot() -> void:
 		"fps_avg": snapf(PerformanceProfiler.fps_avg, 1),
 		"memory_mb": snapf(PerformanceProfiler.memory_current_mb, 2),
 		"cpu_temp_c": snapf(PerformanceProfiler.cpu_temp_c, 1),
+		"battery_pct": PerformanceProfiler.battery_pct_current,
+		"battery_mah": snapf(PerformanceProfiler.estimated_battery_mah, 3),
+		"battery_mah_per_min": snapf(PerformanceProfiler.battery_drain_per_min, 3),
 		"algo_latency_avg_ms": snapf(PerformanceProfiler.algo_latency_avg_ms, 3),
 		"algo_latency_max_ms": snapf(PerformanceProfiler.algo_latency_max_ms, 3),
 		"frame_time_ms": snapf(PerformanceProfiler.frame_time_ms, 2),
@@ -577,25 +580,36 @@ func export_session() -> String:
 	var throttles := _get_throttle_count()
 	var efficiency := _calc_efficiency_pct()
 	var iso_pass := _check_iso_pass()
+	var fps_stats := _calc_snapshot_stats("fps", 1)
+	var temp_stats := _calc_snapshot_stats("cpu_temp_c", 1)
+	var mem_stats := _calc_snapshot_stats("memory_mb", 2)
+	var batt_pct_stats := _calc_snapshot_stats("battery_pct", 1, true, -1.0)
 
 	var perf_summary: Dictionary = {
 		"iso_25010_compliant": iso_pass,
 		"fps": {
 			"target": 60,
 			"minimum_required": 30,
-			"minimum_observed": snapf(fps_min_session if fps_min_session < 9999.0 else 0.0, 1),
-			"maximum_observed": snapf(fps_max_session, 1),
-			"average_observed": fps_avg,
+			"start_observed": fps_stats.get("start", 0.0),
+			"minimum_observed": fps_stats.get("min", 0.0),
+			"maximum_observed": fps_stats.get("max", 0.0),
+			"average_observed": fps_stats.get("avg", 0.0),
 			"passed": fps_avg >= 30.0
 		},
 		"memory": {
 			"budget_mb": 200.0,
-			"peak_mb": snapf(memory_peak_mb, 2),
+			"start_mb": mem_stats.get("start", 0.0),
+			"minimum_mb": mem_stats.get("min", 0.0),
+			"peak_mb": mem_stats.get("max", snapf(memory_peak_mb, 2)),
+			"average_mb": mem_stats.get("avg", 0.0),
 			"passed": memory_peak_mb <= 200.0
 		},
 		"thermal": {
 			"threshold_c": 45.0,
-			"peak_c": snapf(cpu_temp_peak_c, 1),
+			"start_c": temp_stats.get("start", 0.0),
+			"minimum_c": temp_stats.get("min", 0.0),
+			"peak_c": temp_stats.get("max", snapf(cpu_temp_peak_c, 1)),
+			"average_c": temp_stats.get("avg", 0.0),
 			"throttle_events": throttles,
 			"throttle_details": get_throttle_events(),
 			"passed": cpu_temp_peak_c <= 45.0 and throttles == 0
@@ -610,6 +624,16 @@ func export_session() -> String:
 			"count": _get_dropped_frames(),
 			"total_frames": _get_total_frames(),
 			"drop_rate_pct": drop_rate
+		},
+		"battery": {
+			"start_pct": batt_pct_stats.get("start", -1.0),
+			"minimum_pct": batt_pct_stats.get("min", -1.0),
+			"maximum_pct": batt_pct_stats.get("max", -1.0),
+			"average_pct": batt_pct_stats.get("avg", -1.0),
+			"total_estimated_mah": snapf(
+				PerformanceProfiler.estimated_battery_mah if PerformanceProfiler else 0.0, 3
+			),
+			"battery_source": PerformanceProfiler.battery_source if PerformanceProfiler else "N/A"
 		},
 		"battery_efficiency": {
 			"measured_mah_per_min": batt,
@@ -821,20 +845,37 @@ func _write_txt_report(report: Dictionary, txt_path: String) -> bool:
 	var mem_d: Dictionary = perf.get("memory", {})
 	var therm: Dictionary = perf.get("thermal", {})
 	var lat_d: Dictionary = perf.get("algorithm_latency", {})
+	var batt_d: Dictionary = perf.get("battery", {})
 	f.store_line("[PERFORMANCE]")
 	f.store_line("  ISO 25010 Pass     : " + str(perf.get("iso_25010_compliant", false)))
-	f.store_line("  FPS Min/Avg/Max    : %s / %s / %s" % [
+	f.store_line("  FPS Start/Min/Avg/Max: %s / %s / %s / %s" % [
+		str(fps_d.get("start_observed", 0)),
 		str(fps_d.get("minimum_observed", 0)),
 		str(fps_d.get("average_observed", 0)),
 		str(fps_d.get("maximum_observed", 0))
 	])
 	f.store_line("  FPS Pass           : " + str(fps_d.get("passed", false)))
-	f.store_line("  Memory Peak        : " + str(mem_d.get("peak_mb", 0.0)) + " MB")
+	f.store_line("  Memory Start/Avg/Peak: %s / %s / %s MB" % [
+		str(mem_d.get("start_mb", 0.0)),
+		str(mem_d.get("average_mb", 0.0)),
+		str(mem_d.get("peak_mb", 0.0))
+	])
 	f.store_line("  Memory Pass        : " + str(mem_d.get("passed", false)))
-	f.store_line("  CPU Temp Peak      : " + str(therm.get("peak_c", 0.0)) + " °C")
+	f.store_line("  CPU Temp Start/Min/Avg/Peak: %s / %s / %s / %s °C" % [
+		str(therm.get("start_c", 0.0)),
+		str(therm.get("minimum_c", 0.0)),
+		str(therm.get("average_c", 0.0)),
+		str(therm.get("peak_c", 0.0))
+	])
 	f.store_line("  Throttle Events    : " + str(therm.get("throttle_events", 0)))
 	f.store_line("  Algo Latency Avg   : " + str(lat_d.get("avg_ms", 0.0)) + " ms")
 	f.store_line("  Algo Latency Max   : " + str(lat_d.get("max_ms", 0.0)) + " ms")
+	f.store_line("  Battery % Start/Min/Avg/Max: %s / %s / %s / %s" % [
+		str(batt_d.get("start_pct", -1)),
+		str(batt_d.get("minimum_pct", -1)),
+		str(batt_d.get("average_pct", -1)),
+		str(batt_d.get("maximum_pct", -1))
+	])
 	f.store_line("")
 
 	# SP Game Records
@@ -843,13 +884,13 @@ func _write_txt_report(report: Dictionary, txt_path: String) -> bool:
 	f.store_line("  #    | Game                  | Score | Acc%  | React | Diff   | Φ")
 	f.store_line("  " + sep40)
 	for rec in sp_games_arr:
-		f.store_line("  %-4d | %-21s | %-5d | %-5s | %-5s | %-6s | %s" % [
+		f.store_line("  %d | %s | %d | %s | %s | %s | %s" % [
 			int(rec.get("game_num", 0)),
-			str(rec.get("game_name", "")).left(21),
+			str(rec.get("game_name", "")).left(21).rpad(21),
 			int(rec.get("score", 0)),
-			str(snapf(float(rec.get("accuracy_pct", 0.0)), 1)),
-			str(snapf(float(rec.get("reaction_time_s", 0.0)), 2)) + "s",
-			str(rec.get("difficulty", "?")),
+			str(snapf(float(rec.get("accuracy_pct", 0.0)), 1)).rpad(5),
+			(str(snapf(float(rec.get("reaction_time_s", 0.0)), 2)) + "s").rpad(5),
+			str(rec.get("difficulty", "?")).rpad(6),
 			str(rec.get("phi_index", 0.0))
 		])
 	f.store_line("")
@@ -860,7 +901,7 @@ func _write_txt_report(report: Dictionary, txt_path: String) -> bool:
 	for rec in mp_rounds_arr:
 		var p1d: Dictionary = rec.get("p1", {})
 		var p2d: Dictionary = rec.get("p2", {})
-		f.store_line("  Round %-3d | Team %s | P1 score=%-4d | P2 score=%-4d | Sync=%.1f" % [
+		f.store_line("  Round %d | Team %s | P1 score=%d | P2 score=%d | Sync=%.1f" % [
 			int(rec.get("round_num", 0)),
 			("WIN " if rec.get("team_success", false) else "LOSS"),
 			int(p1d.get("score", 0)),
@@ -908,22 +949,46 @@ func export_session_txt() -> String:
 	var throttles := _get_throttle_count()
 	var efficiency := _calc_efficiency_pct()
 	var iso_pass := _check_iso_pass()
+	var fps_stats := _calc_snapshot_stats("fps", 1)
+	var temp_stats := _calc_snapshot_stats("cpu_temp_c", 1)
+	var mem_stats := _calc_snapshot_stats("memory_mb", 2)
+	var batt_pct_stats := _calc_snapshot_stats("battery_pct", 1, true, -1.0)
 
 	var perf_summary: Dictionary = {
 		"iso_25010_compliant": iso_pass,
 		"fps": {"target": 60, "minimum_required": 30,
-			"minimum_observed": snapf(fps_min_session if fps_min_session < 9999.0 else 0.0, 1),
-			"maximum_observed": snapf(fps_max_session, 1), "average_observed": fps_avg,
+			"start_observed": fps_stats.get("start", 0.0),
+			"minimum_observed": fps_stats.get("min", 0.0),
+			"maximum_observed": fps_stats.get("max", 0.0),
+			"average_observed": fps_stats.get("avg", 0.0),
 			"passed": fps_avg >= 30.0},
-		"memory": {"budget_mb": 200.0, "peak_mb": snapf(memory_peak_mb, 2),
+		"memory": {"budget_mb": 200.0,
+			"start_mb": mem_stats.get("start", 0.0),
+			"minimum_mb": mem_stats.get("min", 0.0),
+			"peak_mb": mem_stats.get("max", snapf(memory_peak_mb, 2)),
+			"average_mb": mem_stats.get("avg", 0.0),
 			"passed": memory_peak_mb <= 200.0},
-		"thermal": {"threshold_c": 45.0, "peak_c": snapf(cpu_temp_peak_c, 1),
+		"thermal": {"threshold_c": 45.0,
+			"start_c": temp_stats.get("start", 0.0),
+			"minimum_c": temp_stats.get("min", 0.0),
+			"peak_c": temp_stats.get("max", snapf(cpu_temp_peak_c, 1)),
+			"average_c": temp_stats.get("avg", 0.0),
 			"throttle_events": throttles, "throttle_details": get_throttle_events(),
 			"passed": cpu_temp_peak_c <= 45.0 and throttles == 0},
 		"algorithm_latency": {"budget_ms": 16.0, "avg_ms": algo_lat_avg,
 			"max_ms": algo_lat_max, "passed": algo_lat_max <= 16.0},
 		"dropped_frames": {"count": _get_dropped_frames(),
 			"total_frames": _get_total_frames(), "drop_rate_pct": drop_rate},
+		"battery": {
+			"start_pct": batt_pct_stats.get("start", -1.0),
+			"minimum_pct": batt_pct_stats.get("min", -1.0),
+			"maximum_pct": batt_pct_stats.get("max", -1.0),
+			"average_pct": batt_pct_stats.get("avg", -1.0),
+			"total_estimated_mah": snapf(
+				PerformanceProfiler.estimated_battery_mah if PerformanceProfiler else 0.0, 3
+			),
+			"battery_source": PerformanceProfiler.battery_source if PerformanceProfiler else "N/A"
+		},
 		"battery_efficiency": {"measured_mah_per_min": batt,
 			"dl_baseline_mah_per_min": 10.0, "rule_based_savings_pct": efficiency,
 			"battery_source": PerformanceProfiler.battery_source if PerformanceProfiler else "N/A"},
@@ -1025,6 +1090,55 @@ func _get_current_cp() -> float:
 	if AdaptiveDifficulty and AdaptiveDifficulty.has_method("_calculate_window_metrics"):
 		return snapf(AdaptiveDifficulty._calculate_window_metrics().get("consistency_penalty", 0.0), 4)
 	return 0.0
+
+
+func _calc_snapshot_stats(
+	key: String,
+	decimals: int = 1,
+	ignore_negative: bool = false,
+	default_value: float = 0.0
+) -> Dictionary:
+	if perf_snapshots.is_empty():
+		return {
+			"start": snapf(default_value, decimals),
+			"min": snapf(default_value, decimals),
+			"max": snapf(default_value, decimals),
+			"avg": snapf(default_value, decimals),
+		}
+
+	var values: Array[float] = []
+	for s in perf_snapshots:
+		if not s.has(key):
+			continue
+		var v := float(s.get(key, default_value))
+		if ignore_negative and v < 0.0:
+			continue
+		values.append(v)
+
+	if values.is_empty():
+		return {
+			"start": snapf(default_value, decimals),
+			"min": snapf(default_value, decimals),
+			"max": snapf(default_value, decimals),
+			"avg": snapf(default_value, decimals),
+		}
+
+	var start_val := values[0]
+	var min_val := values[0]
+	var max_val := values[0]
+	var total := 0.0
+	for v in values:
+		min_val = min(min_val, v)
+		max_val = max(max_val, v)
+		total += v
+	var avg_val := total / float(values.size())
+
+	return {
+		"start": snapf(start_val, decimals),
+		"min": snapf(min_val, decimals),
+		"max": snapf(max_val, decimals),
+		"avg": snapf(avg_val, decimals),
+	}
 
 func _calc_fps_avg() -> float:
 	if perf_snapshots.is_empty():
