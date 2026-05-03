@@ -24,9 +24,11 @@ var _outcome_banner: Label = null
 
 func _loc(key: String, fallback: String) -> String:
 	if Localization:
-		var translated = Localization.get_text(key)
-		if translated != key:
-			return translated
+		if Localization.translations.has(key):
+			var translated = Localization.get_text(key)
+			if translated != key:
+				return translated
+		return fallback
 	return fallback
 
 func _ready() -> void:

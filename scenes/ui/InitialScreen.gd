@@ -687,29 +687,37 @@ func _setup_signboard_highscore() -> void:
 	_signboard_label.z_index = 8
 	add_child(_signboard_label)
 
-	# Set the score text — show highest recorded score across all minigames
-	var score_value := 0
-	if SaveManager:
-		var hs_dict = SaveManager.high_scores
-		if hs_dict is Dictionary:
-			for record in hs_dict.values():
-				if record is Dictionary:
-					var s = int(record.get("score", 0))
-					if s > score_value:
-						score_value = s
-		elif SaveManager.has_method("get_high_score"):
-			var hs_result = SaveManager.get_high_score()
-			if hs_result is Dictionary:
-				score_value = int(hs_result.get("score", 0))
-
-	# Also check session high_score from GameManager as a fallback
-	if GameManager and GameManager.high_score > score_value:
-		score_value = GameManager.high_score
+	# Set score text from persisted SINGLE-PLAYER records only.
+	var score_value := _get_single_player_high_score()
 
 	_signboard_label.text = "%s\n%d" % [
 		_loc("initial_highscore_sign", "HIGHSCORE"),
 		score_value
 	]
+
+
+func _get_single_player_high_score() -> int:
+	var best_score := 0
+	if not SaveManager:
+		return best_score
+	if SaveManager.has_method("get_sp_session_high_score"):
+		return int(SaveManager.get_sp_session_high_score())
+
+	var hs_dict = SaveManager.high_scores
+	if hs_dict is Dictionary:
+		for game_id in hs_dict.keys():
+			if _is_multiplayer_game_key(str(game_id)):
+				continue
+			var record = hs_dict[game_id]
+			if record is Dictionary:
+				best_score = max(best_score, int(record.get("score", 0)))
+
+	return best_score
+
+
+func _is_multiplayer_game_key(game_id: String) -> bool:
+	var key := game_id.strip_edges().to_lower()
+	return key.begins_with("mp_") or key.begins_with("multiplayer")
 
 
 # ── Characters ──────────────────────────────────────────────────────

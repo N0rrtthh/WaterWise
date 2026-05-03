@@ -240,7 +240,10 @@ func _start_game() -> void:
 	_update_score_display()
 	
 	# Register with AutoPlayManager
-	if AutoPlayManager and AutoPlayManager.is_auto_play_enabled():
+	if AutoPlayManager and (
+		AutoPlayManager.is_auto_play_enabled()
+		or AutoPlayManager.is_mp_auto_play_enabled()
+	):
 		AutoPlayManager.register_game(self, "MiniGame_GreywaterSort")
 
 func _process(delta: float) -> void:

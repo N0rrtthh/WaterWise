@@ -341,6 +341,10 @@ func _on_start_game_pressed() -> void:
 	if not GameManager:
 		print("❌ GameManager is null")
 		return
+
+	if multiplayer.multiplayer_peer == null or not _is_connected():
+		_show_error(_t("connection_failed"))
+		return
 	
 	if not _is_host():
 		print("❌ Not the server, peer_id: ", multiplayer.get_unique_id())
@@ -358,13 +362,12 @@ func _on_start_game_pressed() -> void:
 		return
 
 	print("🎮 Starting GameManager multiplayer session flow...")
+	_lobby_closing = true
 	# Broadcast to ALL peers (including self) that the lobby is closing so
 	# no further outgoing RPCs are sent from any peer's lobby instance.
 	rpc("_set_lobby_closing")
 	await get_tree().process_frame
-	GameManager.rpc("_begin_multiplayer_session_rpc")
-	await get_tree().process_frame
-	GameManager.rpc("_load_next_multiplayer_minigame")
+	GameManager.rpc("_start_multiplayer_match_rpc")
 
 func _on_disconnect_pressed() -> void:
 	# Mark lobby closing first so _sync_local_ready skips RPCs and NetworkManager calls

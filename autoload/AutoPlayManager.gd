@@ -998,6 +998,23 @@ func _play_catcher(_delta: float) -> void:
 		return
 	var drops = g.get("drops")
 	if drops == null or not drops is Array or drops.is_empty():
+		drops = []
+		var container: Node = g.get_node_or_null("GameLayer/ObjectsContainer")
+		var search_root: Node = container if container != null else g
+		for child in search_root.get_children():
+			if not is_instance_valid(child):
+				continue
+			var is_drop := false
+			if child.has_meta("type") and str(child.get_meta("type")) == "raindrop":
+				is_drop = true
+			if child.name.begins_with("Drop_") or child.name == "WaterDrop":
+				is_drop = true
+			if child is MPMovingObject:
+				if child.object_type == MPMovingObject.ObjectType.WATER_DROP:
+					is_drop = true
+			if is_drop:
+				drops.append(child)
+	if drops.is_empty():
 		Input.warp_mouse(Vector2(catcher.position.x, catcher.position.y))
 		return
 	var screen_size := get_viewport().get_visible_rect().size
@@ -1006,6 +1023,8 @@ func _play_catcher(_delta: float) -> void:
 	# Find nearest good (blue) drop to chase
 	for drop in drops:
 		if not is_instance_valid(drop):
+			continue
+		if drop is MPMovingObject and drop.is_special:
 			continue
 		if not drop.get_meta("good", true):
 			continue
@@ -1016,6 +1035,8 @@ func _play_catcher(_delta: float) -> void:
 	# Dodge any bad (red) drops near our target position
 	for drop in drops:
 		if not is_instance_valid(drop):
+			continue
+		if drop is MPMovingObject and drop.is_special:
 			continue
 		if drop.get_meta("good", true):
 			continue
@@ -1543,11 +1564,22 @@ func _play_mp_rain_collector(g: Node) -> void:
 	for child in objects_container.get_children():
 		if not is_instance_valid(child):
 			continue
-		if child.name.begins_with("WaterDrop"):
-			var dist = child.global_position.distance_to(bucket.global_position)
-			if dist < closest_dist:
-				closest_dist = dist
-				closest_drop = child
+		var is_drop := false
+		if child.name.begins_with("Drop_") or child.name == "WaterDrop":
+			is_drop = true
+		if child.has_meta("type") and str(child.get_meta("type")) == "raindrop":
+			is_drop = true
+		if child is MPMovingObject:
+			if child.object_type == MPMovingObject.ObjectType.WATER_DROP:
+				is_drop = true
+			if child.is_special:
+				is_drop = false
+		if not is_drop:
+			continue
+		var dist = child.global_position.distance_to(bucket.global_position)
+		if dist < closest_dist:
+			closest_dist = dist
+			closest_drop = child
 	
 	# Move bucket toward closest drop
 	if closest_drop:

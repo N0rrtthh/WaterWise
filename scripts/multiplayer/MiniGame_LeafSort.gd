@@ -256,7 +256,10 @@ func _start_game() -> void:
 	spawn_timer.start()
 	
 	# Register with AutoPlayManager
-	if AutoPlayManager and AutoPlayManager.is_auto_play_enabled():
+	if AutoPlayManager and (
+		AutoPlayManager.is_auto_play_enabled()
+		or AutoPlayManager.is_mp_auto_play_enabled()
+	):
 		AutoPlayManager.register_game(self, "MiniGame_LeafSort")
 
 func _on_spawn_timer_timeout() -> void:

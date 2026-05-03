@@ -223,12 +223,15 @@ func transition_to_scene(scene_path: String, duration: float = 0.4) -> void:
 	var is_multiplayer_scene = (
 		"Multiplayer" in scene_path or 
 		"multiplayer" in scene_path or
-		"MultiplayerLobby" in scene_path or
-		"MultiplayerMenu" in scene_path or
 		"MultiplayerGameOver" in scene_path
 	)
+	var is_multiplayer_shell_scene = (
+		"MultiplayerLobby" in scene_path or
+		"MultiplayerMenu" in scene_path
+	)
 	
-	if is_multiplayer_scene and current_game_mode == GameMode.SINGLE_PLAYER:
+	if is_multiplayer_scene and not is_multiplayer_shell_scene \
+			and current_game_mode == GameMode.SINGLE_PLAYER:
 		print("🚫 BLOCKED: Attempted to load multiplayer scene '%s' while in SINGLE_PLAYER mode!" % scene_path)
 		print("🔄 Redirecting to InitialScreen instead...")
 		scene_path = "res://scenes/ui/InitialScreen.tscn"
@@ -331,13 +334,41 @@ func host_game(port: int = DEFAULT_PORT) -> bool:
 	# Host a LAN multiplayer game
 	if multiplayer.multiplayer_peer:
 		disconnect_multiplayer()
+	# Also clear NetworkManager socket if it was used in a previous MP flow.
+	if NetworkManager and NetworkManager.has_method("disconnect_multiplayer"):
+		NetworkManager.disconnect_multiplayer()
 	_disconnect_multiplayer_callbacks()
-	peer = ENetMultiplayerPeer.new()
-	var error: int = peer.create_server(port, MAX_PLAYERS - 1)
-	
-	if error != OK:
-		print("❌ Failed to create server: ", error)
+
+	var candidate_ports: Array[int] = [port, 8888, 9999, 7778]
+	var tried: Dictionary = {}
+	var selected_port: int = -1
+	var last_error: int = ERR_CANT_CREATE
+
+	for candidate in candidate_ports:
+		if tried.has(candidate):
+			continue
+		tried[candidate] = true
+
+		peer = ENetMultiplayerPeer.new()
+		var error: int = peer.create_server(candidate, MAX_PLAYERS - 1)
+		if error == OK:
+			selected_port = candidate
+			break
+
+		last_error = error
+		print("❌ Failed to create server on port %d: %s"
+			% [candidate, error_string(error)])
 		peer = null
+
+	if selected_port == -1 or peer == null:
+		print("❌ ENet host creation failed on all ports. Last error: %s"
+			% error_string(last_error))
+		queue_multiplayer_notice(
+			"Unable to host right now. Check firewall/LAN and try again."
+		)
+		current_game_mode = GameMode.SINGLE_PLAYER
+		is_host = false
+		is_multiplayer_connected = false
 		return false
 	
 	multiplayer.multiplayer_peer = peer
@@ -353,7 +384,7 @@ func host_game(port: int = DEFAULT_PORT) -> bool:
 	# Connect signals
 	_connect_multiplayer_callbacks()
 	
-	print("✅ Server created on port ", port)
+	print("✅ Server created on port ", selected_port)
 	print("🎮 You are Player 1 (Host)")
 	return true
 
@@ -855,6 +886,26 @@ func is_multiplayer_session_ready() -> bool:
 func _begin_multiplayer_session_rpc() -> void:
 	start_new_session(GameMode.MULTIPLAYER_COOP)
 
+@rpc("authority", "call_local", "reliable")
+func _start_multiplayer_match_rpc() -> void:
+	# Atomically start a multiplayer session and launch the first round.
+	# Doing this in one RPC avoids lobby-side race conditions between two RPC calls.
+	if multiplayer.multiplayer_peer == null or not is_multiplayer_connected:
+		push_warning("Cannot start multiplayer match: connection is not active.")
+		return
+
+	start_new_session(GameMode.MULTIPLAYER_COOP)
+	await get_tree().process_frame
+
+	if not is_host:
+		return
+
+	if get_connected_multiplayer_peer_ids().size() < MAX_PLAYERS:
+		push_warning("Cannot start multiplayer match: waiting for all players.")
+		return
+
+	rpc("_load_next_multiplayer_minigame")
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # MULTIPLAYER MINIGAME PROGRESSION
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1041,6 +1092,8 @@ func _load_next_multiplayer_minigame() -> void:
 	if not session_active:
 		session_active = true
 
+	_cleanup_multiplayer_overlays()
+
 	print("🎮 [Multiplayer] Loading next minigame...")
 	
 	# Reset G-Counter for next round (but keep lives and difficulty)
@@ -1074,6 +1127,24 @@ func _load_next_multiplayer_minigame() -> void:
 	print("❤️ Team Lives: ", team_lives)
 	print("⚡ Difficulty Multiplier: %.2f" % difficulty_multiplier)
 	rpc("_load_multiplayer_game", game_name)
+
+func _cleanup_multiplayer_overlays() -> void:
+	var scene := get_tree().current_scene
+	if scene == null:
+		return
+	var overlay_names := [
+		"ResultsOverlay",
+		"ResultOverlay",
+		"ScoringOverlay",
+		"WaitingStartOverlay",
+		"CountdownOverlay",
+		"InstructionOverlay",
+		"GameOverOverlay"
+	]
+	for overlay_name in overlay_names:
+		var overlay = scene.find_child(overlay_name, true, false)
+		if overlay:
+			overlay.queue_free()
 
 @rpc("authority", "call_local", "reliable")
 func _load_multiplayer_game(game_name: String) -> void:
@@ -1195,7 +1266,9 @@ func start_next_minigame() -> void:
 	# ═══════════════════════════════════════════════════════════════════
 	if current_game_mode == GameMode.MULTIPLAYER_COOP:
 		# Check if we're actually in a multiplayer session
-		if not NetworkManager or not NetworkManager.is_multiplayer_connected():
+		var nm_connected := NetworkManager and NetworkManager.is_multiplayer_connected()
+		var gm_connected := is_multiplayer_connected and multiplayer.multiplayer_peer != null
+		if not nm_connected and not gm_connected:
 			print("⚠️ Game mode was MULTIPLAYER but no connection - forcing SINGLE_PLAYER")
 			current_game_mode = GameMode.SINGLE_PLAYER
 	
@@ -1563,11 +1636,13 @@ func return_to_main_menu() -> void:
 func return_to_multiplayer_lobby() -> void:
 	get_tree().paused = false
 	disconnect_multiplayer()
+	current_game_mode = GameMode.MULTIPLAYER_COOP
 	transition_to_scene("res://scenes/ui/MultiplayerLobby.tscn", 0.2)
 
 func return_to_multiplayer_menu() -> void:
 	get_tree().paused = false
 	disconnect_multiplayer()
+	current_game_mode = GameMode.MULTIPLAYER_COOP
 	transition_to_scene("res://scenes/ui/MultiplayerMenu.tscn", 0.2)
 
 func queue_multiplayer_notice(message: String) -> void:
@@ -1609,6 +1684,11 @@ func _show_final_score() -> void:
 	if session_score > high_score:
 		high_score = session_score
 	_save_data()
+
+	var save_mgr = get_node_or_null("/root/SaveManager")
+	if save_mgr and current_game_mode == GameMode.SINGLE_PLAYER:
+		if save_mgr.has_method("record_sp_session_score"):
+			save_mgr.record_sp_session_score(session_score)
 
 	_finalize_session_for_logging()
 	
