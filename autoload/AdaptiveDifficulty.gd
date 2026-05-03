@@ -29,7 +29,7 @@ signal case_study_exported(file_path: String)
 ## Rolling Window Configuration
 @export_category("Algorithm Settings")
 @export var window_size: int = 5  # Rolling window keeps last 5 games (as per outline)
-@export var adaptation_frequency: int = 1  # Every N games (Paper: evaluate each new game)
+@export var adaptation_frequency: int = 5  # Every N games (Paper: evaluate after 5 games)
 # Warmup games before adaptation starts (thesis: full window of 5 games required)
 @export_range(3, 5, 1) var min_games_before_adaptation: int = 5
 @export var target_latency_ms: float = 100.0

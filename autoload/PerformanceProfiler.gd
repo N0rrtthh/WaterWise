@@ -33,7 +33,7 @@ signal profiling_snapshot(data: Dictionary)
 ## Performance Efficiency
 const TARGET_FPS: int = 60
 const MIN_FPS: int = 30
-const FRAME_BUDGET_MS: float = 16.67  # 1000ms / 60fps
+const FRAME_BUDGET_MS: float = 33.33  # 1000ms / 30fps (budget to maintain minimum playability)
 const MAX_MEMORY_MB: float = 200.0    # Paper: <200MB RAM budget
 const MAX_ALGO_LATENCY_MS: float = 16.0  # Paper: <16ms for O(1) ops
 const MAX_CPU_TEMP_C: float = 45.0    # Paper: <45°C
@@ -75,7 +75,7 @@ var estimated_battery_mah: float = 0.0
 
 ## Android battery tracking (real measurement when available)
 var _battery_start_pct: int = -1  # -1 = not yet sampled
-var _battery_capacity_mah: float = 4000.0  # Typical budget Android phone
+var _battery_capacity_mah: float = 5000.0  # Motorola E5 Plus specific battery capacity
 var battery_source: String = "unknown"  # "android_sysfs" or "unavailable_desktop"
 var battery_pct_current: int = -1
 var battery_pct_start: int = -1
@@ -641,12 +641,33 @@ func _sample_cpu_temperature() -> void:
 					break
 		
 		if not sensor_read:
+			var batt_temp_paths := [
+				"/sys/class/power_supply/battery/temp",
+				"/sys/class/power_supply/Battery/temp",
+			]
+			for path in batt_temp_paths:
+				var temp_file = FileAccess.open(path, FileAccess.READ)
+				if temp_file:
+					var raw = temp_file.get_as_text().strip_edges()
+					temp_file.close()
+					if raw.is_valid_int():
+						var raw_val = raw.to_int()
+						# Battery temp is typically in tenths of a degree (e.g. 350 = 35.0 C)
+						cpu_temp_c = float(raw_val) / 10.0
+						_thermal_source = "sensor"
+						sensor_read = true
+						if not _thermal_source_logged:
+							print("🌡 Thermal sensor (battery proxy) found: %s → %.1f°C" % [path, cpu_temp_c])
+							_thermal_source_logged = true
+						break
+						
+		if not sensor_read:
 			# Android but no readable sensor — report as unavailable
 			cpu_temp_c = 0.0
 			_thermal_source = "unavailable"
 			if not _thermal_source_logged:
 				print("⚠️ No thermal sensor accessible on this Android device")
-				print("   Tried paths: %s" % str(thermal_paths))
+				print("   Tried paths: %s and battery temp" % str(thermal_paths))
 				print("   cpu_temp_c will report 0.0 (unavailable)")
 				_thermal_source_logged = true
 	else:

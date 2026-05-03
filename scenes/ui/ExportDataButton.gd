@@ -18,6 +18,7 @@ func _ready() -> void:
 	popup.exclusive = true
 	popup.unresizable = false
 	popup.min_size = Vector2(400, 200)
+	popup.process_mode = Node.PROCESS_MODE_ALWAYS
 	# Defer so the tree is ready
 	call_deferred("_add_popup_to_tree")
 
