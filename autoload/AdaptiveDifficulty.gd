@@ -30,8 +30,8 @@ signal case_study_exported(file_path: String)
 @export_category("Algorithm Settings")
 @export var window_size: int = 5  # Rolling window keeps last 5 games (as per outline)
 @export var adaptation_frequency: int = 1  # Every N games (Paper: evaluate each new game)
-# Warmup games before adaptation starts (configured to 3-5 games)
-@export_range(3, 5, 1) var min_games_before_adaptation: int = 3
+# Warmup games before adaptation starts (thesis: full window of 5 games required)
+@export_range(3, 5, 1) var min_games_before_adaptation: int = 5
 @export var target_latency_ms: float = 100.0
 
 ## Behavioral Thresholds

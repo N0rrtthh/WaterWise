@@ -71,7 +71,8 @@ func _ready():
 	# Background - River path
 	var bg = ColorRect.new()
 	bg.color = Color(0.2, 0.4, 0.6)
-	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	bg.position = Vector2.ZERO
+	bg.size = get_viewport_rect().size
 	bg.z_index = -10
 	add_child(bg)
 

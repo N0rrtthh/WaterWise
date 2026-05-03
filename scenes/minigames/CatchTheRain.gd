@@ -51,7 +51,8 @@ func _ready():
 	# Background - Sky
 	var sky = ColorRect.new()
 	sky.color = Color(0.4, 0.6, 0.9)
-	sky.set_anchors_preset(Control.PRESET_FULL_RECT)
+	sky.position = Vector2.ZERO
+	sky.size = get_viewport_rect().size
 	sky.z_index = -10
 	add_child(sky)
 	

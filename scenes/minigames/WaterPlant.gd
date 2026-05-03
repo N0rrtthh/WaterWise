@@ -50,7 +50,8 @@ func _ready() -> void:
 	# ── Background: garden scene ─────────────────────────────────────
 	var sky = ColorRect.new()
 	sky.color = Color(0.55, 0.82, 1.0)
-	sky.set_anchors_preset(Control.PRESET_FULL_RECT)
+	sky.position = Vector2.ZERO
+	sky.size = get_viewport_rect().size
 	sky.z_index = -10
 	add_child(sky)
 

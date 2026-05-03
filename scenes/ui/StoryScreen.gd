@@ -21,14 +21,32 @@ var _container: VBoxContainer
 var _is_animating: bool = false
 var _is_finishing: bool = false
 var _tap_hint_pulse: Tween = null
+var _safety_timer: Timer = null
+var _is_mobile: bool = false
 
 func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	z_index = 50  # Above all InitialScreen UI (z_index=10)
+	_is_mobile = (
+		OS.has_feature("mobile") or OS.has_feature("android") or
+		OS.has_feature("ios") or OS.get_name() == "Android" or
+		OS.get_name() == "iOS"
+	)
 	_load_story_data()
+	
+	# Safety guard: if no chapters loaded, skip immediately
+	if _chapters.is_empty():
+		print("📖 StoryScreen: No chapters found, finishing immediately")
+		call_deferred("_finish_story")
+		return
+	
 	_build_ui()
 	_show_current_page()
+	
+	# Mobile safety: auto-advance timeout so it never gets stuck
+	if _is_mobile:
+		_start_safety_timer()
 
 func _load_story_data() -> void:
 	var file := FileAccess.open("res://data/story/chapters.json", FileAccess.READ)
@@ -219,8 +237,27 @@ func _finish_story() -> void:
 
 func _exit_tree() -> void:
 	_stop_tap_hint_pulse()
+	_stop_safety_timer()
 
 func _stop_tap_hint_pulse() -> void:
 	if _tap_hint_pulse:
 		_tap_hint_pulse.kill()
 		_tap_hint_pulse = null
+
+func _start_safety_timer() -> void:
+	_stop_safety_timer()
+	_safety_timer = Timer.new()
+	_safety_timer.wait_time = 30.0  # Auto-advance after 30s if stuck
+	_safety_timer.one_shot = true
+	_safety_timer.timeout.connect(func():
+		print("📖 StoryScreen: Safety timer triggered, auto-advancing")
+		_finish_story()
+	)
+	add_child(_safety_timer)
+	_safety_timer.start()
+
+func _stop_safety_timer() -> void:
+	if _safety_timer and is_instance_valid(_safety_timer):
+		_safety_timer.stop()
+		_safety_timer.queue_free()
+		_safety_timer = null

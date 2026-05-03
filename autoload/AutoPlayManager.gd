@@ -426,10 +426,10 @@ func _navigate_ui(delta: float) -> void:
 			start_btn.pressed.emit()
 			return
 		# Single-device testing: back out gracefully since we can't host+join simultaneously
-		var back_btn: Button = _find_button_recursive(scene, ["BackButton", "DisconnectButton"])
-		if back_btn:
+		var exit_btn: Button = _find_button_recursive(scene, ["BackButton", "DisconnectButton"])
+		if exit_btn:
 			print("🤖 AutoNav: exiting multiplayer lobby (no second player available)")
-			back_btn.pressed.emit()
+			exit_btn.pressed.emit()
 		return
 
 	# ── Character / Roadmap / Unlockables screens ─────────────────

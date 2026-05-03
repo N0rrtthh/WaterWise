@@ -82,7 +82,13 @@ func _loc(key: String, fallback: String) -> String:
 	return fallback
 
 func _ready() -> void:
-	await get_tree().process_frame
+	# ═══════════════════════════════════════════════════════════════════
+	# CRITICAL: Load and apply difficulty settings BEFORE any await!
+	# The await yields control back to the child class, which may build
+	# UI using target values (e.g., target_plants, target_score).
+	# If difficulty is applied AFTER the await, the child class sees
+	# stale defaults (e.g., quota=8 instead of Easy's quota=4).
+	# ═══════════════════════════════════════════════════════════════════
 	
 	# Load session lives from GameManager
 	if GameManager:
@@ -90,6 +96,9 @@ func _ready() -> void:
 	
 	_load_difficulty_settings()
 	_apply_difficulty_settings()
+	
+	await get_tree().process_frame
+	
 	_setup_ui()
 	_apply_minigame_theme_visuals()
 	call_deferred("_refresh_minigame_theme_visuals")

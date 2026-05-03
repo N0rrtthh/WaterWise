@@ -260,10 +260,6 @@ func record_sp_game(
 		sp_games_count, game_name, score, accuracy * 100.0, difficulty, phi
 	])
 
-func get_sp_records() -> Array:
-	## Returns the array of SP game records (used for per-game droplet calculations)
-	return sp_games
-
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # MP LOCAL PERFORMANCE RECORDING (Per-Device)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -620,7 +616,12 @@ func export_session() -> String:
 			"throttle_events": throttles,
 			"throttle_details": get_throttle_events(),
 			"thermal_source": PerformanceProfiler._thermal_source if PerformanceProfiler else "unknown",
-			"passed": cpu_temp_peak_c <= 45.0 and throttles == 0
+			"data_available": (PerformanceProfiler._thermal_source == "sensor") if PerformanceProfiler else false,
+			"passed": (
+				(cpu_temp_peak_c <= 45.0 and throttles == 0)
+				if (PerformanceProfiler and PerformanceProfiler._thermal_source == "sensor")
+				else "N/A (no sensor data)"
+			)
 		},
 		"algorithm_latency": {
 			"budget_ms": 16.0,

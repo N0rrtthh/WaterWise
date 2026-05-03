@@ -287,6 +287,8 @@ func _on_join_pressed() -> void:
 func _on_back_pressed() -> void:
 	if _is_connected() and GameManager:
 		GameManager.disconnect_multiplayer()
+	if GameManager and GameManager.has_method("set_game_mode"):
+		GameManager.set_game_mode(GameManager.GameMode.SINGLE_PLAYER)
 	get_tree().change_scene_to_file("res://scenes/ui/InitialScreen.tscn")
 
 func _on_connect_pressed() -> void:

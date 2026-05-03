@@ -997,6 +997,33 @@ func _apply_multiplayer_round_result(
 			"round_time_s": clamped_time,
 		})
 
+	# Log MP local performance to SessionLogger for thesis export
+	var _session_logger = get_node_or_null("/root/SessionLogger")
+	if _session_logger and _session_logger.has_method("record_mp_local_round"):
+		var my_phi: float = 0.0
+		var my_difficulty: String = "Unknown"
+		var partner_score: int = 0
+		if CoopAdaptation:
+			my_difficulty = CoopAdaptation.get_player_difficulty(local_player_num)
+			if CoopAdaptation.has_method("get_team_metrics"):
+				var tm: Dictionary = CoopAdaptation.get_team_metrics()
+				var phi_key = "player%d_proficiency" % local_player_num
+				my_phi = float(tm.get(phi_key, 0.0))
+			# Estimate partner score from global minus mine
+			partner_score = max(0, get_global_score() - clamped_score)
+		_session_logger.record_mp_local_round(
+			minigames_played_this_session,
+			resolved_game_name,
+			clamped_score,
+			accuracy,
+			int(clamped_time * 1000.0),
+			clamped_mistakes,
+			my_difficulty,
+			my_phi,
+			partner_score,
+			victory
+		)
+
 @rpc("authority", "call_local", "reliable")
 func _load_next_multiplayer_minigame() -> void:
 	# Load next random multiplayer minigame (loop until lives depleted)
@@ -1184,22 +1211,6 @@ func start_next_minigame() -> void:
 		_show_final_score()
 		return
 
-	# ═══════════════════════════════════════════════════════════════════
-	# MOBILE FIX: Skip story check entirely on mobile devices
-	# Story screens cause blue screen bug - bypass completely
-	# ═══════════════════════════════════════════════════════════════════
-	var is_mobile = (
-		OS.has_feature("mobile") or 
-		OS.has_feature("android") or 
-		OS.has_feature("ios") or
-		OS.get_name() == "Android" or
-		OS.get_name() == "iOS"
-	)
-	
-	if is_mobile:
-		print("📱 Mobile device - skipping story check, launching game directly")
-		_launch_next_minigame_internal()
-		return
 	
 	# Check if a story chapter should play (desktop only)
 	print("🎮 Games played this session: %d" % minigames_played_this_session)
@@ -1218,23 +1229,6 @@ func _should_show_story() -> bool:
 	# Story is single-player only - multiplayer has its own flow
 	# ═══════════════════════════════════════════════════════════════════
 	if current_game_mode == GameMode.MULTIPLAYER_COOP:
-		return false
-	
-	# ═══════════════════════════════════════════════════════════════════
-	# MOBILE FIX: Disable story screens on mobile devices
-	# Story screens cause blue screen bug after 2 games on Android/iOS
-	# Story screens are optional narrative elements, safe to skip on mobile
-	# ═══════════════════════════════════════════════════════════════════
-	var is_mobile = (
-		OS.has_feature("mobile") or 
-		OS.has_feature("android") or 
-		OS.has_feature("ios") or
-		OS.get_name() == "Android" or
-		OS.get_name() == "iOS"
-	)
-	
-	if is_mobile:
-		print("📱 Mobile device detected - skipping story screens")
 		return false
 	
 	for threshold in STORY_THRESHOLDS:

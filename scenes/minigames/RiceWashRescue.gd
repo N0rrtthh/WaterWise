@@ -51,7 +51,8 @@ func _ready():
 	# Background
 	var bg = ColorRect.new()
 	bg.color = Color(0.9, 0.85, 0.8)
-	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	bg.position = Vector2.ZERO
+	bg.size = screen_size
 	bg.z_index = -10
 	add_child(bg)
 	

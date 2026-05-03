@@ -93,6 +93,11 @@ func play_cutscene() -> void:
 
 func _build_cinematic_layers() -> void:
 	var vp_size = get_viewport_rect().size
+	var is_mobile = (
+		OS.has_feature("mobile") or OS.has_feature("android") or
+		OS.has_feature("ios") or OS.get_name() == "Android" or
+		OS.get_name() == "iOS"
+	)
 
 	# Full-screen white flash on impact
 	_flash_rect = ColorRect.new()
@@ -108,31 +113,33 @@ func _build_cinematic_layers() -> void:
 	_vignette.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_vignette)
 
-	# Outcome banner (big text behind character)
-	_outcome_banner = Label.new()
-	_outcome_banner.text = (
-		_loc("outcome_nice", "NICE!")
-		if success
-		else _loc("outcome_oops", "OOPS!")
-	)
-	_outcome_banner.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_outcome_banner.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	_outcome_banner.set_anchors_preset(Control.PRESET_CENTER)
-	_outcome_banner.add_theme_font_size_override("font_size", 160)
-	_outcome_banner.add_theme_color_override(
-		"font_color",
-		Color(1, 1, 0.3, 0) if success else Color(1, 0.3, 0.2, 0)
-	)
-	_outcome_banner.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.6))
-	_outcome_banner.add_theme_constant_override("outline_size", 14)
-	_outcome_banner.pivot_offset = Vector2(200, 80)
-	_outcome_banner.position = Vector2(vp_size.x / 2 - 200, vp_size.y * 0.15)
-	_outcome_banner.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(_outcome_banner)
-	move_child(_outcome_banner, bg_color.get_index() + 1)
+	# Outcome banner - skip on mobile where it clips and creates artifacts
+	if not is_mobile:
+		_outcome_banner = Label.new()
+		_outcome_banner.text = (
+			_loc("outcome_nice", "NICE!")
+			if success
+			else _loc("outcome_oops", "OOPS!")
+		)
+		_outcome_banner.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		_outcome_banner.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		_outcome_banner.set_anchors_preset(Control.PRESET_CENTER)
+		_outcome_banner.add_theme_font_size_override("font_size", 160)
+		_outcome_banner.add_theme_color_override(
+			"font_color",
+			Color(1, 1, 0.3, 0) if success else Color(1, 0.3, 0.2, 0)
+		)
+		_outcome_banner.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.6))
+		_outcome_banner.add_theme_constant_override("outline_size", 14)
+		_outcome_banner.pivot_offset = Vector2(200, 80)
+		_outcome_banner.position = Vector2(vp_size.x / 2 - 200, vp_size.y * 0.15)
+		_outcome_banner.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		add_child(_outcome_banner)
+		move_child(_outcome_banner, bg_color.get_index() + 1)
 
-	# Procedural floating particles (bubbles for win, drips for lose)
-	_spawn_ambient_particles(vp_size)
+	# Procedural floating particles (skip on mobile to prevent blue bar artifacts)
+	if not is_mobile:
+		_spawn_ambient_particles(vp_size)
 
 func _spawn_ambient_particles(vp_size: Vector2) -> void:
 	var count = 18 if success else 12

@@ -29,8 +29,8 @@ func _ready() -> void:
 	
 	if _is_mobile:
 		# Reduce particle count on mobile
-		_particle_count_multiplier = 0.5  # 50% particles
-		_animation_complexity = 1  # Reduced animations
+		_particle_count_multiplier = 0.3  # 30% particles on mobile
+		_animation_complexity = 0  # Minimal animations on mobile
 		print("📱 SimpleCutscenePlayer: Mobile mode enabled (reduced effects)")
 
 func _exit_tree() -> void:
@@ -84,9 +84,11 @@ func _show_animated_droplet(is_win: bool) -> void:
 	ft.tween_property(flash, "color:a", 0.4 if is_win else 0.3, 0.1)
 	ft.tween_property(flash, "color:a", 0.0, 0.25)
 
-	# Scene-specific props (render behind character for depth)
 	var vp = get_viewport_rect().size
-	_spawn_scene_props(container, scene_data, vp)
+
+	# Scene-specific props (skip on mobile to reduce node count and frame drops)
+	if not _is_mobile:
+		_spawn_scene_props(container, scene_data, vp)
 
 	# Center area for character
 	var center = Control.new()
@@ -124,8 +126,13 @@ func _show_animated_droplet(is_win: bool) -> void:
 		ttw.tween_interval(0.45)
 		ttw.tween_property(text_lbl, "modulate:a", 1.0, 0.3)
 
-	# Spawn burst particles
-	_spawn_burst_particles(container, is_win)
+	# Defer particle spawn to next frame to prevent frame drop spike
+	# Skip burst particles on mobile to eliminate blue bar artifacts
+	if not _is_mobile:
+		await get_tree().process_frame
+		_spawn_burst_particles(container, is_win)
+	else:
+		await get_tree().process_frame
 
 	# Animate
 	await _animate_droplet(is_win)
