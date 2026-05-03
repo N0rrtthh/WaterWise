@@ -152,6 +152,15 @@ func set_battery_capacity_mah(mah: float) -> void:
 func get_battery_capacity_mah() -> float:
 	return _battery_capacity_mah
 
+func get_thermal_source() -> String:
+	return _thermal_source
+
+func has_thermal_sensor_data() -> bool:
+	return _thermal_source == "sensor"
+
+func check_iso_compliance() -> bool:
+	return _check_iso_compliance()
+
 func _load_battery_capacity() -> void:
 	if SaveManager:
 		var saved: float = float(SaveManager.get_setting("device_battery_mah", 0.0))
@@ -697,7 +706,10 @@ func _sample_clock_speed() -> void:
 			"clock_ratio": clock_speed_ratio,
 			"cpu_temp_c": cpu_temp_c,
 			"fps": fps_current,
-			"measurement_note": "clock_ratio derived from FPS/target_FPS (behavioral proxy, not actual CPU frequency)"
+			"measurement_note": (
+				"clock_ratio derived from FPS/target_FPS "
+				+ "(behavioral proxy, not actual CPU frequency)"
+			)
 		})
 		print(
 			"🔥 THROTTLE #%d: S_clk=%.0f%%" % [

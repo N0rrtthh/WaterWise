@@ -1081,6 +1081,8 @@ func _load_multiplayer_game(game_name: String) -> void:
 	## Only called by the host after it has selected the game.
 	## Mode-1 players load the base game; Mode-2 players load the paired game
 	## so each player gets a complementary cooperative role.
+	if current_game_mode != GameMode.MULTIPLAYER_COOP:
+		current_game_mode = GameMode.MULTIPLAYER_COOP
 	current_multiplayer_game_name = game_name
 	current_minigame_quota = 0
 	_recorded_multiplayer_round_game = ""
@@ -1137,7 +1139,9 @@ func start_new_session(mode: GameMode = GameMode.SINGLE_PLAYER) -> void:
 	# If multiplayer mode is requested but no connection exists, force single player
 	# ═══════════════════════════════════════════════════════════════════
 	if mode == GameMode.MULTIPLAYER_COOP:
-		if not NetworkManager or not NetworkManager.is_multiplayer_connected():
+		var nm_connected := NetworkManager and NetworkManager.is_multiplayer_connected()
+		var gm_connected := is_multiplayer_connected and multiplayer.multiplayer_peer != null
+		if not nm_connected and not gm_connected:
 			print("⚠️ MULTIPLAYER mode requested but no connection - forcing SINGLE_PLAYER")
 			mode = GameMode.SINGLE_PLAYER
 	
