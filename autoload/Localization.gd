@@ -417,6 +417,14 @@ func _load_translations() -> void:
 			"en": "%d. %s | %d pts | x%d",
 			"tl": "%d. %s | %d pts | x%d"
 		},
+		"finalscore_top_scores": {
+			"en": "TOP SCORES",
+			"tl": "PINAKAMATAAS NA PUNTOS"
+		},
+		"finalscore_top_score_row": {
+			"en": "%d. %d pts",
+			"tl": "%d. %d pts"
+		},
 		"finalscore_no_rounds_played": {
 			"en": "No rounds played.",
 			"tl": "Walang round na nalaro."
@@ -1290,6 +1298,20 @@ func _load_translations() -> void:
 		"droplet_dash_instructions": {
 			"en": "SWIPE to dodge obstacles!\nGuide Droppy to the reservoir! 💧",
 			"tl": "SWIPE para umiwas sa mga hadlang!\nGabayan si Droppy papunta sa reservoir! 💧"
+		},
+
+		# Narrative overrides (optional)
+		"narrative_trace_pipe_path_lose_character": {
+			"en": "😕",
+			"tl": "😕"
+		},
+		"narrative_trace_pipe_path_lose_context": {
+			"en": "Pipe route got lost\nFlow blocked!",
+			"tl": "Naligaw ang ruta ng tubo\nNabara ang daloy!"
+		},
+		"narrative_cover_the_drum_win_character": {
+			"en": "🛢️",
+			"tl": "🛢️"
 		}
 	}
 
