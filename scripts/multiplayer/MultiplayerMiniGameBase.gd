@@ -506,9 +506,9 @@ var cutscene_player: Node = null
 
 func _setup_cutscene_player() -> void:
 	## Initialize SimpleCutscenePlayer for win/fail animations
-	var SimpleCutscenePlayer = load("res://scripts/cutscenes/SimpleCutscenePlayer.gd")
-	if SimpleCutscenePlayer:
-		cutscene_player = SimpleCutscenePlayer.new()
+	var simple_cutscene_script = load("res://scripts/cutscenes/SimpleCutscenePlayer.gd")
+	if simple_cutscene_script:
+		cutscene_player = simple_cutscene_script.new()
 		cutscene_player.visible = false
 		cutscene_player.set_anchors_preset(Control.PRESET_FULL_RECT)
 		hud_layer.add_child(cutscene_player)
@@ -1295,8 +1295,8 @@ func end_game(success: bool) -> void:
 		
 		# Get round number
 		var round_num: int = 1
-		if GameManager:
-			round_num = GameManager.mp_rounds_count + 1
+		if SessionLogger and SessionLogger.has_method("record_mp_local_round"):
+			round_num = int(SessionLogger.mp_rounds_count) + 1
 		elif NetworkManager:
 			round_num = NetworkManager.rounds_played + 1
 		
@@ -1702,7 +1702,7 @@ func play_mistake_effect() -> void:
 	# Screen shake (if enabled)
 	_shake_camera(0.5)
 
-func play_score_popup(amount: int, position: Vector2) -> void:
+func play_score_popup(amount: int, popup_position: Vector2) -> void:
 	## Show animated score popup at position
 	var popup = Label.new()
 	popup.text = "+%d" % amount
@@ -1710,14 +1710,14 @@ func play_score_popup(amount: int, position: Vector2) -> void:
 	popup.add_theme_color_override("font_color", Color(1.0, 0.95, 0.3))
 	popup.add_theme_color_override("font_outline_color", Color(0.0, 0.0, 0.0, 0.8))
 	popup.add_theme_constant_override("outline_size", 4)
-	popup.position = position
+	popup.position = popup_position
 	popup.z_index = 100
 	add_child(popup)
 	
 	# Animate: float up and fade out
 	var tween = create_tween()
 	tween.set_parallel(true)
-	tween.tween_property(popup, "position:y", position.y - 80, 0.8)\
+	tween.tween_property(popup, "position:y", popup_position.y - 80, 0.8)\
 		.set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_CUBIC)
 	tween.tween_property(popup, "modulate:a", 0.0, 0.8)\
 		.set_ease(Tween.EASE_IN)
