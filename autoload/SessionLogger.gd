@@ -260,6 +260,10 @@ func record_sp_game(
 		sp_games_count, game_name, score, accuracy * 100.0, difficulty, phi
 	])
 
+func get_sp_records() -> Array:
+	## Returns the array of SP game records (used for per-game droplet calculations)
+	return sp_games
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # MP LOCAL PERFORMANCE RECORDING (Per-Device)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -289,6 +293,7 @@ func record_mp_local_round(
 		"my_accuracy_pct": snapf(my_accuracy * 100.0, 1),
 		"my_reaction_time_ms": my_reaction_time_ms,
 		"my_reaction_time_s": snapf(float(my_reaction_time_ms) / 1000.0, 2),
+		"my_game_duration_ms": my_reaction_time_ms,  # Clarification: this is total game time
 		"my_mistakes": my_mistakes,
 		"my_difficulty": my_difficulty,
 		"my_phi": snapf(my_phi, 4),
@@ -296,9 +301,10 @@ func record_mp_local_round(
 		"partner_score": partner_score,
 		"team_success": team_success,
 		"team_score": my_score + partner_score,
-		# Connection metrics
+		# Connection metrics (note: latency/packet_loss are placeholders, ENet doesn't expose these)
 		"latency_ms": snapf(latency_ms, 1),
-		"packet_loss_pct": snapf(packet_loss_pct, 2)
+		"packet_loss_pct": snapf(packet_loss_pct, 2),
+		"connection_metrics_note": "latency and packet_loss are placeholders (0.0) — ENet does not expose these via GDScript"
 	}
 	mp_local_performance.append(record)
 	
@@ -441,6 +447,7 @@ func _take_perf_snapshot() -> void:
 		"fps_avg": snapf(PerformanceProfiler.fps_avg, 1),
 		"memory_mb": snapf(PerformanceProfiler.memory_current_mb, 2),
 		"cpu_temp_c": snapf(PerformanceProfiler.cpu_temp_c, 1),
+		"thermal_source": PerformanceProfiler._thermal_source,
 		"battery_pct": PerformanceProfiler.battery_pct_current,
 		"battery_mah": snapf(PerformanceProfiler.estimated_battery_mah, 3),
 		"battery_mah_per_min": snapf(PerformanceProfiler.battery_drain_per_min, 3),
@@ -612,6 +619,7 @@ func export_session() -> String:
 			"average_c": temp_stats.get("avg", 0.0),
 			"throttle_events": throttles,
 			"throttle_details": get_throttle_events(),
+			"thermal_source": PerformanceProfiler._thermal_source if PerformanceProfiler else "unknown",
 			"passed": cpu_temp_peak_c <= 45.0 and throttles == 0
 		},
 		"algorithm_latency": {
@@ -868,6 +876,7 @@ func _write_txt_report(report: Dictionary, txt_path: String) -> bool:
 		str(therm.get("peak_c", 0.0))
 	])
 	f.store_line("  Throttle Events    : " + str(therm.get("throttle_events", 0)))
+	f.store_line("  Thermal Source     : " + str(therm.get("thermal_source", "unknown")))
 	f.store_line("  Algo Latency Avg   : " + str(lat_d.get("avg_ms", 0.0)) + " ms")
 	f.store_line("  Algo Latency Max   : " + str(lat_d.get("max_ms", 0.0)) + " ms")
 	f.store_line("  Battery % Start/Min/Avg/Max: %s / %s / %s / %s" % [
@@ -974,6 +983,7 @@ func export_session_txt() -> String:
 			"peak_c": temp_stats.get("max", snapf(cpu_temp_peak_c, 1)),
 			"average_c": temp_stats.get("avg", 0.0),
 			"throttle_events": throttles, "throttle_details": get_throttle_events(),
+			"thermal_source": PerformanceProfiler._thermal_source if PerformanceProfiler else "unknown",
 			"passed": cpu_temp_peak_c <= 45.0 and throttles == 0},
 		"algorithm_latency": {"budget_ms": 16.0, "avg_ms": algo_lat_avg,
 			"max_ms": algo_lat_max, "passed": algo_lat_max <= 16.0},

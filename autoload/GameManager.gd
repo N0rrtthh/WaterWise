@@ -1477,11 +1477,19 @@ func complete_minigame(
 		# Log SP game to SessionLogger for thesis defence export
 		var _session_logger = get_node_or_null("/root/SessionLogger")
 		if _session_logger and _session_logger.has_method("record_sp_game"):
-			# Fetch actual droplets from SaveManager for accurate logging
-			var _droplets_earned: int = 0
-			var _sm = get_node_or_null("/root/SaveManager")
-			if _sm and _sm.has_method("get_droplets"):
-				_droplets_earned = int(_sm.get_droplets())
+			# Calculate per-game droplets earned (mirrors MiniGameBase.end_game() logic)
+			# NOTE: We don't use SaveManager.get_droplets() here because that returns
+			# the TOTAL lifetime droplets, not what was earned in this specific game.
+			var _droplets_earned: int = session_droplets_earned
+			# session_droplets_earned is updated by MiniGameBase → add_session_droplets()
+			# before complete_minigame is called, so it reflects the per-session total.
+			# For per-game, we subtract what was recorded before this game:
+			var _previously_logged_droplets: int = 0
+			if _session_logger.has_method("get_sp_records"):
+				var _prev_records: Array = _session_logger.get_sp_records()
+				for _rec in _prev_records:
+					_previously_logged_droplets += int(_rec.get("droplets_earned", 0))
+			_droplets_earned = max(0, session_droplets_earned - _previously_logged_droplets)
 			_session_logger.record_sp_game(
 				game_name,
 				round_score,

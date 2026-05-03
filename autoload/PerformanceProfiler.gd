@@ -494,7 +494,8 @@ func export_session_report() -> Dictionary:
 			"clock_speed_ratio": clock_speed_ratio,
 			"throttle_events": throttle_count,
 			"s_clk_stable": throttle_count == 0,
-			"temp_samples": cpu_temp_history.size()
+			"temp_samples": cpu_temp_history.size(),
+			"thermal_source": _thermal_source
 		},
 		"dl_baseline_comparison": {
 			"rule_based_mah_min": battery_drain_per_min,
@@ -581,25 +582,59 @@ func _build_mobile_context() -> Dictionary:
 ## Sample T_cpu at 1-second intervals.
 ## On Android reads /sys/class/thermal; on desktop uses
 ## a frame-time heuristic as proxy.
+var _thermal_source: String = "heuristic"  # "sensor" or "heuristic"
+var _thermal_source_logged: bool = false
+
 func _sample_cpu_temperature() -> void:
-	# Heuristic: baseline 35°C + load-proportional rise
+	# Default: Heuristic baseline 35°C + load-proportional rise
 	var load_ratio = clamp(
 		frame_time_ms / FRAME_BUDGET_MS, 0.0, 3.0
 	)
-	cpu_temp_c = 35.0 + (load_ratio * 5.0)
+	var heuristic_temp = 35.0 + (load_ratio * 5.0)
+	cpu_temp_c = heuristic_temp
+	_thermal_source = "heuristic"
 	
-	# On Android, read actual thermal sensor
+	# On Android, try to read actual thermal sensor from multiple zones
 	if OS.get_name() == "Android":
-		var path = "/sys/class/thermal/thermal_zone0/temp"
-		var temp_file = FileAccess.open(
-			path, FileAccess.READ
-		)
-		if temp_file:
-			var raw = temp_file.get_as_text().strip_edges()
-			temp_file.close()
-			if raw.is_valid_int():
-				# Usually in milli-degrees
-				cpu_temp_c = float(raw.to_int()) / 1000.0
+		var sensor_read := false
+		var thermal_paths := [
+			"/sys/class/thermal/thermal_zone0/temp",
+			"/sys/class/thermal/thermal_zone1/temp",
+			"/sys/class/thermal/thermal_zone2/temp",
+			"/sys/class/thermal/thermal_zone3/temp",
+			"/sys/class/thermal/thermal_zone4/temp",
+			"/sys/devices/virtual/thermal/thermal_zone0/temp",
+		]
+		for path in thermal_paths:
+			var temp_file = FileAccess.open(
+				path, FileAccess.READ
+			)
+			if temp_file:
+				var raw = temp_file.get_as_text().strip_edges()
+				temp_file.close()
+				if raw.is_valid_int():
+					var raw_val = raw.to_int()
+					# Values > 1000 are in milli-degrees Celsius
+					if raw_val > 1000:
+						cpu_temp_c = float(raw_val) / 1000.0
+					else:
+						cpu_temp_c = float(raw_val)
+					_thermal_source = "sensor"
+					sensor_read = true
+					if not _thermal_source_logged:
+						print("🌡 Thermal sensor found: %s → %.1f°C" % [path, cpu_temp_c])
+						_thermal_source_logged = true
+					break
+		
+		if not sensor_read and not _thermal_source_logged:
+			print("⚠️ No thermal sensor accessible on this device — using frame-time heuristic")
+			print("   Tried paths: %s" % str(thermal_paths))
+			print("   Heuristic formula: 35°C + (frame_load × 5.0)")
+			_thermal_source_logged = true
+	else:
+		if not _thermal_source_logged:
+			print("🌡 Desktop mode — using frame-time heuristic for CPU temp (not a real sensor)")
+			_thermal_source_logged = true
 	
 	cpu_temp_history.append(cpu_temp_c)
 	if cpu_temp_c > cpu_temp_peak:

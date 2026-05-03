@@ -10,9 +10,29 @@ func _ready() -> void:
 	if not pressed.is_connected(_on_export_pressed):
 		pressed.connect(_on_export_pressed)
 	
+	# Create the popup and add it to the scene tree root (not as a child of
+	# this Button). Adding it to the Button caused the popup's OK button to be
+	# unclickable because the Button's own input handling swallowed clicks.
 	popup = AcceptDialog.new()
 	popup.title = "Export Data"
-	add_child(popup)
+	popup.exclusive = true
+	popup.unresizable = false
+	popup.min_size = Vector2(400, 200)
+	# Defer so the tree is ready
+	call_deferred("_add_popup_to_tree")
+
+func _add_popup_to_tree() -> void:
+	if popup and not popup.is_inside_tree():
+		var root = get_tree().root if get_tree() else null
+		if root:
+			root.add_child(popup)
+			# Re-enable export button when popup is dismissed
+			popup.confirmed.connect(_on_popup_dismissed)
+			popup.canceled.connect(_on_popup_dismissed)
+
+func _on_popup_dismissed() -> void:
+	# Ensure the export button is re-enabled after the popup is closed
+	disabled = false
 
 func _on_export_pressed() -> void:
 	disabled = true
@@ -24,7 +44,6 @@ func _on_export_pressed() -> void:
 	if not FileExporter.is_external_storage_available():
 		print("❌ External storage not available")
 		_show_error("External storage not available. Check permissions.")
-		disabled = false
 		text = original_text
 		return
 	
@@ -59,19 +78,26 @@ func _on_export_pressed() -> void:
 		print("❌ Export failed: %s" % result.error)
 		_show_error("Export failed: " + result.error)
 	
-	disabled = false
+	# Restore button text; it stays disabled until popup is dismissed
 	text = original_text
 
 func _show_success(message: String) -> void:
-	if popup:
+	if popup and popup.is_inside_tree():
 		popup.dialog_text = message
 		popup.popup_centered()
 	else:
 		print(message)
+		disabled = false
 
 func _show_error(message: String) -> void:
-	if popup:
+	if popup and popup.is_inside_tree():
 		popup.dialog_text = message
 		popup.popup_centered()
 	else:
 		push_error(message)
+		disabled = false
+
+func _exit_tree() -> void:
+	# Clean up the popup from the root when this button is removed
+	if popup and popup.is_inside_tree():
+		popup.queue_free()

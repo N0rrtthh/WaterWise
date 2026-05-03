@@ -130,15 +130,6 @@ static func export_session_logs() -> Dictionary:
 	
 	# Check if session logs exist
 	var log_dir = _get_session_log_dir()
-	if _is_user_or_res_path(log_dir):
-		if not DirAccess.dir_exists(log_dir):
-			result.error = "No session logs found"
-			return result
-	else:
-		if not DirAccess.dir_exists_absolute(log_dir):
-			result.error = "No session logs found"
-			return result
-
 	# Get all log files
 	var dir = DirAccess.open(log_dir)
 	if not dir:
