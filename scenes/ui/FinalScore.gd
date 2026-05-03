@@ -344,7 +344,7 @@ func _build_round_breakdown(rounds: Array) -> void:
 func _build_score_leaderboard() -> void:
 	if GameManager and GameManager.current_game_mode != GameManager.GameMode.SINGLE_PLAYER:
 		return
-	var scores = _get_sp_top_scores(5)
+	var scores = _get_sp_top_scores(10)
 	if scores.is_empty():
 		return
 	var vbox = $CenterContainer/VBoxContainer
@@ -359,8 +359,14 @@ func _build_score_leaderboard() -> void:
 	vbox.add_child(header)
 
 	for i in range(scores.size()):
+		var score_value = int(scores[i])
+		var rank = _compute_rank(score_value)
 		var lbl = Label.new()
-		lbl.text = _fmt_loc("finalscore_top_score_row", "%d. %d pts", [i + 1, int(scores[i])])
+		lbl.text = _fmt_loc(
+			"finalscore_top_score_row",
+			"%d. %s - %d pts",
+			[i + 1, rank, score_value]
+		)
 		lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		lbl.add_theme_font_size_override("font_size", 18)
 		lbl.add_theme_color_override("font_color", Color(0.9, 0.95, 1))

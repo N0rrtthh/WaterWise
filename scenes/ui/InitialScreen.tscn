@@ -136,7 +136,7 @@ layout_mode = 1
 anchors_preset = 1
 anchor_left = 1.0
 anchor_right = 1.0
-offset_left = -400.0
+offset_left = -470.0
 offset_top = 25.0
 offset_right = -25.0
 offset_bottom = 95.0
@@ -149,6 +149,12 @@ custom_minimum_size = Vector2(70, 70)
 layout_mode = 2
 theme_override_font_sizes/font_size = 34
 text = "🛍️"
+
+[node name="LeaderboardButton" type="Button" parent="UI/TopRight"]
+custom_minimum_size = Vector2(70, 70)
+layout_mode = 2
+theme_override_font_sizes/font_size = 34
+text = "🏆"
 
 [node name="RoadmapButton" type="Button" parent="UI/TopRight"]
 custom_minimum_size = Vector2(70, 70)
@@ -471,6 +477,7 @@ theme_override_styles/normal = SubResource("StyleBoxFlat_play_pressed")
 text = "X"
 
 [connection signal="pressed" from="UI/TopRight/StoreButton" to="." method="_on_store_button_pressed"]
+[connection signal="pressed" from="UI/TopRight/LeaderboardButton" to="." method="_on_leaderboard_button_pressed"]
 [connection signal="pressed" from="UI/TopRight/RoadmapButton" to="." method="_on_roadmap_button_pressed"]
 [connection signal="pressed" from="UI/TopRight/SettingsButton" to="." method="_on_settings_button_pressed"]
 [connection signal="pressed" from="UI/TopRight/CustomizeButton" to="." method="_on_customize_button_pressed"]
