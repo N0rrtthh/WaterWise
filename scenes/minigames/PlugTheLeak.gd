@@ -55,7 +55,8 @@ func _ready():
 	# Background - Bathroom wall
 	var bg = ColorRect.new()
 	bg.color = Color(0.85, 0.9, 0.85)
-	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	bg.position = Vector2.ZERO
+	bg.size = get_viewport_rect().size
 	bg.z_index = -10
 	add_child(bg)
 	

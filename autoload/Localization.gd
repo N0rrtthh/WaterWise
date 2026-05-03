@@ -834,6 +834,26 @@ func _load_translations() -> void:
 			"en": "✅ OWNED",
 			"tl": "✅ PAGMAMAY-ARI"
 		},
+		"shop_active": {
+			"en": "⭐ ACTIVE",
+			"tl": "⭐ AKTIBO"
+		},
+		"shop_use": {
+			"en": "▶️ Use",
+			"tl": "▶️ Gamitin"
+		},
+		"shop_equip": {
+			"en": "👕 Equip",
+			"tl": "👕 Isuot"
+		},
+		"shop_equipped": {
+			"en": "⭐ EQUIPPED",
+			"tl": "⭐ NAKASUOT"
+		},
+		"shop_in_rotation": {
+			"en": "✅ IN ROTATION",
+			"tl": "✅ NASA ROTATION"
+		},
 		"shop_unlocked": {
 			"en": "✅ UNLOCKED",
 			"tl": "✅ NAKA-UNLOCK"

@@ -245,18 +245,31 @@ func _on_connected_to_server() -> void:
 	# Register self with server
 	rpc_id(1, "_register_player", multiplayer.get_unique_id(), "Player 2 (Client)")
 	connection_succeeded.emit()
+	
+	# Log network event for session export
+	var sl = get_node_or_null("/root/SessionLogger")
+	if sl and sl.has_method("record_mp_network_event"):
+		sl.record_mp_network_event("client_connected", {"peer_id": multiplayer.get_unique_id()})
 
 func _on_connection_failed() -> void:
 	# Called when client fails to connect
 	_log("❌ Connection failed!")
 	connection_active = false
 	connection_failed.emit()
+	
+	var sl = get_node_or_null("/root/SessionLogger")
+	if sl and sl.has_method("record_mp_network_event"):
+		sl.record_mp_network_event("connection_failed", {})
 
 func _on_server_disconnected() -> void:
 	# Called when server disconnects (client side)
 	_log("⚠️ Server disconnected!")
 	_start_grace_period()
 	server_disconnected.emit()
+	
+	var sl = get_node_or_null("/root/SessionLogger")
+	if sl and sl.has_method("record_mp_network_event"):
+		sl.record_mp_network_event("server_disconnected", {"grace_period_sec": RECONNECT_GRACE_PERIOD})
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # CONNECTION MANAGEMENT
@@ -298,6 +311,10 @@ func _on_player_disconnected(peer_id: int) -> void:
 	# Called when a player disconnects
 	_log("⚠️ Player disconnected (Peer ID: " + str(peer_id) + ")")
 	
+	var sl = get_node_or_null("/root/SessionLogger")
+	if sl and sl.has_method("record_mp_network_event"):
+		sl.record_mp_network_event("peer_disconnected", {"peer_id": peer_id, "game_in_progress": game_in_progress})
+	
 	if players.has(peer_id):
 		var _player_num = players[peer_id]["player_num"]
 		players.erase(peer_id)
@@ -329,6 +346,10 @@ func _on_grace_period_timeout() -> void:
 	# Called when grace period expires
 	grace_period_active = false
 	_log("⏰ Grace period expired - game failed")
+	
+	var sl = get_node_or_null("/root/SessionLogger")
+	if sl and sl.has_method("record_mp_network_event"):
+		sl.record_mp_network_event("grace_period_expired", {"game_was_in_progress": game_in_progress})
 	
 	if game_in_progress:
 		# Auto-fail the game
