@@ -364,12 +364,12 @@ func _build_score_leaderboard() -> void:
 		var lbl = Label.new()
 		lbl.text = _fmt_loc(
 			"finalscore_top_score_row",
-			"%d. %s - %d pts",
+			"%d. Tier %s | %d pts",
 			[i + 1, rank, score_value]
 		)
 		lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		lbl.add_theme_font_size_override("font_size", 18)
-		lbl.add_theme_color_override("font_color", Color(0.9, 0.95, 1))
+		lbl.add_theme_color_override("font_color", _rank_color(rank))
 		vbox.add_child(lbl)
 
 
@@ -441,7 +441,10 @@ func _on_continue() -> void:
 		# CRITICAL FIX: Double-check game mode before routing
 		# Prevent single player from ever going to multiplayer lobby
 		# ═══════════════════════════════════════════════════════════════
-		print("🎮 FinalScore: Game mode is %s" % GameManager.GameMode.keys()[GameManager.current_game_mode])
+		var mode_name: String = str(
+			GameManager.GameMode.keys()[GameManager.current_game_mode]
+		)
+		print("🎮 FinalScore: Game mode is %s" % mode_name)
 		
 		if GameManager.current_game_mode == GameManager.GameMode.MULTIPLAYER_COOP:
 			# Verify we actually have a multiplayer connection
@@ -451,13 +454,12 @@ func _on_continue() -> void:
 					NetworkManager.disconnect_multiplayer()
 				if GameManager.has_method("return_to_multiplayer_lobby"):
 					GameManager.return_to_multiplayer_lobby()
-				else:
-					GameManager.transition_to_scene("res://scenes/ui/MultiplayerLobby.tscn")
+					return
+				GameManager.transition_to_scene("res://scenes/ui/MultiplayerLobby.tscn")
 				return
-			else:
-				# No multiplayer connection but mode is set to multiplayer - fix it!
-				print("⚠️ Game mode was MULTIPLAYER but no connection - forcing SINGLE_PLAYER")
-				GameManager.current_game_mode = GameManager.GameMode.SINGLE_PLAYER
+			# No multiplayer connection but mode is set to multiplayer - fix it!
+			print("⚠️ Game mode was MULTIPLAYER but no connection - forcing SINGLE_PLAYER")
+			GameManager.current_game_mode = GameManager.GameMode.SINGLE_PLAYER
 		
 		# Single player - always go to InitialScreen
 		print("✅ Single player mode - going to InitialScreen")

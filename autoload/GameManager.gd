@@ -314,6 +314,8 @@ func _load_saved_data() -> void:
 	var save_mgr = get_node_or_null("/root/SaveManager")
 	if save_mgr and save_mgr.has_method("get_droplets"):
 		water_droplets = int(save_mgr.get_droplets())
+	if save_mgr and save_mgr.has_method("get_sp_session_high_score"):
+		high_score = max(high_score, int(save_mgr.get_sp_session_high_score()))
 
 func _save_data() -> void:
 	var config := ConfigFile.new()
@@ -1624,8 +1626,15 @@ func return_to_main_menu() -> void:
 	change_state(GameState.MAIN_MENU)
 	get_tree().paused = false
 	
+	var save_mgr = get_node_or_null("/root/SaveManager")
+	if save_mgr and save_mgr.has_method("record_sp_session_score") and current_game_mode == GameMode.SINGLE_PLAYER:
+		save_mgr.record_sp_session_score(session_score)
+		
 	# Reset game mode to prevent multiplayer redirect bug
 	current_game_mode = GameMode.SINGLE_PLAYER
+
+	if save_mgr and save_mgr.has_method("get_sp_session_high_score"):
+		high_score = max(high_score, int(save_mgr.get_sp_session_high_score()))
 	
 	if session_score > high_score:
 		high_score = session_score
@@ -1680,11 +1689,6 @@ func _show_final_score() -> void:
 			print("⚠️ Resetting game mode to SINGLE_PLAYER before final score")
 			current_game_mode = GameMode.SINGLE_PLAYER
 	
-	# Update high score before showing FinalScore so the screen can compare
-	if session_score > high_score:
-		high_score = session_score
-	_save_data()
-
 	var save_mgr = get_node_or_null("/root/SaveManager")
 	if save_mgr:
 		var is_connected_multiplayer_session := current_game_mode == GameMode.MULTIPLAYER_COOP \
@@ -1692,6 +1696,16 @@ func _show_final_score() -> void:
 			and NetworkManager.is_multiplayer_connected()
 		if not is_connected_multiplayer_session and save_mgr.has_method("record_sp_session_score"):
 			save_mgr.record_sp_session_score(session_score)
+		if (
+			not is_connected_multiplayer_session
+			and save_mgr.has_method("get_sp_session_high_score")
+		):
+			high_score = max(high_score, int(save_mgr.get_sp_session_high_score()))
+
+	# Update high score before showing FinalScore so the screen can compare
+	if session_score > high_score:
+		high_score = session_score
+	_save_data()
 
 	_finalize_session_for_logging()
 	
@@ -1780,7 +1794,9 @@ func reset_all_data() -> void:
 	
 	# Also reset SaveManager if available
 	var save_mgr = get_node_or_null("/root/SaveManager")
-	if save_mgr and save_mgr.has_method("reset_all"):
+	if save_mgr and save_mgr.has_method("reset_all_data"):
+		save_mgr.reset_all_data()
+	elif save_mgr and save_mgr.has_method("reset_all"):
 		save_mgr.reset_all()
 	
 	print("🔄 All data reset to defaults")

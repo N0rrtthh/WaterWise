@@ -132,6 +132,7 @@ func _ready() -> void:
 	else:
 		droplet_label.text = "0"
 		_update_next_unlock_panel(0)
+	_refresh_signboard_highscore()
 
 	# NOTE: Skip ThemeManager.apply_theme on InitialScreen — it overrides
 	# the custom sky-blue background and gold button styles with generic
@@ -315,12 +316,15 @@ func _apply_responsive_layout() -> void:
 		top_left_panel.offset_left = safe_left + 14.0
 		top_left_panel.offset_top = safe_top + 12.0
 
-	if top_right_panel:
+		top_right_panel.offset_left = -((420.0 if portrait else 472.0) + safe_right)
 		top_right_panel.offset_top = safe_top + 10.0
 		top_right_panel.offset_bottom = top_right_panel.offset_top + (66.0 if portrait else 70.0)
 		top_right_panel.offset_right = -safe_right - 12.0
 		top_right_panel.offset_left = -((380.0 if portrait else 430.0) + safe_right)
 		top_right_panel.add_theme_constant_override("separation", 8 if portrait else 12)
+	if leaderboard_button:
+		leaderboard_button.custom_minimum_size = Vector2(64, 64) if portrait else Vector2(70, 70)
+		leaderboard_button.add_theme_font_size_override("font_size", 30 if portrait else 34)
 
 	if store_button:
 		store_button.custom_minimum_size = Vector2(64, 64) if portrait else Vector2(70, 70)
@@ -718,20 +722,12 @@ func _refresh_signboard_highscore() -> void:
 
 func _get_single_player_high_score() -> int:
 	var best_score := 0
-	if not SaveManager:
-		return best_score
-	if SaveManager.has_method("get_sp_session_high_score"):
-		return int(SaveManager.get_sp_session_high_score())
+	if SaveManager and SaveManager.has_method("get_sp_session_high_score"):
+		best_score = int(SaveManager.get_sp_session_high_score())
 
-	var hs_dict = SaveManager.high_scores
-	if hs_dict is Dictionary:
-		for game_id in hs_dict.keys():
-			if _is_multiplayer_game_key(str(game_id)):
-				continue
-			var record = hs_dict[game_id]
-			if record is Dictionary:
-				best_score = max(best_score, int(record.get("score", 0)))
-
+	if GameManager and "high_score" in GameManager:
+		best_score = max(best_score, int(GameManager.high_score))
+		
 	return best_score
 
 

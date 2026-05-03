@@ -328,7 +328,7 @@ func record_game_result(game_id: String, score: int, accuracy: float, time_secon
 	return is_new_record
 
 func record_sp_session_score(score: int) -> void:
-	if score < 0:
+	if score <= 0:
 		return
 	sp_session_scores.append(score)
 	sp_session_scores.sort_custom(func(a, b): return int(a) > int(b))
@@ -346,6 +346,16 @@ func get_sp_session_high_score() -> int:
 	for score in sp_session_scores:
 		best_score = max(best_score, int(score))
 	return best_score
+
+func get_sp_session_leaderboard(limit: int = 0) -> Array:
+	var entries: Array = []
+	var scores := get_sp_session_scores(limit)
+	for i in range(scores.size()):
+		entries.append({
+			"position": i + 1,
+			"score": int(scores[i])
+		})
+	return entries
 
 func get_high_score(game_id: String = "catch_rain") -> Dictionary:
 	if high_scores.has(game_id):
