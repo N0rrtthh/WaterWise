@@ -41,6 +41,7 @@ NetworkFaultSimulator="*res://autoload/NetworkFaultSimulator.gd"
 ButtonAnimator="*res://autoload/ButtonAnimator.gd"
 SessionLogger="*res://autoload/SessionLogger.gd"
 AutoPlayManager="*res://autoload/AutoPlayManager.gd"
+ScreenScaler="*res://autoload/ScreenScaler.gd"
 
 [debug]
 
@@ -50,8 +51,9 @@ gdscript/warnings/max_line_length=0
 
 window/size/viewport_width=1920
 window/size/viewport_height=1080
-window/size/mode=2
-window/stretch/mode="canvas_items"
+window/size/mode=3
+window/size/resizable=false
+window/stretch/mode="viewport"
 window/stretch/aspect="expand"
 window/handheld/orientation="landscape"
 

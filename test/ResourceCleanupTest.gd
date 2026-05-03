@@ -1,4 +1,4 @@
-extends GutTest
+extends "res://test/GutTest.gd"
 
 ## Unit tests for Task 9.2: Resource cleanup system
 ##

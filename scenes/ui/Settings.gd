@@ -763,13 +763,13 @@ func _setup_dev_mode_section() -> void:
 
 	# Add export button (Android only)
 	if OS.has_feature("android"):
-		var export_button = Button.new()
-		export_button.text = "📤 Export Game Data"
-		export_button.custom_minimum_size = Vector2(0, 60)
-		export_button.add_theme_font_size_override("font_size", 20)
-		export_button.disabled = not dev_mode_enabled
-		export_button.set_script(load("res://scenes/ui/ExportDataButton.gd"))
-		vbox.add_child(export_button)
+		export_data_button = Button.new()
+		export_data_button.text = "📤 Export Session Logs"
+		export_data_button.custom_minimum_size = Vector2(0, 60)
+		export_data_button.add_theme_font_size_override("font_size", 20)
+		export_data_button.disabled = not dev_mode_enabled
+		export_data_button.set_script(load("res://scenes/ui/ExportDataButton.gd"))
+		vbox.add_child(export_data_button)
 
 	_apply_dev_mode_visibility(dev_mode_enabled)
 

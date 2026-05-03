@@ -310,6 +310,11 @@ func adapt_scene_for_mobile(scene_root: Node) -> void:
 
 
 func _find_safe_area_target(scene_root: Node) -> Control:
+	var scene_path := ""
+	if scene_root:
+		scene_path = scene_root.scene_file_path
+	var is_cutscene := scene_path.contains("/cutscenes/")
+
 	if scene_root is Control:
 		var ui_child = scene_root.get_node_or_null("UI")
 		if ui_child and ui_child is Control:
@@ -320,6 +325,8 @@ func _find_safe_area_target(scene_root: Node) -> Control:
 		var center_child = scene_root.get_node_or_null("CenterContainer")
 		if center_child and center_child is Control:
 			return center_child as Control
+		if is_cutscene:
+			return null
 		return scene_root as Control
 
 	var direct_ui = scene_root.get_node_or_null("UI")
@@ -332,6 +339,8 @@ func _find_safe_area_target(scene_root: Node) -> Control:
 	var direct_center = scene_root.get_node_or_null("CenterContainer")
 	if direct_center and direct_center is Control:
 		return direct_center as Control
+	if is_cutscene:
+		return null
 
 	for child in scene_root.get_children():
 		if child is Control:

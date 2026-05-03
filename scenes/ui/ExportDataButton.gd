@@ -19,28 +19,44 @@ func _on_export_pressed() -> void:
 	var original_text = text
 	text = "Exporting..."
 	
+	print("📤 Export button pressed - exporting SESSION DATA ONLY...")
+	
 	if not FileExporter.is_external_storage_available():
+		print("❌ External storage not available")
 		_show_error("External storage not available. Check permissions.")
 		disabled = false
 		text = original_text
 		return
 	
-	var result = FileExporter.export_all_data()
+	print("✅ External storage available - exporting session logs...")
+	var result = FileExporter.export_session_data_only()
+	
+	print("📊 Export result: success=%s, files=%s, error=%s" % [
+		result.get("success", false),
+		result.get("files_exported", 0),
+		result.get("error", "")
+	])
 	
 	if result.success:
-		FileExporter.create_export_summary()
-		
-		var message = "Export Successful!\n\n"
+		var message = "Session Data Exported!\n\n"
 		message += "Files exported: " + str(result.files_exported) + "\n\n"
+		message += "What was exported:\n"
+		message += "- Session logs with metrics\n"
+		message += "- Performance data (FPS, memory)\n"
+		message += "- Player accuracy & reaction times\n"
+		message += "- Difficulty adaptation data\n\n"
 		message += "Location:\n"
-		message += "Downloads/WaterwiseExports/\n\n"
+		message += "Downloads/WaterwiseExports/session_logs/\n\n"
 		message += "How to access:\n"
 		message += "1. Open Files app\n"
 		message += "2. Go to Downloads\n"
-		message += "3. Open WaterwiseExports folder\n"
+		message += "3. Open WaterwiseExports\n"
+		message += "4. Open session_logs folder\n"
 		
+		print("✅ Export successful!")
 		_show_success(message)
 	else:
+		print("❌ Export failed: %s" % result.error)
 		_show_error("Export failed: " + result.error)
 	
 	disabled = false

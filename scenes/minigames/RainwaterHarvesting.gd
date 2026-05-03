@@ -64,9 +64,20 @@ var available_water_volume: float = 0.0  # Depends on Player 1's collection
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func _ready() -> void:
+	if GameManager and GameManager.current_game_mode != GameManager.GameMode.MULTIPLAYER_COOP:
+		push_warning("RainwaterHarvesting loaded outside multiplayer; returning to main menu")
+		if GameManager.has_method("return_to_main_menu"):
+			GameManager.return_to_main_menu()
+		else:
+			get_tree().change_scene_to_file("res://scenes/ui/InitialScreen.tscn")
+		return
+
 	if not is_instance_valid(NetworkManager) or not NetworkManager.is_multiplayer_connected():
 		push_error("Not connected to multiplayer!")
-		get_tree().change_scene_to_file("res://scenes/ui/MultiplayerLobby.tscn")
+		if GameManager and GameManager.has_method("return_to_multiplayer_menu"):
+			GameManager.return_to_multiplayer_menu()
+		else:
+			get_tree().change_scene_to_file("res://scenes/ui/InitialScreen.tscn")
 		return
 	
 	# Get local player info

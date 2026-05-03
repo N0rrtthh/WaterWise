@@ -1,162 +1,196 @@
-"""Generate WaterWise water-droplet launcher icons for Android export."""
+"""Generate WaterWise launcher icons and droplet base texture."""
 
 import math
 from PIL import Image, ImageDraw, ImageFilter
 
-def make_droplet(size, padding_ratio=0.12):
+
+def _lerp(a, b, t):
+    return int(a + (b - a) * t)
+
+
+def _vertical_gradient(size, top, bottom):
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
+    for y in range(size):
+        t = y / max(1, size - 1)
+        r = _lerp(top[0], bottom[0], t)
+        g = _lerp(top[1], bottom[1], t)
+        b = _lerp(top[2], bottom[2], t)
+        draw.line((0, y, size, y), fill=(r, g, b, 255))
+    return img
 
+
+def _rounded_mask(size, radius):
+    mask = Image.new("L", (size, size), 0)
+    draw = ImageDraw.Draw(mask)
+    draw.rounded_rectangle((0, 0, size - 1, size - 1), radius=radius, fill=255)
+    return mask
+
+
+def _droplet_points(size, padding_ratio):
     pad = int(size * padding_ratio)
     w = size - 2 * pad
     h = size - 2 * pad
     cx = size // 2
-    cy = size // 2
 
-    # Droplet: circle body + triangular tip pointing up
-    # The circle center is at ~60% from top of the bounding box
-    r = int(w * 0.44)
-    circle_cy = pad + int(h * 0.56)
+    r = int(w * 0.43)
     circle_cx = cx
+    circle_cy = pad + int(h * 0.60)
 
-    # Tip of the droplet (top point)
     tip_x = cx
     tip_y = pad
 
-    # Build polygon points for teardrop shape
-    # Left tangent from tip to circle, right tangent from circle to tip
-    # Angle from circle center to where tangent lines meet the circle
-    # dx = circle_cx - tip_x = 0, dy = circle_cy - tip_y
-    d = math.sqrt((circle_cx - tip_x)**2 + (circle_cy - tip_y)**2)
-    alpha = math.asin(r / d)  # half-angle of tangent lines
-    base_angle = math.atan2(tip_y - circle_cy, tip_x - circle_cx)  # pointing toward tip
+    d = math.sqrt((circle_cx - tip_x) ** 2 + (circle_cy - tip_y) ** 2)
+    d = max(d, r + 1)
+    alpha = math.asin(r / d)
+    base_angle = math.atan2(tip_y - circle_cy, tip_x - circle_cx)
 
-    # Left tangent point on circle
     la = base_angle + math.pi / 2 - alpha
+    ra = base_angle - math.pi / 2 + alpha
+
     lx = int(circle_cx + r * math.cos(la))
     ly = int(circle_cy + r * math.sin(la))
-    # Right tangent point on circle
-    ra = base_angle - math.pi / 2 + alpha
     rx = int(circle_cx + r * math.cos(ra))
     ry = int(circle_cy + r * math.sin(ra))
 
-    # Build arc from left tangent to right tangent going around the bottom
     points = [(tip_x, tip_y)]
-    # Arc from left to right going clockwise (bottom of circle)
     start_deg = math.degrees(math.atan2(ly - circle_cy, lx - circle_cx))
     end_deg = math.degrees(math.atan2(ry - circle_cy, rx - circle_cx))
-    # We want the arc that goes through the bottom (180 deg)
-    steps = 60
-    # Go from start_deg to end_deg the long way (through 90 deg / bottom)
     if end_deg < start_deg:
         end_deg += 360
+    steps = 64
     for i in range(steps + 1):
         t = start_deg + (end_deg - start_deg) * i / steps
-        t_rad = math.radians(t)
-        px = int(circle_cx + r * math.cos(t_rad))
-        py = int(circle_cy + r * math.sin(t_rad))
+        tr = math.radians(t)
+        px = int(circle_cx + r * math.cos(tr))
+        py = int(circle_cy + r * math.sin(tr))
         points.append((px, py))
+    return points
 
-    # Main droplet body fill (deep ocean blue)
-    draw.polygon(points, fill=(30, 120, 220, 255))
 
-    # Highlight 1 – lighter blue inner glow (slightly inset droplet)
-    scale = 0.72
-    r2 = int(r * scale)
-    off_x = int(w * -0.04)
-    off_y = int(h * -0.04)
-    cx2 = circle_cx + off_x
-    cy2 = circle_cy + off_y
-    tip2 = (tip_x + off_x, tip_y + int(h * 0.06))
+def _make_droplet_layer(size, padding_ratio, top, bottom, alpha=255):
+    points = _droplet_points(size, padding_ratio)
+    mask = Image.new("L", (size, size), 0)
+    mdraw = ImageDraw.Draw(mask)
+    mdraw.polygon(points, fill=255)
 
-    d2 = math.sqrt((cx2 - tip2[0])**2 + (cy2 - tip2[1])**2)
-    if d2 > r2:
-        alpha2 = math.asin(min(r2 / d2, 1.0))
-        base2 = math.atan2(tip2[1] - cy2, tip2[0] - cx2)
-        la2 = base2 + math.pi / 2 - alpha2
-        lx2 = int(cx2 + r2 * math.cos(la2))
-        ly2 = int(cy2 + r2 * math.sin(la2))
-        ra2 = base2 - math.pi / 2 + alpha2
-        rx2 = int(cx2 + r2 * math.cos(ra2))
-        ry2 = int(cy2 + r2 * math.sin(ra2))
+    grad = _vertical_gradient(size, top, bottom)
+    if alpha < 255:
+        grad.putalpha(alpha)
 
-        pts2 = [(tip2[0], tip2[1])]
-        sd2 = math.degrees(math.atan2(ly2 - cy2, lx2 - cx2))
-        ed2 = math.degrees(math.atan2(ry2 - cy2, rx2 - cx2))
-        if ed2 < sd2:
-            ed2 += 360
-        for i in range(steps + 1):
-            t = sd2 + (ed2 - sd2) * i / steps
-            t_rad = math.radians(t)
-            px = int(cx2 + r2 * math.cos(t_rad))
-            py = int(cy2 + r2 * math.sin(t_rad))
-            pts2.append((px, py))
-        draw.polygon(pts2, fill=(60, 160, 255, 200))
+    base = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    return Image.composite(grad, base, mask)
 
-    # Highlight 2 – bright specular glint (top-left of circle)
-    glint_r = max(4, int(r * 0.18))
-    gx = circle_cx - int(r * 0.30)
-    gy = circle_cy - int(r * 0.35)
-    draw.ellipse(
+
+def make_droplet(size, padding_ratio=0.08):
+    base = _make_droplet_layer(
+        size,
+        padding_ratio,
+        top=(110, 210, 255),
+        bottom=(18, 110, 215),
+    )
+
+    inner_size = int(size * 0.78)
+    inner = _make_droplet_layer(
+        inner_size,
+        padding_ratio,
+        top=(170, 235, 255),
+        bottom=(90, 185, 245),
+        alpha=180,
+    )
+    inner_pos = (int(size * 0.10), int(size * 0.08))
+    base.alpha_composite(inner, dest=inner_pos)
+
+    glint = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    gdraw = ImageDraw.Draw(glint)
+    glint_r = max(3, int(size * 0.05))
+    gx = int(size * 0.40)
+    gy = int(size * 0.36)
+    gdraw.ellipse(
         (gx - glint_r, gy - glint_r, gx + glint_r, gy + glint_r),
-        fill=(220, 240, 255, 200)
+        fill=(255, 255, 255, 210),
     )
-
-    # Small secondary glint
-    g2r = max(2, int(r * 0.09))
-    g2x = gx + int(r * 0.22)
-    g2y = gy + int(r * 0.15)
-    draw.ellipse(
+    g2r = max(2, int(size * 0.03))
+    g2x = gx + int(size * 0.07)
+    g2y = gy + int(size * 0.06)
+    gdraw.ellipse(
         (g2x - g2r, g2y - g2r, g2x + g2r, g2y + g2r),
-        fill=(255, 255, 255, 180)
+        fill=(255, 255, 255, 170),
     )
-
-    # Subtle soft-shadow: render a dark copy beneath
-    shadow = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    sdraw = ImageDraw.Draw(shadow)
-    shadow_pts = [(x + int(size * 0.025), y + int(size * 0.025)) for x, y in points]
-    sdraw.polygon(shadow_pts, fill=(0, 50, 120, 90))
-    shadow = shadow.filter(ImageFilter.GaussianBlur(radius=int(size * 0.025)))
-    result = Image.alpha_composite(shadow, img)
-    return result
+    base = Image.alpha_composite(base, glint)
+    return base
 
 
-def make_adaptive_bg(size):
-    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
-    # Radial-ish gradient faked with concentric ellipses
-    steps = 60
-    for i in range(steps, -1, -1):
-        t = i / steps
-        r_val = int(20 + t * 30)
-        g_val = int(100 + t * 60)
-        b_val = int(200 + t * 40)
-        margin = int((1 - t) * size * 0.5)
-        draw.ellipse(
-            (margin, margin, size - margin, size - margin),
-            fill=(r_val, g_val, b_val, 255)
+def make_background(size, rounded=True):
+    bg = _vertical_gradient(size, top=(22, 140, 220), bottom=(8, 70, 150))
+
+    glow = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    gdraw = ImageDraw.Draw(glow)
+    steps = 40
+    for i in range(steps):
+        t = i / max(1, steps - 1)
+        r = int(size * (0.55 - 0.35 * t))
+        alpha = int(100 * (1 - t) ** 2)
+        gdraw.ellipse(
+            (
+                int(size * 0.05) - r,
+                int(size * 0.08) - r,
+                int(size * 0.05) + r,
+                int(size * 0.08) + r,
+            ),
+            fill=(120, 220, 255, alpha),
         )
-    return img
+    bg = Image.alpha_composite(bg, glow)
+
+    draw = ImageDraw.Draw(bg)
+    stroke = max(2, int(size * 0.012))
+    for i in range(3):
+        y = int(size * (0.58 + i * 0.12))
+        bbox = (-int(size * 0.2), y, int(size * 1.2), y + int(size * 0.65))
+        draw.arc(bbox, start=200, end=340, fill=(255, 255, 255, 30), width=stroke)
+
+    if rounded:
+        radius = int(size * 0.22)
+        mask = _rounded_mask(size, radius)
+        bg.putalpha(mask)
+    return bg
+
+
+def compose_center(canvas_size, image):
+    canvas = Image.new("RGBA", (canvas_size, canvas_size), (0, 0, 0, 0))
+    off = ((canvas_size - image.width) // 2, (canvas_size - image.height) // 2)
+    canvas.alpha_composite(image, dest=off)
+    return canvas
 
 
 if __name__ == "__main__":
     import os
     out_dir = r"f:\waterwise\assets\icons"
+    character_dir = r"f:\waterwise\assets\characters"
     os.makedirs(out_dir, exist_ok=True)
+    os.makedirs(character_dir, exist_ok=True)
 
     # Main launcher icon 192x192
-    icon_192 = make_droplet(192)
+    main_bg = make_background(192, rounded=True)
+    main_drop = make_droplet(int(192 * 0.70))
+    icon_192 = Image.alpha_composite(main_bg, compose_center(192, main_drop))
     icon_192.save(os.path.join(out_dir, "icon_main_192x192.png"))
     print("Saved icon_main_192x192.png")
 
     # Adaptive foreground 432x432 (droplet on transparent bg)
-    icon_fg = make_droplet(432)
+    fg_drop = make_droplet(int(432 * 0.66))
+    icon_fg = compose_center(432, fg_drop)
     icon_fg.save(os.path.join(out_dir, "icon_adaptive_foreground_432x432.png"))
     print("Saved icon_adaptive_foreground_432x432.png")
 
     # Adaptive background 432x432 (solid gradient, no transparency needed)
-    icon_bg = make_adaptive_bg(432)
+    icon_bg = make_background(432, rounded=False)
     icon_bg.save(os.path.join(out_dir, "icon_adaptive_background_432x432.png"))
     print("Saved icon_adaptive_background_432x432.png")
+
+    # Droplet base texture for cutscene character
+    base_drop = make_droplet(512, padding_ratio=0.06)
+    base_drop.save(os.path.join(character_dir, "droplet_base.png"))
+    print("Saved droplet_base.png")
 
     print("All icons generated in", out_dir)

@@ -1,4 +1,4 @@
-extends GutTest
+extends "res://test/GutTest.gd"
 
 ## Integration tests for particle effect system
 ## Tests particle spawning, contextual selection, and adaptive density

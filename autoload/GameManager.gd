@@ -122,7 +122,6 @@ const ALL_SINGLEPLAYER_MINIGAMES: Array = [
 	"MudPieMaker",
 	"CatchTheRain",
 	"CoverTheDrum",
-	"RainwaterHarvesting",
 	"SpotTheSpeck",
 	"FixLeak",
 	"WaterPlant",
@@ -143,7 +142,7 @@ const ALL_SINGLEPLAYER_MINIGAMES: Array = [
 var available_minigames: Array = []
 
 const UNLOCK_ID_TO_MINIGAMES: Dictionary = {
-	"catch_rain": ["CatchTheRain", "CoverTheDrum", "RiceWashRescue", "RainwaterHarvesting"],
+	"catch_rain": ["CatchTheRain", "CoverTheDrum", "RiceWashRescue"],
 	"pipe_puzzle": ["TracePipePath", "PlugTheLeak", "FixLeak", "ToiletTankFix", "TurnOffTap"],
 	"water_sorting": [
 		"GreywaterSorter",
@@ -216,6 +215,24 @@ func transition_to_scene(scene_path: String, duration: float = 0.4) -> void:
 	if not ResourceLoader.exists(scene_path):
 		push_error("Cannot transition. Scene does not exist: %s" % scene_path)
 		return
+	
+	# ═══════════════════════════════════════════════════════════════════
+	# CRITICAL FIX: Block multiplayer scenes when in single player mode
+	# This prevents the bug where single player redirects to multiplayer
+	# ═══════════════════════════════════════════════════════════════════
+	var is_multiplayer_scene = (
+		"Multiplayer" in scene_path or 
+		"multiplayer" in scene_path or
+		"MultiplayerLobby" in scene_path or
+		"MultiplayerMenu" in scene_path or
+		"MultiplayerGameOver" in scene_path
+	)
+	
+	if is_multiplayer_scene and current_game_mode == GameMode.SINGLE_PLAYER:
+		print("🚫 BLOCKED: Attempted to load multiplayer scene '%s' while in SINGLE_PLAYER mode!" % scene_path)
+		print("🔄 Redirecting to InitialScreen instead...")
+		scene_path = "res://scenes/ui/InitialScreen.tscn"
+	
 	if not _transition_rect or not is_instance_valid(_transition_rect):
 		_setup_transition_overlay()
 
@@ -1088,6 +1105,15 @@ func start_session(mode: GameMode = GameMode.SINGLE_PLAYER) -> void:
 		start_next_minigame()
 
 func start_new_session(mode: GameMode = GameMode.SINGLE_PLAYER) -> void:
+	# ═══════════════════════════════════════════════════════════════════
+	# CRITICAL FIX: Validate multiplayer mode before starting session
+	# If multiplayer mode is requested but no connection exists, force single player
+	# ═══════════════════════════════════════════════════════════════════
+	if mode == GameMode.MULTIPLAYER_COOP:
+		if not NetworkManager or not NetworkManager.is_multiplayer_connected():
+			print("⚠️ MULTIPLAYER mode requested but no connection - forcing SINGLE_PLAYER")
+			mode = GameMode.SINGLE_PLAYER
+	
 	current_game_mode = mode
 	session_active = true
 	_session_finalized = false
@@ -1129,8 +1155,19 @@ func start_new_session(mode: GameMode = GameMode.SINGLE_PLAYER) -> void:
 
 func start_next_minigame() -> void:
 	if _story_transition_active:
+		print("⏸️ Story transition active, waiting...")
 		return
 
+	# ═══════════════════════════════════════════════════════════════════
+	# CRITICAL FIX: Force single player mode if not in multiplayer session
+	# This prevents the bug where single player redirects to multiplayer
+	# ═══════════════════════════════════════════════════════════════════
+	if current_game_mode == GameMode.MULTIPLAYER_COOP:
+		# Check if we're actually in a multiplayer session
+		if not NetworkManager or not NetworkManager.is_multiplayer_connected():
+			print("⚠️ Game mode was MULTIPLAYER but no connection - forcing SINGLE_PLAYER")
+			current_game_mode = GameMode.SINGLE_PLAYER
+	
 	if current_game_mode == GameMode.MULTIPLAYER_COOP:
 		if is_host:
 			rpc("_load_next_multiplayer_minigame")
@@ -1147,10 +1184,31 @@ func start_next_minigame() -> void:
 		_show_final_score()
 		return
 
-	# Check if a story chapter should play
+	# ═══════════════════════════════════════════════════════════════════
+	# MOBILE FIX: Skip story check entirely on mobile devices
+	# Story screens cause blue screen bug - bypass completely
+	# ═══════════════════════════════════════════════════════════════════
+	var is_mobile = (
+		OS.has_feature("mobile") or 
+		OS.has_feature("android") or 
+		OS.has_feature("ios") or
+		OS.get_name() == "Android" or
+		OS.get_name() == "iOS"
+	)
+	
+	if is_mobile:
+		print("📱 Mobile device - skipping story check, launching game directly")
+		_launch_next_minigame_internal()
+		return
+	
+	# Check if a story chapter should play (desktop only)
+	print("🎮 Games played this session: %d" % minigames_played_this_session)
 	if _should_show_story():
+		print("📖 Story screen should show - loading story...")
 		_show_story_then_continue()
 		return
+	else:
+		print("✅ No story screen - launching next game...")
 
 	_launch_next_minigame_internal()
 
@@ -1167,7 +1225,16 @@ func _should_show_story() -> bool:
 	# Story screens cause blue screen bug after 2 games on Android/iOS
 	# Story screens are optional narrative elements, safe to skip on mobile
 	# ═══════════════════════════════════════════════════════════════════
-	if OS.has_feature("mobile") or OS.has_feature("android") or OS.has_feature("ios"):
+	var is_mobile = (
+		OS.has_feature("mobile") or 
+		OS.has_feature("android") or 
+		OS.has_feature("ios") or
+		OS.get_name() == "Android" or
+		OS.get_name() == "iOS"
+	)
+	
+	if is_mobile:
+		print("📱 Mobile device detected - skipping story screens")
 		return false
 	
 	for threshold in STORY_THRESHOLDS:
@@ -1478,6 +1545,9 @@ func return_to_main_menu() -> void:
 	change_state(GameState.MAIN_MENU)
 	get_tree().paused = false
 	
+	# Reset game mode to prevent multiplayer redirect bug
+	current_game_mode = GameMode.SINGLE_PLAYER
+	
 	if session_score > high_score:
 		high_score = session_score
 		_save_data()
@@ -1518,6 +1588,16 @@ func _get_disconnected_player_label(peer_id: int) -> String:
 func _show_final_score() -> void:
 	print("🎉 Session complete! Showing final score...")
 	change_state(GameState.FINAL_RESULTS)
+	
+	# ═══════════════════════════════════════════════════════════════════
+	# CRITICAL FIX: Reset game mode BEFORE showing final score
+	# This prevents FinalScore screen from routing to multiplayer lobby
+	# ═══════════════════════════════════════════════════════════════════
+	if current_game_mode == GameMode.MULTIPLAYER_COOP:
+		# Check if we're actually in a multiplayer session
+		if not NetworkManager or not NetworkManager.is_multiplayer_connected():
+			print("⚠️ Resetting game mode to SINGLE_PLAYER before final score")
+			current_game_mode = GameMode.SINGLE_PLAYER
 	
 	# Update high score before showing FinalScore so the screen can compare
 	if session_score > high_score:

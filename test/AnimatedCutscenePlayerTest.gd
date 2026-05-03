@@ -1,10 +1,12 @@
-extends GutTest
+extends "res://test/GutTest.gd"
 
 ## Unit tests for AnimatedCutscenePlayer
 ## Tests configuration loading, character lifecycle, and animation playback
 
 var cutscene_player: AnimatedCutscenePlayer
 var test_config: CutsceneDataModels.CutsceneConfig
+
+const CUTSCENE_PLAYER_SCENE = "res://scenes/cutscenes/AnimatedCutscenePlayer.tscn"
 
 
 func before_each():
@@ -71,7 +73,10 @@ func test_cutscene_finished_signal_exists():
 # ============================================================================
 
 func test_has_custom_cutscene_returns_false_for_nonexistent():
-	var result = cutscene_player.has_custom_cutscene("NonexistentMinigame", CutsceneTypes.CutsceneType.WIN)
+	var result = cutscene_player.has_custom_cutscene(
+		"NonexistentMinigame",
+		CutsceneTypes.CutsceneType.WIN
+	)
 	assert_false(result, "Should return false for nonexistent custom cutscene")
 
 
@@ -129,7 +134,8 @@ func test_animation_data_caching_improves_performance():
 	await wait_seconds(2.5)
 	
 	# Cached load should be faster or equal
-	assert_true(cached_load_time <= cold_load_time, "Cached load should be faster or equal to cold load")
+	var message = "Cached load should be faster or equal to cold load"
+	assert_true(cached_load_time <= cold_load_time, message)
 
 
 func test_texture_atlas_support():
@@ -174,7 +180,7 @@ func test_preload_cutscene_handles_default_configs():
 # ============================================================================
 
 func test_play_cutscene_emits_finished_signal():
-	var signal_watcher = watch_signals(cutscene_player)
+	var _signal_watcher = watch_signals(cutscene_player)
 	
 	# Play cutscene (will use minimal default config)
 	cutscene_player.play_cutscene("TestMinigame", CutsceneTypes.CutsceneType.WIN)
@@ -182,7 +188,8 @@ func test_play_cutscene_emits_finished_signal():
 	# Wait for cutscene to complete
 	await wait_seconds(3.0)
 	
-	assert_signal_emitted(cutscene_player, "cutscene_finished", "Should emit cutscene_finished signal")
+	var message = "Should emit cutscene_finished signal"
+	assert_signal_emitted(cutscene_player, "cutscene_finished", message)
 
 
 func test_play_cutscene_creates_character():
@@ -227,7 +234,7 @@ func test_play_cutscene_cleans_up_character():
 # ============================================================================
 
 func test_play_intro_cutscene():
-	var signal_watcher = watch_signals(cutscene_player)
+	var _signal_watcher = watch_signals(cutscene_player)
 	
 	cutscene_player.play_cutscene("TestMinigame", CutsceneTypes.CutsceneType.INTRO)
 	await wait_seconds(3.0)
@@ -236,7 +243,7 @@ func test_play_intro_cutscene():
 
 
 func test_play_win_cutscene():
-	var signal_watcher = watch_signals(cutscene_player)
+	var _signal_watcher = watch_signals(cutscene_player)
 	
 	cutscene_player.play_cutscene("TestMinigame", CutsceneTypes.CutsceneType.WIN)
 	await wait_seconds(3.0)
@@ -245,7 +252,7 @@ func test_play_win_cutscene():
 
 
 func test_play_fail_cutscene():
-	var signal_watcher = watch_signals(cutscene_player)
+	var _signal_watcher = watch_signals(cutscene_player)
 	
 	cutscene_player.play_cutscene("TestMinigame", CutsceneTypes.CutsceneType.FAIL)
 	await wait_seconds(3.0)
@@ -284,7 +291,7 @@ func test_concurrent_cutscene_requests_ignored():
 # ============================================================================
 
 func test_cutscene_player_scene_loads():
-	var scene = load("res://scenes/cutscenes/AnimatedCutscenePlayer.tscn")
+	var scene = load(CUTSCENE_PLAYER_SCENE)
 	assert_not_null(scene, "AnimatedCutscenePlayer scene should load")
 	
 	var instance = scene.instantiate()
@@ -294,7 +301,7 @@ func test_cutscene_player_scene_loads():
 
 
 func test_cutscene_player_scene_has_background():
-	var scene = load("res://scenes/cutscenes/AnimatedCutscenePlayer.tscn")
+	var scene = load(CUTSCENE_PLAYER_SCENE)
 	var instance = scene.instantiate()
 	add_child_autofree(instance)
 	
@@ -351,9 +358,24 @@ func test_background_color_transitions_smoothly():
 	
 	# Check that final color is close to target
 	var final_color = background.color
-	assert_almost_eq(final_color.r, config.background_color.r, 0.1, "Red channel should match target")
-	assert_almost_eq(final_color.g, config.background_color.g, 0.1, "Green channel should match target")
-	assert_almost_eq(final_color.b, config.background_color.b, 0.1, "Blue channel should match target")
+	assert_almost_eq(
+		final_color.r,
+		config.background_color.r,
+		0.1,
+		"Red channel should match target"
+	)
+	assert_almost_eq(
+		final_color.g,
+		config.background_color.g,
+		0.1,
+		"Green channel should match target"
+	)
+	assert_almost_eq(
+		final_color.b,
+		config.background_color.b,
+		0.1,
+		"Blue channel should match target"
+	)
 
 
 func test_background_color_no_transition_when_same():
@@ -441,7 +463,8 @@ func test_background_transition_synchronized_with_animation():
 	
 	# At 1 second (50% through), color should be roughly 50% interpolated
 	# Allow generous tolerance due to easing
-	assert_true(mid_color.r > 0.2 and mid_color.r < 0.8, "Color should be transitioning at midpoint")
+	var mid_in_range = mid_color.r > 0.2 and mid_color.r < 0.8
+	assert_true(mid_in_range, "Color should be transitioning at midpoint")
 	
 	# Wait for completion
 	await wait_seconds(1.5)

@@ -668,6 +668,16 @@ func _on_export_pressed() -> void:
 		AudioManager.play_click()
 	_export_btn.disabled = true
 	_export_status_lbl.text = "Exporting JSON…"
+	if OS.has_feature("android"):
+		var result = FileExporter.export_session_data_only()
+		if result.success:
+			_export_status_lbl.text = "✅ Exported to Downloads/WaterwiseExports/session_logs"
+			_export_status_lbl.add_theme_color_override("font_color", COL_GOOD)
+		else:
+			_export_status_lbl.text = "❌ Export failed — %s" % str(result.get("error", ""))
+			_export_status_lbl.add_theme_color_override("font_color", COL_BAD)
+		_export_btn.disabled = false
+		return
 
 	var sl: Node = get_node_or_null("/root/SessionLogger")
 	if sl:
@@ -689,6 +699,16 @@ func _on_export_txt_pressed() -> void:
 		AudioManager.play_click()
 	_export_txt_btn.disabled = true
 	_export_status_lbl.text = "Exporting TXT…"
+	if OS.has_feature("android"):
+		var result = FileExporter.export_session_data_only()
+		if result.success:
+			_export_status_lbl.text = "✅ Exported to Downloads/WaterwiseExports/session_logs"
+			_export_status_lbl.add_theme_color_override("font_color", COL_GOOD)
+		else:
+			_export_status_lbl.text = "❌ Export failed — %s" % str(result.get("error", ""))
+			_export_status_lbl.add_theme_color_override("font_color", COL_BAD)
+		_export_txt_btn.disabled = false
+		return
 
 	var sl: Node = get_node_or_null("/root/SessionLogger")
 	if sl and sl.has_method("export_session_txt"):
