@@ -642,9 +642,16 @@ func _build_procedural_boat() -> Node2D:
 
 
 func _setup_signboard_highscore() -> void:
-	# Hide the original HighscorePanel UI element
-	if highscore_panel:
+	# Remove any legacy highscore UI so only the signboard label remains.
+	if _signboard_label and is_instance_valid(_signboard_label):
+		_signboard_label.queue_free()
+		_signboard_label = null
+
+	if highscore_panel and is_instance_valid(highscore_panel):
 		highscore_panel.visible = false
+		highscore_panel.queue_free()
+		highscore_panel = null
+		highscore_label = null
 
 	# Place highscore text on the wooden signboard plank.
 	# HighscorePost is now a fixed-size node (2360x1640) anchored top-left,
@@ -680,11 +687,16 @@ func _setup_signboard_highscore() -> void:
 	# Set the score text — show highest score across all minigames
 	var score_value := 0
 	if SaveManager and SaveManager.has_method("get_high_score"):
-		# Check all known minigame IDs for the best score
+		# Check all known minigame names (must match the game_name values in each .gd file)
 		var game_ids = [
-			"catch_rain", "pipe_connect", "water_cycle",
-			"pollution_cleanup", "water_quiz", "conservation",
-			"ecosystem",
+			"Catch The Rain", "Filter Builder", "Cloud Catcher",
+			"Cover The Drum", "Droplet Dash", "Greywater Sorter",
+			"Mud Pie Maker", "Plug The Leak", "Quick Shower",
+			"Rice Wash Rescue", "Scrub To Save", "Spot The Speck",
+			"Swipe The Soap", "Thirsty Plant", "Timing Tap",
+			"Toilet Tank Fix", "Trace Pipe Path", "Turn Off Tap",
+			"Vegetable Bath", "Water Memory", "Water Plant",
+			"Wring It Out", "Bucket Brigade", "Fix the Leak",
 		]
 		for gid in game_ids:
 			var hs_result = SaveManager.call("get_high_score", gid)
@@ -692,6 +704,10 @@ func _setup_signboard_highscore() -> void:
 				var s = int(hs_result.get("score", 0))
 				if s > score_value:
 					score_value = s
+
+	# Also check session high_score from GameManager as a fallback
+	if GameManager and GameManager.high_score > score_value:
+		score_value = GameManager.high_score
 
 	_signboard_label.text = "%s\n%d" % [
 		_loc("initial_highscore_sign", "HIGHSCORE"),
@@ -1637,6 +1653,8 @@ func _hide_loading_overlay() -> void:
 func _on_multiplayer_pressed() -> void:
 	if AudioManager:
 		AudioManager.play_click()
+	if GameManager and GameManager.has_method("set_game_mode"):
+		GameManager.set_game_mode(GameManager.GameMode.MULTIPLAYER_COOP)
 	_go_to_scene([
 		"res://scenes/ui/MultiplayerLobby.tscn",
 		"res://scenes/ui/MultiplayerMenu.tscn"

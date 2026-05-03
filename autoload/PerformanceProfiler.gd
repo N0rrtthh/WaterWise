@@ -76,7 +76,7 @@ var estimated_battery_mah: float = 0.0
 ## Android battery tracking (real measurement when available)
 var _battery_start_pct: int = -1  # -1 = not yet sampled
 var _battery_capacity_mah: float = 4000.0  # Typical budget Android phone
-var battery_source: String = "estimate"  # "android_real" or "estimate"
+var battery_source: String = "unknown"  # "android_sysfs" or "unavailable_desktop"
 var battery_pct_current: int = -1
 var battery_pct_start: int = -1
 var battery_pct_min: int = 101
@@ -129,9 +129,9 @@ var snapshots: Array[Dictionary] = []
 func _ready() -> void:
 	session_start_time = Time.get_ticks_msec()
 	if OS.get_name() == "Android":
-		battery_source = "android_real"
+		battery_source = "android_sysfs"
 	else:
-		battery_source = "desktop_estimate"
+		battery_source = "unavailable_desktop"
 	# Load configured battery capacity (allow setting to match actual test phone)
 	call_deferred("_load_battery_capacity")
 	_create_overlay()
@@ -241,7 +241,7 @@ func _process(delta: float) -> void:
 	
 	# ── BATTERY ESTIMATION ──
 	# On Android: read actual battery level from sysfs for real ΔE
-	# On Desktop: use workload-proportional model (clearly labeled)
+	# On Desktop: battery data unavailable — report 0.0 (clearly labeled)
 	if OS.get_name() == "Android":
 		# Read real battery percentage from sysfs
 		var batt_pct = _read_android_battery_percent()
@@ -249,24 +249,26 @@ func _process(delta: float) -> void:
 			battery_pct_current = batt_pct
 			if _battery_start_pct < 0:
 				_battery_start_pct = batt_pct  # Record starting level
-				battery_source = "android_real"
+				battery_source = "android_sysfs"
 			if battery_pct_start < 0:
 				battery_pct_start = batt_pct
 			battery_pct_min = min(battery_pct_min, batt_pct)
 			battery_pct_max = max(battery_pct_max, batt_pct)
 			battery_pct_samples.append(batt_pct)
 		if _battery_start_pct >= 0 and batt_pct >= 0:
-			# Typical phone battery ~4000mAh. % drop → mAh consumed
+			# Convert % drop to mAh using configured battery capacity
 			var pct_drop = _battery_start_pct - batt_pct
 			estimated_battery_mah = (float(pct_drop) / 100.0) * _battery_capacity_mah
 	else:
-		# Desktop heuristic: workload-proportional (frame-time based)
-		# Higher frame times = heavier workload = more battery drain
-		var load_factor = clamp(frame_time_ms / FRAME_BUDGET_MS, 0.5, 3.0)
-		estimated_battery_mah = (session_elapsed_sec / 60.0) * (1.5 * load_factor)
+		# Desktop: No real battery data available
+		# Do NOT fabricate values — report 0.0 and label as unavailable
+		estimated_battery_mah = 0.0
+		battery_source = "unavailable_desktop"
+		battery_pct_current = -1
 	
 	# ── ΔE: Battery drain normalized per minute ──
-	if session_elapsed_sec > 5.0:
+	# Only compute from real measurements (Android sysfs)
+	if session_elapsed_sec > 5.0 and estimated_battery_mah > 0.0:
 		battery_drain_per_min = (
 			estimated_battery_mah / (session_elapsed_sec / 60.0)
 		)
@@ -381,21 +383,22 @@ func _check_thresholds() -> void:
 			MAX_MEMORY_MB
 		)
 	
-	if estimated_battery_mah > MAX_BATTERY_MAH_PER_5MIN:
+	# Battery threshold — only check with real measurements
+	if estimated_battery_mah > MAX_BATTERY_MAH_PER_5MIN and battery_source == "android_sysfs":
 		performance_warning.emit(
 			"battery_exceeded",
 			estimated_battery_mah,
 			MAX_BATTERY_MAH_PER_5MIN
 		)
 	
-	# T_cpu threshold (Paper: <45°C)
-	if cpu_temp_c > MAX_CPU_TEMP_C:
+	# T_cpu threshold (Paper: <45°C) — only with real sensor
+	if _thermal_source == "sensor" and cpu_temp_c > MAX_CPU_TEMP_C:
 		performance_warning.emit(
 			"cpu_temp_exceeded", cpu_temp_c,
 			MAX_CPU_TEMP_C
 		)
 	
-	# S_clk: Throttling detection
+	# S_clk: Throttling detection (FPS-based proxy, always available)
 	if is_throttling:
 		performance_warning.emit(
 			"clock_throttled", clock_speed_ratio,
@@ -517,13 +520,17 @@ func export_session_report() -> Dictionary:
 	}
 
 ## Check overall ISO/IEC 25010 compliance
+## Thermal check is skipped when sensor data is unavailable
 func _check_iso_compliance() -> bool:
-	return (
+	var base_pass = (
 		fps_avg >= float(MIN_FPS) and
 		memory_peak_mb <= MAX_MEMORY_MB and
-		algo_latency_max_ms <= MAX_ALGO_LATENCY_MS and
-		cpu_temp_peak <= MAX_CPU_TEMP_C
+		algo_latency_max_ms <= MAX_ALGO_LATENCY_MS
 	)
+	# Only fail on thermal if we have real sensor data
+	if _thermal_source == "sensor" and cpu_temp_peak > MAX_CPU_TEMP_C:
+		return false
+	return base_pass
 
 
 func _calc_battery_pct_avg() -> float:
@@ -586,15 +593,13 @@ var _thermal_source: String = "heuristic"  # "sensor" or "heuristic"
 var _thermal_source_logged: bool = false
 
 func _sample_cpu_temperature() -> void:
-	# Default: Heuristic baseline 35°C + load-proportional rise
-	var load_ratio = clamp(
-		frame_time_ms / FRAME_BUDGET_MS, 0.0, 3.0
-	)
-	var heuristic_temp = 35.0 + (load_ratio * 5.0)
-	cpu_temp_c = heuristic_temp
-	_thermal_source = "heuristic"
+	# ═══════════════════════════════════════════════════════════════════
+	# THERMAL PROFILING — Real sensor on Android, unavailable on desktop
+	# Thesis requires instrumental profiling; heuristic approximations
+	# would be misleading in exported session logs.
+	# ═══════════════════════════════════════════════════════════════════
 	
-	# On Android, try to read actual thermal sensor from multiple zones
+	# On Android, try to read actual thermal sensor from sysfs
 	if OS.get_name() == "Android":
 		var sensor_read := false
 		var thermal_paths := [
@@ -626,14 +631,23 @@ func _sample_cpu_temperature() -> void:
 						_thermal_source_logged = true
 					break
 		
-		if not sensor_read and not _thermal_source_logged:
-			print("⚠️ No thermal sensor accessible on this device — using frame-time heuristic")
-			print("   Tried paths: %s" % str(thermal_paths))
-			print("   Heuristic formula: 35°C + (frame_load × 5.0)")
-			_thermal_source_logged = true
+		if not sensor_read:
+			# Android but no readable sensor — report as unavailable
+			cpu_temp_c = 0.0
+			_thermal_source = "unavailable"
+			if not _thermal_source_logged:
+				print("⚠️ No thermal sensor accessible on this Android device")
+				print("   Tried paths: %s" % str(thermal_paths))
+				print("   cpu_temp_c will report 0.0 (unavailable)")
+				_thermal_source_logged = true
 	else:
+		# Desktop: No real thermal data available
+		# Report 0.0 and clearly mark source as unavailable
+		cpu_temp_c = 0.0
+		_thermal_source = "unavailable_desktop"
 		if not _thermal_source_logged:
-			print("🌡 Desktop mode — using frame-time heuristic for CPU temp (not a real sensor)")
+			print("🌡 Desktop mode — CPU temperature unavailable (no sysfs sensor)")
+			print("   cpu_temp_c = 0.0 | thermal_source = unavailable_desktop")
 			_thermal_source_logged = true
 	
 	cpu_temp_history.append(cpu_temp_c)
@@ -657,7 +671,11 @@ func _read_android_battery_percent() -> int:
 	return -1
 
 ## Sample Clock Speed Stability (S_clk).
-## Throttle event = effective clock drops below 80%.
+## On Android: Uses FPS-to-target ratio as a proxy for clock stability.
+## Throttle event = effective performance drops below 80% of target.
+## NOTE: This is NOT actual CPU frequency — ENet/GDScript cannot read
+## /sys/devices/system/cpu/cpu0/cpufreq on most Android devices.
+## The FPS ratio serves as a behavioral indicator of throttling.
 func _sample_clock_speed() -> void:
 	var prev_throttling = is_throttling
 	
@@ -678,7 +696,8 @@ func _sample_clock_speed() -> void:
 			"elapsed_sec": session_elapsed_sec,
 			"clock_ratio": clock_speed_ratio,
 			"cpu_temp_c": cpu_temp_c,
-			"fps": fps_current
+			"fps": fps_current,
+			"measurement_note": "clock_ratio derived from FPS/target_FPS (behavioral proxy, not actual CPU frequency)"
 		})
 		print(
 			"🔥 THROTTLE #%d: S_clk=%.0f%%" % [
@@ -769,11 +788,18 @@ func _update_overlay_text() -> void:
 	elif memory_current_mb >= MAX_MEMORY_MB * 0.8:
 		mem_ico = "🟡"
 	
-	var temp_ico = "🟢"
-	if cpu_temp_c >= MAX_CPU_TEMP_C:
-		temp_ico = "🔴"
-	elif cpu_temp_c >= MAX_CPU_TEMP_C * 0.85:
-		temp_ico = "🟡"
+	var temp_str: String
+	if _thermal_source == "sensor":
+		var temp_ico = "🟢"
+		if cpu_temp_c >= MAX_CPU_TEMP_C:
+			temp_ico = "🔴"
+		elif cpu_temp_c >= MAX_CPU_TEMP_C * 0.85:
+			temp_ico = "🟡"
+		temp_str = "%s T_cpu: %.1f°C / %.0f°C [sensor]\n" % [
+			temp_ico, cpu_temp_c, MAX_CPU_TEMP_C
+		]
+	else:
+		temp_str = "⚪ T_cpu: N/A [%s]\n" % _thermal_source
 	
 	var algo_ico = "🟢"
 	if algo_latency_max_ms >= MAX_ALGO_LATENCY_MS:
@@ -784,7 +810,14 @@ func _update_overlay_text() -> void:
 	var drop_pct = (
 		float(dropped_frames) / max(total_frames, 1) * 100.0
 	)
-	var savings = (1.0 - rule_based_vs_dl_ratio) * 100.0
+	
+	var batt_str: String
+	if battery_source == "android_sysfs":
+		var savings = (1.0 - rule_based_vs_dl_ratio) * 100.0
+		batt_str = "🔋 ΔE: %.2f mAh/min [sysfs]\n" % battery_drain_per_min
+		batt_str += "  vs DL: %.0f%% savings\n" % savings
+	else:
+		batt_str = "🔋 ΔE: N/A [%s]\n" % battery_source
 	
 	var stress_ln = ""
 	if stress_test_active:
@@ -808,9 +841,7 @@ func _update_overlay_text() -> void:
 			mem_ico, memory_current_mb,
 			MAX_MEMORY_MB, memory_peak_mb
 		]
-		+ "%s T_cpu: %.1f°C / %.0f°C\n" % [
-			temp_ico, cpu_temp_c, MAX_CPU_TEMP_C
-		]
+		+ temp_str
 		+ "%s S_clk: %.0f%% throttle:%d\n" % [
 			clk_ico, clock_speed_ratio * 100.0,
 			throttle_count
@@ -819,10 +850,7 @@ func _update_overlay_text() -> void:
 			algo_ico, algo_latency_avg_ms,
 			MAX_ALGO_LATENCY_MS
 		]
-		+ "🔋 ΔE: %.2f mAh/min\n" % [
-			battery_drain_per_min
-		]
-		+ "  vs DL: %.0f%% savings\n" % [savings]
+		+ batt_str
 		+ "⏱ %.0fs | %d frames\n" % [
 			session_elapsed_sec, total_frames
 		]
