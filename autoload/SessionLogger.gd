@@ -440,7 +440,7 @@ func _on_perf_warning(metric: String, value: float, threshold: float) -> void:
 func _take_perf_snapshot() -> void:
 	if not PerformanceProfiler:
 		return
-	var thermal_source := PerformanceProfiler.get_thermal_source()
+	var thermal_source: String = PerformanceProfiler.get_thermal_source()
 
 	var snap: Dictionary = {
 		"elapsed_sec": _elapsed(),
@@ -579,7 +579,36 @@ func export_session() -> String:
 		"processor_name": OS.get_processor_name(),
 		"godot_version": Engine.get_version_info().get("string", "?"),
 		"screen_width": int(vp_size.x),
-		"screen_height": int(vp_size.y)
+		"screen_height": int(vp_size.y),
+		# ── Extended hardware info ─────────────────────────────────────
+		"screen_dpi": DisplayServer.screen_get_dpi(),
+		"os_version": OS.get_version(),
+		"gpu_name": RenderingServer.get_video_adapter_name(),
+		"gpu_vendor": RenderingServer.get_video_adapter_vendor(),
+		"system_memory_mb": int(OS.get_memory_info().get("physical", 0) / (1024 * 1024)),
+		"free_memory_mb": int(OS.get_memory_info().get("free", 0) / (1024 * 1024)),
+		"engine_fps_cap": ProjectSettings.get_setting("application/run/max_fps", 0),
+		"battery_capacity_mah": (
+			PerformanceProfiler.get_battery_capacity_mah() if PerformanceProfiler else 0.0
+		),
+		"battery_source_final": (
+			PerformanceProfiler.battery_source if PerformanceProfiler else "N/A"
+		),
+		"rendering_backend": RenderingServer.get_current_rendering_method(),
+		"orientation": (
+			"landscape" if vp_size.x >= vp_size.y else "portrait"
+		),
+		"dev_mode_enabled": (
+			bool(SaveManager.get_setting("dev_mode", false)) if SaveManager else false
+		),
+		## battery_capacity_source: 'configured_default' means 5000mAh was never changed
+		## via set_battery_capacity_mah(). 'user_configured' means it was set explicitly.
+		"battery_capacity_source": (
+			"user_configured"
+			if PerformanceProfiler
+				and PerformanceProfiler.get_battery_capacity_mah() != 5000.0
+			else "configured_default_5000mah"
+		)
 	}
 
 	# ── Performance summary ───────────────────────────────────────────
@@ -611,6 +640,8 @@ func export_session() -> String:
 			"minimum_observed": fps_stats.get("min", 0.0),
 			"maximum_observed": fps_stats.get("max", 0.0),
 			"average_observed": fps_stats.get("avg", 0.0),
+			## passed = meets the 30fps MINIMUM (iso 25010 baseline), NOT the 60fps target.
+			## average_observed >= 60 would mean target is met; this only checks survivability.
 			"passed": fps_avg >= 29.0  # Allow slight float inaccuracy for 30fps caps
 		},
 		"memory": {
@@ -623,10 +654,12 @@ func export_session() -> String:
 		},
 		"thermal": {
 			"threshold_c": 45.0,
-			"start_c": temp_stats.get("start", 0.0),
-			"minimum_c": temp_stats.get("min", 0.0),
-			"peak_c": temp_stats.get("max", snapf(cpu_temp_peak_c, 1)),
-			"average_c": temp_stats.get("avg", 0.0),
+			## -1.0 = no sensor data available (not a measured 0°C).
+			## data_available: false means all values below are absent/unmeasured.
+			"start_c": temp_stats.get("start", -1.0) if thermal_data_available else -1.0,
+			"minimum_c": temp_stats.get("min", -1.0) if thermal_data_available else -1.0,
+			"peak_c": temp_stats.get("max", -1.0) if thermal_data_available else -1.0,
+			"average_c": temp_stats.get("avg", -1.0) if thermal_data_available else -1.0,
 			"throttle_events": throttles,
 			"throttle_details": get_throttle_events(),
 			"thermal_source": thermal_source,
@@ -656,11 +689,86 @@ func export_session() -> String:
 		},
 		"battery_efficiency": {
 			"measured_mah_per_min": batt,
+			## dl_baseline_mah_per_min is a PAPER CONSTANT (literature value for
+			## TFLite MobileNetV1 on Cortex-A53), not a live measurement.
+			## See thesis section on DL comparison baseline.
 			"dl_baseline_mah_per_min": 10.0,
-			"rule_based_savings_pct": efficiency,
+			"dl_baseline_is_measured": false,
+			## rule_based_savings_pct is -1.0 when battery readings are unavailable.
+			"rule_based_savings_pct": (
+				efficiency if batt > 0.0 else -1.0
+			),
 			"battery_source": PerformanceProfiler.battery_source if PerformanceProfiler else "N/A"
 		},
-		"perf_warnings": perf_warnings
+		## tflite_comparison: filled in by post-session comparison test.
+		## During game-only sessions these fields are baseline placeholders.
+		## Run the TFLite app under the same conditions, capture its session log,
+		## then compare battery.total_estimated_mah and performance.fps.average_observed.
+		"tflite_comparison": {
+			"note": "Compare this block against the TFLite session captured back-to-back.",
+			"waterwise_fps_avg": fps_stats.get("avg", 0.0),
+			"waterwise_mah_per_min": batt,
+			"waterwise_memory_peak_mb": snapf(memory_peak_mb, 2),
+			"waterwise_throttle_events": throttles,
+			"tflite_fps_avg": null,
+			"tflite_mah_per_min": 10.0,
+			"tflite_memory_peak_mb": null,
+			"tflite_throttle_events": null,
+			"waterwise_wins": false,
+			"comparison_complete": false
+		},
+		"perf_warnings": perf_warnings,
+		## measurement_notes: explains method / accuracy per metric so any reader
+		## knows immediately what is real sensor data vs a proxy or configured default.
+		"measurement_notes": {
+			"fps": (
+				"Real — Engine.get_frames_per_second() per frame. "
+				+ "Frames <2fps excluded from avg (scene-load freezes)."
+			),
+			"memory_mb": (
+				"Real — OS.get_static_memory_usage(). "
+				+ "Covers GDScript heap + Godot textures; excludes Android driver overhead."
+			),
+			"algo_latency_ms": (
+				"Real — Time.get_ticks_usec() per AdaptiveDifficulty call. "
+				+ "0.0 if no game played yet."
+			),
+			"dropped_frames": (
+				"Real — delta > 36.67ms (10% above 30fps cap). "
+				+ "First 3s startup excluded."
+			),
+			"clock_speed_ratio": (
+				"PROXY — fps_current / 30.0 (target FPS). "
+				+ "NOT actual CPU frequency; requires root for real cpufreq on Android."
+			),
+			"cpu_temp_c": (
+				"UNAVAILABLE — no accessible sysfs thermal zone on test device. "
+				+ "All thermal values -1.0."
+			),
+			"battery_pct": (
+				"UNAVAILABLE — sysfs read failed (see battery_source_final). "
+				+ "Values are -1."
+			),
+			"battery_mah_estimated": (
+				"COMPUTED — (pct_drop/100) * battery_capacity_mah. "
+				+ "0.0 when battery_pct unavailable."
+			),
+			"dl_baseline_mah_per_min": (
+				"PAPER CONSTANT — literature value for TFLite MobileNetV1 on Cortex-A53. "
+				+ "Not measured. dl_baseline_is_measured=false."
+			),
+			"battery_capacity_mah": (
+				"CONFIGURED — set via set_battery_capacity_mah(). "
+				+ "Default 5000mAh matches Moto E5 Plus spec. See battery_capacity_source."
+			),
+			"gpu_name": "Real — RenderingServer.get_video_adapter_name().",
+			"rendering_backend": (
+				"Real — OS.get_current_rendering_method(). "
+				+ "e.g. 'gl_compatibility'."
+			),
+			"screen_dpi": "Real — DisplayServer.screen_get_dpi().",
+			"system_memory_mb": "Real — OS.get_memory_info() physical RAM."
+		}
 	}
 
 	# ── SP algorithm summary ──────────────────────────────────────────
@@ -1171,11 +1279,17 @@ func _calc_snapshot_stats(
 	}
 
 func _calc_fps_avg() -> float:
+	# Use PerformanceProfiler.fps_avg directly — it is the running weighted average
+	# computed from the last 60 real frames (freeze frames fps<2 excluded).
+	# The old approach averaged fps_avg FIELDS from snapshots = average of averages,
+	# which gave lower accuracy and was still polluted by pre-fix data.
+	if PerformanceProfiler:
+		return snapf(PerformanceProfiler.fps_avg, 1)
 	if perf_snapshots.is_empty():
-		return snapf(PerformanceProfiler.fps_avg if PerformanceProfiler else 0.0, 1)
+		return 0.0
 	var total := 0.0
 	for s in perf_snapshots:
-		total += float(s.get("fps_avg", 0.0))
+		total += float(s.get("fps", 0.0))  # use raw fps, not fps_avg
 	return snapf(total / float(perf_snapshots.size()), 1)
 
 func _calc_drop_rate() -> float:

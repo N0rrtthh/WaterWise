@@ -33,7 +33,13 @@ signal profiling_snapshot(data: Dictionary)
 ## Performance Efficiency
 const TARGET_FPS: int = 60
 const MIN_FPS: int = 30
-const FRAME_BUDGET_MS: float = 33.33  # 1000ms / 30fps (budget to maintain minimum playability)
+## Drop budget: 10% tolerance above the 30fps cap.
+## At exactly 30fps delta is ~33.33ms; using 36.67ms only counts
+## frames meaningfully slower than the 30fps minimum.
+const FRAME_BUDGET_MS: float = 36.67  # (1000ms / 30fps) * 1.1 tolerance
+## How many seconds to skip dropped-frame counting after cold start.
+## The first few frames always spike during scene tree setup.
+const STARTUP_WARMUP_SEC: float = 3.0
 const MAX_MEMORY_MB: float = 200.0    # Paper: <200MB RAM budget
 const MAX_ALGO_LATENCY_MS: float = 16.0  # Paper: <16ms for O(1) ops
 const MAX_CPU_TEMP_C: float = 45.0    # Paper: <45°C
@@ -52,6 +58,7 @@ var fps_current: float = 0.0
 var fps_min: float = 999.0
 var fps_max: float = 0.0
 var fps_avg: float = 0.0
+var _fps_history_sum: float = 0.0  # running sum so avg is O(1) instead of O(60)
 var frame_time_ms: float = 0.0
 
 ## Memory tracking
@@ -113,6 +120,12 @@ var stress_test_passed: bool = false
 const DL_BASELINE_MAH_PER_MIN: float = 10.0
 var rule_based_vs_dl_ratio: float = 0.0
 
+## Per-metric warning cooldown — prevent per-frame signal spam.
+## Key = metric name, value = elapsed_sec of last emit.
+## Warnings emit at most once per second per metric.
+var _warning_last_emit: Dictionary = {}
+const WARNING_COOLDOWN_SEC: float = 1.0
+
 ## Profiler UI visibility
 var overlay_visible: bool = false
 var overlay_label: Label = null
@@ -129,7 +142,7 @@ var snapshots: Array[Dictionary] = []
 func _ready() -> void:
 	session_start_time = Time.get_ticks_msec()
 	if OS.get_name() == "Android":
-		battery_source = "android_sysfs"
+		battery_source = "android_sysfs_pending"  # updated to real result on first read
 	else:
 		battery_source = "unavailable_desktop"
 	# Load configured battery capacity (allow setting to match actual test phone)
@@ -219,28 +232,36 @@ func _create_overlay() -> void:
 func _process(delta: float) -> void:
 	total_frames += 1
 	session_elapsed_sec = float(Time.get_ticks_msec() - session_start_time) / 1000.0
-	
+
 	# ── FPS ──
 	fps_current = Engine.get_frames_per_second()
-	frame_time_ms = delta * 1000.0
-	
+	# Clamp frame_time_ms to max 100ms so scene-load spikes (200ms-2s) don't
+	# appear as legitimate frame times in the snapshot log.
+	# A 261ms entry beside fps=30 is misleading — it's a scene transition.
+	frame_time_ms = minf(delta * 1000.0, 100.0)
+
 	if fps_current < fps_min:
 		fps_min = fps_current
 	if fps_current > fps_max:
 		fps_max = fps_current
 	
-	# Track FPS history (last 60 samples for average)
-	fps_history.append(fps_current)
-	if fps_history.size() > 60:
-		fps_history.pop_front()
+	# Track FPS history for rolling average.
+	# Exclude fps_current < 2 (scene-load freezes) from the average so a
+	# 2-second scene transition doesn't drag the average down for 60 frames.
+	# Those spikes are logged separately in throttle_events.
+	if fps_current >= 2.0:
+		fps_history.append(fps_current)
+		_fps_history_sum += fps_current
+		if fps_history.size() > 60:
+			_fps_history_sum -= fps_history.pop_front()
+
+	fps_avg = (
+		_fps_history_sum / float(fps_history.size()) if fps_history.size() > 0
+		else fps_current
+	)
 	
-	fps_avg = 0.0
-	for f in fps_history:
-		fps_avg += f
-	fps_avg /= fps_history.size()
-	
-	# Count dropped frames (exceeded 16.67ms budget)
-	if frame_time_ms > FRAME_BUDGET_MS:
+	# Count dropped frames only after startup warmup settles
+	if frame_time_ms > FRAME_BUDGET_MS and session_elapsed_sec > STARTUP_WARMUP_SEC:
 		dropped_frames += 1
 	
 	# ── MEMORY ──
@@ -375,44 +396,30 @@ func end_latency_measurement(start_usec: int, operation_name: String = "") -> fl
 # THRESHOLD CHECKS
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+func _emit_warning(metric: String, value: float, threshold: float) -> void:
+	var last: float = _warning_last_emit.get(metric, -WARNING_COOLDOWN_SEC - 1.0)
+	if session_elapsed_sec - last < WARNING_COOLDOWN_SEC:
+		return
+	_warning_last_emit[metric] = session_elapsed_sec
+	performance_warning.emit(metric, value, threshold)
+
 func _check_thresholds() -> void:
 	if fps_current < MIN_FPS:
-		performance_warning.emit(
-			"fps_critical", fps_current, float(MIN_FPS)
-		)
+		_emit_warning("fps_critical", fps_current, float(MIN_FPS))
 	elif fps_current < TARGET_FPS:
-		performance_warning.emit(
-			"fps_below_target", fps_current,
-			float(TARGET_FPS)
-		)
-	
+		_emit_warning("fps_below_target", fps_current, float(TARGET_FPS))
+
 	if memory_current_mb > MAX_MEMORY_MB:
-		performance_warning.emit(
-			"memory_exceeded", memory_current_mb,
-			MAX_MEMORY_MB
-		)
-	
-	# Battery threshold — only check with real measurements
+		_emit_warning("memory_exceeded", memory_current_mb, MAX_MEMORY_MB)
+
 	if estimated_battery_mah > MAX_BATTERY_MAH_PER_5MIN and battery_source == "android_sysfs":
-		performance_warning.emit(
-			"battery_exceeded",
-			estimated_battery_mah,
-			MAX_BATTERY_MAH_PER_5MIN
-		)
-	
-	# T_cpu threshold (Paper: <45°C) — only with real sensor
+		_emit_warning("battery_exceeded", estimated_battery_mah, MAX_BATTERY_MAH_PER_5MIN)
+
 	if _thermal_source == "sensor" and cpu_temp_c > MAX_CPU_TEMP_C:
-		performance_warning.emit(
-			"cpu_temp_exceeded", cpu_temp_c,
-			MAX_CPU_TEMP_C
-		)
-	
-	# S_clk: Throttling detection (FPS-based proxy, always available)
+		_emit_warning("cpu_temp_exceeded", cpu_temp_c, MAX_CPU_TEMP_C)
+
 	if is_throttling:
-		performance_warning.emit(
-			"clock_throttled", clock_speed_ratio,
-			THROTTLE_THRESHOLD
-		)
+		_emit_warning("clock_throttled", clock_speed_ratio, THROTTLE_THRESHOLD)
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # SNAPSHOT & EXPORT
@@ -657,7 +664,9 @@ func _sample_cpu_temperature() -> void:
 						_thermal_source = "sensor"
 						sensor_read = true
 						if not _thermal_source_logged:
-							print("🌡 Thermal sensor (battery proxy) found: %s → %.1f°C" % [path, cpu_temp_c])
+							print(
+								"🌡 Thermal sensor found: %s → %.1f°C" % [path, cpu_temp_c]
+							)
 							_thermal_source_logged = true
 						break
 						
@@ -687,9 +696,14 @@ func _sample_cpu_temperature() -> void:
 ## Read battery capacity percentage from Android sysfs.
 ## Returns -1 if unavailable (desktop or read failure).
 func _read_android_battery_percent() -> int:
+	# Extended paths: standard + Xiaomi BMS + Motorola/Qualcomm
 	var paths = [
 		"/sys/class/power_supply/battery/capacity",
 		"/sys/class/power_supply/Battery/capacity",
+		"/sys/class/power_supply/bms/capacity",       # Xiaomi BMS
+		"/sys/class/power_supply/BMS/capacity",       # some Qualcomm variants
+		"/sys/class/power_supply/fuel_gauge/capacity",# Motorola E-series
+		"/sys/class/power_supply/max170xx_battery/capacity", # Moto MaxIm gauge
 	]
 	for path in paths:
 		var f = FileAccess.open(path, FileAccess.READ)
@@ -697,7 +711,12 @@ func _read_android_battery_percent() -> int:
 			var raw = f.get_as_text().strip_edges()
 			f.close()
 			if raw.is_valid_int():
-				return raw.to_int()
+				var pct = raw.to_int()
+				if pct >= 0 and pct <= 100:
+					battery_source = "android_sysfs"
+					return pct
+	# No path succeeded — update source so the JSON is honest about it.
+	battery_source = "android_sysfs_no_permission"
 	return -1
 
 ## Sample Clock Speed Stability (S_clk).
@@ -708,14 +727,17 @@ func _read_android_battery_percent() -> int:
 ## The FPS ratio serves as a behavioral indicator of throttling.
 func _sample_clock_speed() -> void:
 	var prev_throttling = is_throttling
-	
-	if fps_current > 0 and TARGET_FPS > 0:
+
+	# Divide by MIN_FPS (30) not TARGET_FPS (60).
+	# The game is capped at 30fps so nominal ratio = 1.0 at 30fps.
+	# Dividing by 60 always gives 0.5 which falsely marks every frame as throttled.
+	if fps_current > 0 and MIN_FPS > 0:
 		clock_speed_ratio = clamp(
-			fps_current / float(TARGET_FPS), 0.0, 1.5
+			fps_current / float(MIN_FPS), 0.0, 2.0
 		)
 	else:
 		clock_speed_ratio = 1.0
-	
+
 	is_throttling = clock_speed_ratio < THROTTLE_THRESHOLD
 	
 	# Log new throttle events

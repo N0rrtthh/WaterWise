@@ -726,7 +726,7 @@ func _create_pause_menu() -> void:
 	vbox.add_child(drop_icon)
 
 	# Gentle pulse
-	var pulse = create_tween().set_loops()
+	var pulse = drop_icon.create_tween().set_loops()
 	pulse.tween_property(drop_icon, "modulate", Color(0.8, 0.9, 1.2), 0.8)\
 		.set_trans(Tween.TRANS_SINE)
 	pulse.tween_property(drop_icon, "modulate", Color.WHITE, 0.8)\
@@ -1001,7 +1001,7 @@ func _create_instruction_overlay() -> void:
 	start_label.add_theme_color_override("font_color", Color(0.35, 0.6, 0.85))
 	vbox.add_child(start_label)
 
-	var blink = create_tween().set_loops()
+	var blink = start_label.create_tween().set_loops()
 	blink.tween_property(start_label, "modulate:a", 0.25, 0.7)\
 		.set_trans(Tween.TRANS_SINE)
 	blink.tween_property(start_label, "modulate:a", 1.0, 0.7)\

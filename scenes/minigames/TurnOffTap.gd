@@ -249,7 +249,7 @@ func _spawn_running_tap():
 	tap.add_child(alert)
 	
 	# Pulse animation - loops indefinitely while tap is active
-	var tw = create_tween().set_loops(0)  # 0 = infinite loop (will stop when tap is removed)
+	var tw = alert.create_tween().set_loops()
 	tw.tween_property(alert, "scale", Vector2(1.3, 1.3), 0.3)
 	tw.tween_property(alert, "scale", Vector2(1.0, 1.0), 0.3)
 	

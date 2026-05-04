@@ -101,7 +101,6 @@ func _ready() -> void:
 	
 	_setup_ui()
 	_apply_minigame_theme_visuals()
-	call_deferred("_refresh_minigame_theme_visuals")
 	_setup_animated_cutscene_player()  # Initialize animated cutscene system
 	_create_instruction_overlay()
 	
@@ -980,7 +979,7 @@ func _create_instruction_overlay():
 	vbox.add_child(name_label)
 
 	# Gentle pulse (no scale bounce — avoids overflow)
-	var bounce = create_tween().set_loops()
+	var bounce = name_label.create_tween().set_loops()
 	_instruction_overlay_tweens.append(bounce)
 	bounce.tween_property(
 		name_label, "modulate",
@@ -1027,7 +1026,7 @@ func _create_instruction_overlay():
 	vbox.add_child(tap_label)
 	
 	# Blinking animation
-	var tween = create_tween().set_loops()
+	var tween = tap_label.create_tween().set_loops()
 	_instruction_overlay_tweens.append(tween)
 	tween.tween_property(tap_label, "modulate:a", 0.3, 0.5)
 	tween.tween_property(tap_label, "modulate:a", 1.0, 0.5)
@@ -1152,7 +1151,7 @@ func _create_pause_menu():
 	vbox.add_child(drop_icon)
 
 	# Gentle pulse on the drop icon
-	var pulse = create_tween().set_loops()
+	var pulse = drop_icon.create_tween().set_loops()
 	pulse.tween_property(drop_icon, "modulate", Color(0.8, 0.9, 1.2), 0.8)\
 		.set_trans(Tween.TRANS_SINE)
 	pulse.tween_property(drop_icon, "modulate", Color.WHITE, 0.8).set_trans(Tween.TRANS_SINE)
