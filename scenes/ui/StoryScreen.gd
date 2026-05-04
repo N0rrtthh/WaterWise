@@ -49,6 +49,7 @@ func _ready() -> void:
 		_start_safety_timer()
 
 func _load_story_data() -> void:
+	# Try loading from the packed JSON file first.
 	var file := FileAccess.open("res://data/story/chapters.json", FileAccess.READ)
 	if file:
 		var json := JSON.new()
@@ -56,6 +57,56 @@ func _load_story_data() -> void:
 		file.close()
 		if err == OK and json.data is Dictionary:
 			_chapters = json.data.get("chapters", [])
+
+	# Fallback: if the file failed to load (e.g. export filter omitted it on
+	# older builds), use a minimal inline chapter so the story always shows.
+	if _chapters.is_empty():
+		push_warning("StoryScreen: chapters.json not loaded — using inline fallback.")
+		_chapters = [
+			{
+				"id": "ch1_awakening",
+				"title_en": "The Waking River",
+				"title_tl": "Ang Paggising ng Ilog",
+				"pages": [
+					{
+						"text_en": (
+							"In a small barrio by the river, a young water droplet "
+							+ "named Droppy wakes up with a splash."
+						),
+						"text_tl": (
+							"Sa isang maliit na baryo, isang batang patak ng tubig "
+							+ "na nagngangalang Droppy ay nagising na may sabog."
+						),
+						"emoji": "💧🌅",
+						"bg_color": "#1a3a5c"
+					},
+					{
+						"text_en": (
+							"\"The river is getting smaller!\" cries Lola Tubig, "
+							+ "the wise elder of the water spirits."
+						),
+						"text_tl": (
+							"\"Pumapaliit na ang ilog!\" sigaw ni Lola Tubig, "
+							+ "ang matalinong matanda ng mga espiritu ng tubig."
+						),
+						"emoji": "👵💦",
+						"bg_color": "#1a3a5c"
+					},
+					{
+						"text_en": (
+							"\"Droppy, you must teach the children how to save water. "
+							+ "Every drop counts!\""
+						),
+						"text_tl": (
+							"\"Droppy, kailangan mong turuan ang mga bata kung paano "
+							+ "magtipid ng tubig. Bawat patak ay mahalaga!\""
+						),
+						"emoji": "✨📖",
+						"bg_color": "#1a3a5c"
+					}
+				]
+			}
+		]
 
 func get_next_unlocked_chapter() -> Dictionary:
 	var games_played := 0
@@ -65,6 +116,7 @@ func get_next_unlocked_chapter() -> Dictionary:
 		return {}
 	
 	# Endless looping logic: 1 chapter every 5 games
+	@warning_ignore("integer_division")
 	var chapter_index = (games_played / 5) % _chapters.size()
 	_current_chapter = _chapters[chapter_index]
 	return _current_chapter

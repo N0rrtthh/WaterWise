@@ -303,8 +303,7 @@ func _create_background():
 		map_content.add_child(cloud)
 		
 		# Gentle cloud drift
-		var tween = create_tween()
-		tween.set_loops()
+		var tween = cloud.create_tween().set_loops()
 		tween.tween_property(cloud, "position:x", cloud.position.x + 50, 8.0)
 		tween.tween_property(cloud, "position:x", cloud.position.x, 8.0)
 	
@@ -428,7 +427,7 @@ func _create_stage_button(stage: Dictionary, index: int, pos: Vector2) -> Contro
 		var glow = _create_circle(65, Color(1, 1, 0.5, 0.4))
 		visual.add_child(glow)
 		
-		var pulse = create_tween().set_loops()
+		var pulse = glow.create_tween().set_loops()
 		pulse.tween_property(glow, "scale", Vector2(1.15, 1.15), 0.7) \
 			.set_ease(Tween.EASE_IN_OUT)
 		pulse.tween_property(glow, "scale", Vector2(1.0, 1.0), 0.7) \
@@ -1206,7 +1205,7 @@ func _create_mp_stage_button(stage: Dictionary, index: int, pos: Vector2) -> Con
 	if stage.unlocked and not stage.completed:
 		var glow = _create_circle(65, Color(0.9, 0.7, 1.0, 0.4))
 		visual.add_child(glow)
-		var pulse = create_tween().set_loops()
+		var pulse = glow.create_tween().set_loops()
 		pulse.tween_property(glow, "scale", Vector2(1.15, 1.15), 0.7).set_ease(Tween.EASE_IN_OUT)
 		pulse.tween_property(glow, "scale", Vector2(1.0, 1.0), 0.7).set_ease(Tween.EASE_IN_OUT)
 

@@ -1630,32 +1630,6 @@ func _rebuild_animation() -> void:
 	anim.track_insert_key(overlay_track, hold_t, 1.0)
 	anim.track_insert_key(overlay_track, length, 0.0)
 
-	var streak_back_alpha := anim.add_track(Animation.TYPE_VALUE)
-	anim.track_set_path(streak_back_alpha, NodePath("StreakBack:modulate:a"))
-	anim.track_insert_key(streak_back_alpha, 0.0, 0.0)
-	anim.track_insert_key(streak_back_alpha, in_t * 0.6, 0.7)
-	anim.track_insert_key(streak_back_alpha, hold_t, 0.45)
-	anim.track_insert_key(streak_back_alpha, length, 0.0)
-
-	var streak_back_pos := anim.add_track(Animation.TYPE_VALUE)
-	anim.track_set_path(streak_back_pos, NodePath("StreakBack:position:x"))
-	anim.track_insert_key(streak_back_pos, 0.0, -320.0)
-	anim.track_insert_key(streak_back_pos, hold_t, 120.0)
-	anim.track_insert_key(streak_back_pos, length, 220.0)
-
-	var streak_front_alpha := anim.add_track(Animation.TYPE_VALUE)
-	anim.track_set_path(streak_front_alpha, NodePath("StreakFront:modulate:a"))
-	anim.track_insert_key(streak_front_alpha, 0.0, 0.0)
-	anim.track_insert_key(streak_front_alpha, in_t, 0.55)
-	anim.track_insert_key(streak_front_alpha, hold_t, 0.25)
-	anim.track_insert_key(streak_front_alpha, length, 0.0)
-
-	var streak_front_pos := anim.add_track(Animation.TYPE_VALUE)
-	anim.track_set_path(streak_front_pos, NodePath("StreakFront:position:x"))
-	anim.track_insert_key(streak_front_pos, 0.0, 420.0)
-	anim.track_insert_key(streak_front_pos, hold_t, -40.0)
-	anim.track_insert_key(streak_front_pos, length, -220.0)
-
 	var flash_track := anim.add_track(Animation.TYPE_VALUE)
 	anim.track_set_path(flash_track, NodePath("FlashBeat:modulate:a"))
 	anim.track_insert_key(flash_track, 0.0, 0.0)
@@ -1722,22 +1696,6 @@ func _rebuild_animation() -> void:
 	library.add_animation("intro", anim)
 
 func _ensure_cinematic_nodes() -> void:
-	if not has_node("StreakBack"):
-		streak_back = ColorRect.new()
-		streak_back.name = "StreakBack"
-		streak_back.color = Color(0.2, 0.85, 1.0, 0.55)
-		streak_back.size = Vector2(720, 32)
-		streak_back.position = Vector2(-260, 160)
-		add_child(streak_back)
-
-	if not has_node("StreakFront"):
-		streak_front = ColorRect.new()
-		streak_front.name = "StreakFront"
-		streak_front.color = Color(1.0, 0.95, 0.35, 0.4)
-		streak_front.size = Vector2(560, 20)
-		streak_front.position = Vector2(320, 520)
-		add_child(streak_front)
-
 	if not has_node("FlashBeat"):
 		flash_beat = ColorRect.new()
 		flash_beat.name = "FlashBeat"
@@ -1757,15 +1715,9 @@ func _ensure_cinematic_nodes() -> void:
 		vbox.add_child(icon_label)
 		vbox.move_child(icon_label, 0)
 
-	streak_back = get_node("StreakBack") as ColorRect
-	streak_front = get_node("StreakFront") as ColorRect
 	flash_beat = get_node("FlashBeat") as ColorRect
 	icon_label = get_node("Panel/Center/VBox/Icon") as Label
 
-	if streak_back:
-		move_child(streak_back, 1)
-	if streak_front:
-		move_child(streak_front, 2)
 	if flash_beat:
 		move_child(flash_beat, get_child_count() - 1)
 

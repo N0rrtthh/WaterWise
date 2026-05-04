@@ -1,4 +1,4 @@
-extends MiniGameBase
+extends "res://scripts/MiniGameBase.gd"
 
 ## ═══════════════════════════════════════════════════════════════════
 ## WATER MEMORY - Match pairs of water conservation icons

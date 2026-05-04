@@ -1315,6 +1315,10 @@ func _load_translations() -> void:
 			"en": "SWIPE to dodge obstacles!\nGuide Droppy to the reservoir! 💧",
 			"tl": "SWIPE para umiwas sa mga hadlang!\nGabayan si Droppy papunta sa reservoir! 💧"
 		},
+		"all_unlocks_owned": {
+			"en": "🏆 All items unlocked!",
+			"tl": "🏆 Naka-unlock na lahat ng items!"
+		},
 
 		# Narrative overrides (optional)
 		"narrative_trace_pipe_path_lose_character": {

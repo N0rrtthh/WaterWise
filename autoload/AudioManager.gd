@@ -29,6 +29,14 @@ var current_music: String = ""
 var music_volume: float = 0.8
 var sfx_volume: float = 1.0
 
+# ── Audio stream caches ──────────────────────────────────────────────
+# Generated streams are expensive to produce (loop over 88k samples on
+# the main thread). Cache every stream on first use so subsequent calls
+# return instantly. _music_cache keyed by music_id; _sfx_cache keyed by
+# "wave_freq_duration" string.
+var _music_cache: Dictionary = {}
+var _sfx_cache: Dictionary = {}
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # SFX DEFINITIONS (procedural tones since no audio files)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -89,6 +97,19 @@ var sfx_definitions: Dictionary = {
 func _ready() -> void:
 	_setup_audio_players()
 	_load_volume_settings()
+	# Pre-generate all music tracks one-per-frame in the background so the
+	# first play_music() call hits the cache instead of blocking the thread.
+	_prewarm_music_cache.call_deferred()
+
+func _prewarm_music_cache() -> void:
+	var tracks := [
+		"gameplay", "instruction", "menu", "scoring",
+		"outcome_win", "outcome_fail", "results"
+	]
+	for music_id in tracks:
+		if not _music_cache.has(music_id):
+			_music_cache[music_id] = _do_generate_ambient_music(music_id)
+		await get_tree().process_frame
 
 func _setup_audio_players() -> void:
 	# Music player
@@ -156,9 +177,20 @@ func stop_music(fade_duration: float = 1.0) -> void:
 	current_music = ""
 
 func _generate_ambient_music(music_id: String) -> AudioStreamWAV:
+	## Cache-checking wrapper — returns a cached stream immediately on all
+	## subsequent calls. First call for a given id generates and caches.
+	if _music_cache.has(music_id):
+		return _music_cache[music_id]
+	var stream := _do_generate_ambient_music(music_id)
+	_music_cache[music_id] = stream
+	return stream
+
+func _do_generate_ambient_music(music_id: String) -> AudioStreamWAV:
 	# Generate procedural music that varies by scene type.
-	var sample_rate := 44100.0
-	var duration := 10.0  # 10 second loop
+	# 22050 Hz (half of CD) is fine for simple synth tones (all below 2kHz).
+	# 4s loop: quarter of the original 441k-sample loop → ~88k samples.
+	var sample_rate := 22050.0
+	var duration := 4.0
 	var num_samples := int(sample_rate * duration)
 	
 	var audio = AudioStreamWAV.new()
@@ -450,10 +482,20 @@ func _get_available_sfx_player() -> AudioStreamPlayer:
 	return sfx_players[0]
 
 func _generate_sfx(frequency: float, duration: float, wave_type: String) -> AudioStreamWAV:
+	## Cache-checking wrapper. SFX are always the same for a given (wave, freq,
+	## duration) triple, so cache them. This eliminates repeated per-tap loops.
+	var cache_key := "%s_%.0f_%.3f" % [wave_type, frequency, duration]
+	if _sfx_cache.has(cache_key):
+		return _sfx_cache[cache_key]
+	var stream := _do_generate_sfx(frequency, duration, wave_type)
+	_sfx_cache[cache_key] = stream
+	return stream
+
+func _do_generate_sfx(frequency: float, duration: float, wave_type: String) -> AudioStreamWAV:
 	# Generate a procedural sound effect.
-	var sample_rate := 44100.0
+	var sample_rate := 22050.0
 	var num_samples := int(sample_rate * duration)
-	
+
 	var audio = AudioStreamWAV.new()
 	audio.format = AudioStreamWAV.FORMAT_16_BITS
 	audio.mix_rate = int(sample_rate)

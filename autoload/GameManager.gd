@@ -167,6 +167,9 @@ var _pending_multiplayer_notice: String = ""
 var _story_shown_at: Array[int] = []
 var _story_transition_active: bool = false
 const STORY_THRESHOLDS: Array = [0, 3, 6, 9, 12, 15]
+## Pre-cached StoryScreen resource. Threaded-loaded at startup so the first
+## story trigger at game-5 never blocks the main thread with a synchronous load.
+var _story_screen_cache: PackedScene = null
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # INITIALIZATION
@@ -176,14 +179,33 @@ func _ready() -> void:
 	_load_saved_data()
 	_refresh_available_minigames()
 	_setup_transition_overlay()
-	
+	# Pre-warm the StoryScreen packed scene in the background so the first
+	# story trigger (after game 5) doesn't block the main thread.
+	_prewarm_story_resource.call_deferred()
+
 	# Connect signals from other autoloads
 	if has_node("/root/AdaptiveDifficulty"):
 		AdaptiveDifficulty.difficulty_changed.connect(_on_difficulty_changed)
-	
+
 	print("🎮 GameManager initialized")
 	print("   G-Counter ready for multiplayer scoring")
 	print("   Rolling Window ready for difficulty adaptation")
+
+func _prewarm_story_resource() -> void:
+	## Load StoryScreen.tscn once using the threaded loader so subsequent calls
+	## to _show_story_then_continue() return instantly from _story_screen_cache.
+	var path := "res://scenes/ui/StoryScreen.tscn"
+	if not ResourceLoader.exists(path):
+		return
+	ResourceLoader.load_threaded_request(path)
+	# Poll in the background one frame at a time — no main-thread stall.
+	while ResourceLoader.load_threaded_get_status(path) \
+			== ResourceLoader.THREAD_LOAD_IN_PROGRESS:
+		await get_tree().process_frame
+	if ResourceLoader.load_threaded_get_status(path) \
+			== ResourceLoader.THREAD_LOAD_LOADED:
+		_story_screen_cache = ResourceLoader.load_threaded_get(path) as PackedScene
+		print("📖 StoryScreen pre-cached")
 
 # ── Scene Transition Overlay ─────────────────────────────────────
 var _transition_layer: CanvasLayer
@@ -192,6 +214,10 @@ var _is_transitioning: bool = false
 
 const LIGHT_TRANSITION_TINT := Color(0.16, 0.31, 0.46, 0.0)
 const DARK_TRANSITION_TINT := Color(0.08, 0.14, 0.24, 0.0)
+
+## Public accessor so other nodes can wait for a transition to finish.
+func is_scene_transitioning() -> bool:
+	return _is_transitioning
 
 func _setup_transition_overlay() -> void:
 	_transition_layer = CanvasLayer.new()
@@ -232,8 +258,8 @@ func transition_to_scene(scene_path: String, duration: float = 0.4) -> void:
 	
 	if is_multiplayer_scene and not is_multiplayer_shell_scene \
 			and current_game_mode == GameMode.SINGLE_PLAYER:
-		print("🚫 BLOCKED: Attempted to load multiplayer scene '%s' while in SINGLE_PLAYER mode!" % scene_path)
-		print("🔄 Redirecting to InitialScreen instead...")
+		print("🚫 BLOCKED: MP scene '%s' blocked (single-player mode)." % scene_path)
+		print("\U0001f504 Redirecting to InitialScreen instead...")
 		scene_path = "res://scenes/ui/InitialScreen.tscn"
 	
 	if not _transition_rect or not is_instance_valid(_transition_rect):
@@ -289,7 +315,13 @@ func transition_to_scene(scene_path: String, duration: float = 0.4) -> void:
 	# Wait a frame for the new scene to load
 	await get_tree().process_frame
 	await get_tree().process_frame
-	
+
+	# Record the scene visit so SessionLogger can track navigation paths.
+	var session_logger = get_node_or_null("/root/SessionLogger")
+	if session_logger and session_logger.has_method("record_scene_visit"):
+		var short := scene_path.get_file().get_basename()
+		session_logger.record_scene_visit(short)
+
 	# Fade from themed tint.
 	var fade_in = create_tween().set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 	fade_in.tween_property(_transition_rect, "color:a", 0.0, reveal_duration)
@@ -1297,9 +1329,8 @@ func start_next_minigame() -> void:
 		print("📖 Story screen should show - loading story...")
 		_show_story_then_continue()
 		return
-	else:
-		print("✅ No story screen - launching next game...")
 
+	print("✅ No story screen - launching next game...")
 	_launch_next_minigame_internal()
 
 func _should_show_story() -> bool:
@@ -1322,17 +1353,19 @@ func _show_story_then_continue() -> void:
 	_story_transition_active = true
 	_story_shown_at.append(minigames_played_this_session)
 	var story_path := "res://scenes/ui/StoryScreen.tscn"
-	
-	# ═══════════════════════════════════════════════════════════════════
-	# MOBILE FIX: Better error handling for story screen loading
-	# ═══════════════════════════════════════════════════════════════════
+
 	if not ResourceLoader.exists(story_path):
 		print("⚠️ Story screen not found at: %s" % story_path)
 		_story_transition_active = false
 		_launch_next_minigame_internal()
 		return
-	
-	var story_scene_resource = load(story_path)
+
+	# Use pre-cached resource when available; fall back to synchronous load.
+	var story_scene_resource: PackedScene = (
+		_story_screen_cache
+		if _story_screen_cache != null
+		else load(story_path) as PackedScene
+	)
 	if not story_scene_resource:
 		print("⚠️ Story screen failed to load, skipping...")
 		_story_transition_active = false
@@ -1424,7 +1457,10 @@ func _start_intro_cutscene_for_game(game_name: String) -> void:
 	pending_next_minigame_name = game_name
 	var bridge_path := "res://scenes/ui/cutscenes/MiniGameIntroBridge.tscn"
 	if ResourceLoader.exists(bridge_path):
-		get_tree().change_scene_to_file(bridge_path)
+		# Use the fade-overlay transition instead of raw change_scene_to_file.
+		# This hides the instantiation freeze (Snapdragon 425 takes 0.5-2s)
+		# behind a smooth black wipe so the user doesn't see a frozen screen.
+		transition_to_scene(bridge_path, 0.25)
 		return
 
 	# Fallback for safety: if bridge scene is missing, go straight to minigame.
@@ -1560,9 +1596,9 @@ func complete_minigame(
 			# For per-game, we subtract what was recorded before this game:
 			var _previously_logged_droplets: int = 0
 			if _session_logger.has_method("get_sp_records"):
-				var _prev_records: Array = _session_logger.get_sp_records()
-				for _rec in _prev_records:
-					_previously_logged_droplets += int(_rec.get("droplets_earned", 0))
+				var prev_records: Array = _session_logger.get_sp_records()
+				for rec in prev_records:
+					_previously_logged_droplets += int(rec.get("droplets_earned", 0))
 			_droplets_earned = max(0, session_droplets_earned - _previously_logged_droplets)
 			_session_logger.record_sp_game(
 				game_name,
@@ -1628,7 +1664,8 @@ func return_to_main_menu() -> void:
 	get_tree().paused = false
 	
 	var save_mgr = get_node_or_null("/root/SaveManager")
-	if save_mgr and save_mgr.has_method("record_sp_session_score") and current_game_mode == GameMode.SINGLE_PLAYER:
+	if save_mgr and save_mgr.has_method("record_sp_session_score") \
+			and current_game_mode == GameMode.SINGLE_PLAYER:
 		save_mgr.record_sp_session_score(session_score)
 		
 	# Reset game mode to prevent multiplayer redirect bug
@@ -1642,6 +1679,9 @@ func return_to_main_menu() -> void:
 		_save_data()
 	
 	get_tree().change_scene_to_file("res://scenes/ui/InitialScreen.tscn")
+	var _sl = get_node_or_null("/root/SessionLogger")
+	if _sl and _sl.has_method("record_scene_visit"):
+		_sl.record_scene_visit("InitialScreen")
 
 func return_to_multiplayer_lobby() -> void:
 	get_tree().paused = false
