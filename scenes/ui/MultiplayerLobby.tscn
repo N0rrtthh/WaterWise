@@ -1,4 +1,4 @@
-[gd_scene load_steps=5 format=3 uid="uid://8f1hd8wnuo4i"]
+[gd_scene load_steps=6 format=3 uid="uid://8f1hd8wnuo4i"]
 
 [ext_resource type="Script" uid="uid://bhmgig65y33uu" path="res://scenes/ui/MultiplayerLobby.gd" id="1_lobby"]
 [ext_resource type="Shader" uid="uid://boqv2sk3gmhpx" path="res://shaders/wave_menu.gdshader" id="3_wave"]
@@ -200,6 +200,21 @@ corner_radius_top_left = 12
 corner_radius_top_right = 12
 corner_radius_bottom_right = 12
 corner_radius_bottom_left = 12
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_autoplay"]
+bg_color = Color(0.45, 0.25, 0.75, 1)
+border_width_left = 3
+border_width_top = 3
+border_width_right = 3
+border_width_bottom = 3
+border_color = Color(0.3, 0.15, 0.55, 1)
+corner_radius_top_left = 15
+corner_radius_top_right = 15
+corner_radius_bottom_right = 15
+corner_radius_bottom_left = 15
+shadow_color = Color(0, 0, 0, 0.25)
+shadow_size = 4
+shadow_offset = Vector2(0, 4)
 
 [node name="MultiplayerLobby" type="Control"]
 layout_mode = 3
@@ -455,6 +470,21 @@ theme_override_fonts/font = ExtResource("6_brick")
 theme_override_font_sizes/font_size = 32
 theme_override_styles/normal = SubResource("StyleBoxFlat_ready")
 text = "✋ I'M READY!"
+
+[node name="AutoPlayButton" type="Button" parent="MarginContainer/VBoxContainer/WaitingPanel/VBoxContainer"]
+custom_minimum_size = Vector2(320, 65)
+layout_mode = 2
+size_flags_horizontal = 4
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_colors/font_outline_color = Color(0.2, 0.1, 0.35, 1)
+theme_override_constants/outline_size = 3
+theme_override_fonts/font = ExtResource("6_brick")
+theme_override_font_sizes/font_size = 26
+theme_override_styles/normal = SubResource("StyleBoxFlat_autoplay")
+theme_override_styles/hover = SubResource("StyleBoxFlat_autoplay")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_autoplay")
+toggle_mode = true
+text = "🤖 AUTO PLAY"
 
 [node name="StartGameButton" type="Button" parent="MarginContainer/VBoxContainer/WaitingPanel/VBoxContainer"]
 visible = false

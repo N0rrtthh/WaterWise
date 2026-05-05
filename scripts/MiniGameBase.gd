@@ -82,13 +82,7 @@ func _loc(key: String, fallback: String) -> String:
 	return fallback
 
 func _ready() -> void:
-	# ═══════════════════════════════════════════════════════════════════
-	# CRITICAL: Load and apply difficulty settings BEFORE any await!
-	# The await yields control back to the child class, which may build
-	# UI using target values (e.g., target_plants, target_score).
-	# If difficulty is applied AFTER the await, the child class sees
-	# stale defaults (e.g., quota=8 instead of Easy's quota=4).
-	# ═══════════════════════════════════════════════════════════════════
+	await get_tree().process_frame
 	
 	# Load session lives from GameManager
 	if GameManager:
@@ -96,20 +90,18 @@ func _ready() -> void:
 	
 	_load_difficulty_settings()
 	_apply_difficulty_settings()
-	
-	await get_tree().process_frame
-	
 	_setup_ui()
 	_apply_minigame_theme_visuals()
+	call_deferred("_refresh_minigame_theme_visuals")
 	_setup_animated_cutscene_player()  # Initialize animated cutscene system
 	_create_instruction_overlay()
 	
-	# Show instruction overlay, wait for tap to start
-	instruction_overlay.visible = true
-	
-	# Register with AutoPlayManager if enabled
+	# Register with AutoPlayManager so it can drive SP gameplay
 	if AutoPlayManager and AutoPlayManager.is_auto_play_enabled():
 		AutoPlayManager.register_game(self, game_name)
+
+	# Show instruction overlay, wait for tap to start
+	instruction_overlay.visible = true
 	if AudioManager:
 		AudioManager.play_music("instruction", 0.25)
 	await _wait_for_input()
@@ -405,11 +397,11 @@ func end_game(success: bool = true) -> void:
 	timer_running = false
 	_hide_instruction_overlay()
 	get_tree().paused = false
-	
-	# Unregister from AutoPlayManager
+
+	# Unregister from AutoPlay so nav logic takes over for the outro
 	if AutoPlayManager and AutoPlayManager.is_auto_play_enabled():
 		AutoPlayManager.unregister_game()
-	
+
 	# Stop the game timer so it can't double-trigger
 	if _game_timer and is_instance_valid(_game_timer):
 		_game_timer.stop()
@@ -633,7 +625,7 @@ func _create_mud_splatter() -> void:
 func _spawn_buzzing_fly() -> void:
 	# Create an annoying fly emoji that moves around
 	var fly = Label.new()
-	fly.text = "🪰"
+	fly.text = "🐛"
 	fly.add_theme_font_size_override("font_size", 40)
 	fly.z_index = 10
 	fly.position = Vector2(
@@ -979,7 +971,7 @@ func _create_instruction_overlay():
 	vbox.add_child(name_label)
 
 	# Gentle pulse (no scale bounce — avoids overflow)
-	var bounce = name_label.create_tween().set_loops()
+	var bounce = create_tween().set_loops()
 	_instruction_overlay_tweens.append(bounce)
 	bounce.tween_property(
 		name_label, "modulate",
@@ -1026,15 +1018,15 @@ func _create_instruction_overlay():
 	vbox.add_child(tap_label)
 	
 	# Blinking animation
-	var tween = tap_label.create_tween().set_loops()
+	var tween = create_tween().set_loops()
 	_instruction_overlay_tweens.append(tween)
 	tween.tween_property(tap_label, "modulate:a", 0.3, 0.5)
 	tween.tween_property(tap_label, "modulate:a", 1.0, 0.5)
 
 func _wait_for_input() -> void:
-	# Auto-play mode: skip instruction wait immediately
+	# AutoPlay bypass — skip the "tap to start" wait automatically
 	if AutoPlayManager and AutoPlayManager.is_auto_play_enabled():
-		await get_tree().process_frame
+		await get_tree().create_timer(0.8).timeout
 		return
 
 	var mouse_was_down := Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
@@ -1151,9 +1143,8 @@ func _create_pause_menu():
 	vbox.add_child(drop_icon)
 
 	# Gentle pulse on the drop icon
-	var pulse = drop_icon.create_tween().set_loops()
-	pulse.tween_property(drop_icon, "modulate", Color(0.8, 0.9, 1.2), 0.8)\
-		.set_trans(Tween.TRANS_SINE)
+	var pulse = create_tween().set_loops()
+	pulse.tween_property(drop_icon, "modulate", Color(0.8, 0.9, 1.2), 0.8).set_trans(Tween.TRANS_SINE)
 	pulse.tween_property(drop_icon, "modulate", Color.WHITE, 0.8).set_trans(Tween.TRANS_SINE)
 
 	# ── Title ────────────────────────────────────────────────────────
@@ -1286,10 +1277,9 @@ func _on_exit_pressed():
 
 	if GameManager:
 		GameManager.mark_welcome_shown()
-		if GameManager.has_method("return_to_main_menu"):
-			GameManager.return_to_main_menu()
-			return
-	get_tree().change_scene_to_file("res://scenes/ui/InitialScreen.tscn")
+		GameManager.return_to_main_menu()
+	else:
+		get_tree().change_scene_to_file("res://scenes/ui/InitialScreen.tscn")
 
 ## DWTD-style quit tally — shows your session score before leaving
 func _show_quit_tally_screen() -> void:
@@ -1912,8 +1902,7 @@ func _show_round_score_page(success: bool, accuracy: float, _reaction_time: int)
 	if count_steps > 0:
 		score_display.text = str(prev_total)
 		for step in range(count_steps + 1):
-			var pct := float(step) / float(count_steps)
-			var val := int(lerp(float(prev_total), float(session_total), pct))
+			var val = int(lerp(float(prev_total), float(session_total), float(step) / float(count_steps)))
 			score_display.text = str(val)
 			if AudioManager and step % 3 == 0:
 				AudioManager.play_score_tick()
@@ -2618,7 +2607,7 @@ func _get_success_cutscene_presets() -> Dictionary:
 			"bg": Color(0.03, 0.11, 0.12, 0.72)
 		},
 		"BucketBrigade": {
-			"icon": "🪣",
+			"icon": "💧",
 			"line": "Relay run delivered!",
 			"anim": "drop",
 			"bg": Color(0.03, 0.1, 0.12, 0.72)
@@ -2841,7 +2830,7 @@ func _get_failure_cutscene_presets() -> Dictionary:
 			"bg": Color(0.05, 0.07, 0.09, 0.8)
 		},
 		"BucketBrigade": {
-			"icon": "🪣",
+			"icon": "💧",
 			"line": "Bucket relay broke down!",
 			"anim": "drop",
 			"bg": Color(0.04, 0.06, 0.09, 0.82)
@@ -2901,9 +2890,6 @@ func _show_game_over() -> void:
 	# Return to initial screen
 	if GameManager:
 		GameManager.mark_welcome_shown()
-		if GameManager.has_method("return_to_main_menu"):
-			GameManager.return_to_main_menu()
-			return
 	get_tree().change_scene_to_file("res://scenes/ui/InitialScreen.tscn")
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -2968,10 +2954,3 @@ func _shake_camera(intensity: float) -> void:
 				randf_range(-intensity * 10, intensity * 10)
 			), 0.05)
 		tween.tween_property(camera, "offset", original_offset, 0.05)
-
-## Utility: Make a Control node fill the full viewport even under a Node2D parent.
-## Use this instead of set_anchors_preset(Control.PRESET_FULL_RECT) when the parent
-## is a Node2D, because anchors require a Control parent to work.
-func make_fullscreen_rect(rect: Control) -> void:
-	rect.position = Vector2.ZERO
-	rect.size = get_viewport_rect().size

@@ -25,6 +25,7 @@ const SCREEN_SENSOR_LANDSCAPE_VALUE: int = 6 # SCREEN_SENSOR_LANDSCAPE
 signal mobile_mode_changed(is_mobile: bool)
 signal orientation_changed(is_portrait: bool)
 signal safe_area_changed(margins: Dictionary)
+signal keyboard_visibility_changed(keyboard_height: int)
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # CONFIGURATION EXPORTS
@@ -81,6 +82,10 @@ var _orientation_change_timer: float = 0.0
 var _pending_orientation_change: bool = false
 var _new_orientation: bool = false
 
+# Keyboard avoidance
+var keyboard_height: int = 0  ## Current on-screen keyboard height (pixels, 0 when hidden)
+var _natural_viewport_height: int = 0  ## Full viewport height with no keyboard
+
 # Frame rate monitoring
 var _fps_samples: Array[float] = []
 var _fps_sample_interval: float = 1.0  # Sample FPS every second
@@ -108,8 +113,15 @@ func _ready() -> void:
 	_load_config_if_exists()
 	_apply_mobile_performance_profile()
 	
+	# Capture baseline height before any keyboard appears
+	var vp := get_viewport()
+	var vp_size := vp.get_visible_rect().size
+	viewport_width = int(vp_size.x)
+	viewport_height = int(vp_size.y)
+	_natural_viewport_height = viewport_height
+
 	# Connect to viewport size changes
-	get_viewport().size_changed.connect(_on_viewport_size_changed)
+	vp.size_changed.connect(_on_viewport_size_changed)
 	
 	# Connect to app focus changes for background CPU reduction
 	get_tree().root.focus_entered.connect(_on_app_focus_gained)
@@ -270,6 +282,9 @@ func _adapt_current_scene() -> void:
 	var scene_root = get_tree().current_scene
 	if scene_root:
 		adapt_scene_for_mobile(scene_root)
+		# Re-apply keyboard inset if keyboard is still visible
+		if keyboard_height > 0:
+			_apply_keyboard_inset(keyboard_height)
 
 
 func _on_current_scene_changed(scene_root: Node) -> void:
@@ -851,33 +866,64 @@ func save_config_file(path: String) -> bool:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func _on_viewport_size_changed() -> void:
-	# Handle viewport size changes (orientation changes)
-	var old_is_mobile = is_mobile
-	var old_is_portrait = is_portrait
-	
+	var old_is_mobile := is_mobile
+	var old_is_portrait := is_portrait
+
+	var vp_size := get_viewport().get_visible_rect().size
+	var new_width := int(vp_size.x)
+	var new_height := int(vp_size.y)
+
+	# ── Keyboard detection ───────────────────────────────────────
+	# On Android the window shrinks vertically when the soft keyboard
+	# appears (width stays the same).  Treat a height-only shrink as
+	# keyboard shown; a height restore as keyboard hidden.
+	var width_unchanged := (new_width == viewport_width or viewport_width == 0)
+	var height_shrank := new_height < viewport_height and viewport_height > 0
+
+	if width_unchanged and height_shrank and new_height < _natural_viewport_height:
+		# Keyboard appeared: compute how tall it is
+		var new_kb_height := _natural_viewport_height - new_height
+		if new_kb_height != keyboard_height:
+			keyboard_height = new_kb_height
+			_apply_keyboard_inset(keyboard_height)
+			keyboard_visibility_changed.emit(keyboard_height)
+			print("⌨️ Keyboard shown, height: %d px" % keyboard_height)
+	elif new_height >= _natural_viewport_height and keyboard_height > 0:
+		# Keyboard dismissed: restore
+		keyboard_height = 0
+		_apply_keyboard_inset(0)
+		keyboard_visibility_changed.emit(0)
+		_natural_viewport_height = new_height  # Refresh baseline (e.g. after rotation)
+		print("⌨️ Keyboard hidden")
+	else:
+		# Genuine orientation / resize — update natural baseline
+		if new_height >= _natural_viewport_height:
+			_natural_viewport_height = new_height
+
+	viewport_width = new_width
+	viewport_height = new_height
+
 	_detect_platform()
 	_enforce_landscape_orientation()
 	_detect_orientation()
 	if _should_force_landscape():
 		is_portrait = false
-	_calculate_safe_area()  # This now emits safe_area_changed signal
+	_calculate_safe_area()
 	_apply_mobile_performance_profile()
-	
-	# Emit signals if state changed
+
 	if old_is_mobile != is_mobile:
 		mobile_mode_changed.emit(is_mobile)
-	
+
 	if old_is_portrait != is_portrait:
 		orientation_changed.emit(is_portrait)
 		_log_debug("Orientation changed to: %s" % ("Portrait" if is_portrait else "Landscape"))
-	
-	# Update debug overlay if active
+
 	if _debug_overlay:
 		_destroy_debug_overlay()
 		_create_debug_overlay()
 
 	call_deferred("_adapt_current_scene")
-	
+
 	print(
 		"📱 Viewport size changed: %dx%d (%s)"
 		% [
@@ -886,6 +932,31 @@ func _on_viewport_size_changed() -> void:
 			"Portrait" if is_portrait else "Landscape",
 		]
 	)
+
+## Apply a bottom inset to the current scene's root Control so the
+## content is pushed above the keyboard.  A height of 0 removes it.
+func _apply_keyboard_inset(height: int) -> void:
+	var scene := get_tree().current_scene
+	if not scene:
+		return
+	# Find the outermost Control or CanvasLayer>Control in the scene
+	var root_ctrl: Control = _find_root_control(scene)
+	if not root_ctrl:
+		return
+	if root_ctrl is MarginContainer:
+		root_ctrl.add_theme_constant_override("margin_bottom", height)
+	else:
+		# For full-rect anchored controls, shrink the bottom anchor offset
+		root_ctrl.offset_bottom = -height if height > 0 else 0
+
+## Walk down the scene to find the first Control child of the root Node.
+func _find_root_control(scene: Node) -> Control:
+	if scene is Control:
+		return scene as Control
+	for child in scene.get_children():
+		if child is Control:
+			return child as Control
+	return null
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # FRAME RATE MONITORING

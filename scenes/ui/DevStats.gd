@@ -26,9 +26,7 @@ const COL_ACCENT    := Color(0.20, 0.80, 0.60, 1.0)
 var _scroll: ScrollContainer
 var _vbox: VBoxContainer
 var _export_btn: Button
-var _export_txt_btn: Button
 var _export_status_lbl: Label
-var _dir_input: LineEdit
 var _refresh_timer: Timer
 
 # Section labels that need live refresh
@@ -42,6 +40,9 @@ var _mp_table_vbox: VBoxContainer
 var _diff_change_vbox: VBoxContainer
 var _throttle_vbox: VBoxContainer
 var _iso_vbox: VBoxContainer
+var _temp_curve_vbox: VBoxContainer
+var _mem_trend_vbox: VBoxContainer
+var _dl_compare_vbox: VBoxContainer
 
 func _ready() -> void:
 	_build_ui()
@@ -119,10 +120,10 @@ func _build_ui() -> void:
 	margin_wrap.add_child(_vbox)
 	_scroll.add_child(margin_wrap)
 
-	# Export bar at bottom (two rows: dir picker + export buttons)
+	# Export bar at bottom
 	var export_bar := PanelContainer.new()
 	export_bar.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
-	export_bar.offset_top = -138.0
+	export_bar.offset_top = -80.0
 	var ebar_style := StyleBoxFlat.new()
 	ebar_style.bg_color = Color(0.08, 0.12, 0.22, 1.0)
 	ebar_style.border_color = COL_ACCENT
@@ -134,85 +135,31 @@ func _build_ui() -> void:
 	export_bar.add_theme_stylebox_override("panel", ebar_style)
 	add_child(export_bar)
 
-	var ebar_vbox := VBoxContainer.new()
-	ebar_vbox.add_theme_constant_override("separation", 8)
-	export_bar.add_child(ebar_vbox)
-
-	# ── Row 1: export directory picker ──────────────────────────────
-	var dir_row := HBoxContainer.new()
-	dir_row.add_theme_constant_override("separation", 10)
-	ebar_vbox.add_child(dir_row)
-
-	var dir_lbl := Label.new()
-	dir_lbl.text = "📁 Save to:"
-	dir_lbl.add_theme_font_size_override("font_size", 14)
-	dir_lbl.add_theme_color_override("font_color", COL_MUTED)
-	dir_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	dir_row.add_child(dir_lbl)
-
-	_dir_input = LineEdit.new()
-	var sl_node: Node = get_node_or_null("/root/SessionLogger")
-	_dir_input.text = sl_node.export_dir if sl_node else "user://session_logs/"
-	_dir_input.placeholder_text = "e.g. user://session_logs/ or /sdcard/Documents/"
-	_dir_input.custom_minimum_size = Vector2(420, 36)
-	_dir_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_dir_input.add_theme_font_size_override("font_size", 13)
-	dir_row.add_child(_dir_input)
-
-	var change_dir_btn := Button.new()
-	change_dir_btn.text = "✔ Apply"
-	change_dir_btn.custom_minimum_size = Vector2(100, 36)
-	change_dir_btn.add_theme_font_size_override("font_size", 14)
-	change_dir_btn.pressed.connect(_on_change_dir_pressed)
-	dir_row.add_child(change_dir_btn)
-
-	var reset_dir_btn := Button.new()
-	reset_dir_btn.text = "↺ Reset"
-	reset_dir_btn.custom_minimum_size = Vector2(90, 36)
-	reset_dir_btn.add_theme_font_size_override("font_size", 14)
-	reset_dir_btn.pressed.connect(func():
-		var _sl: Node = get_node_or_null("/root/SessionLogger")
-		if _sl and _sl.has_method("set_export_dir"):
-			_sl.set_export_dir("")
-			_dir_input.text = _sl.export_dir
-			_export_status_lbl.text = "↺ Reset to default: %s" % _sl.export_dir
-			_export_status_lbl.add_theme_color_override("font_color", COL_MUTED)
-	)
-	dir_row.add_child(reset_dir_btn)
-
-	# ── Row 2: export buttons + status ───────────────────────────────
-	var btn_row := HBoxContainer.new()
-	btn_row.add_theme_constant_override("separation", 12)
-	ebar_vbox.add_child(btn_row)
+	var ebar_hbox := HBoxContainer.new()
+	ebar_hbox.add_theme_constant_override("separation", 16)
+	export_bar.add_child(ebar_hbox)
 
 	_export_btn = Button.new()
-	_export_btn.text = "💾 Export JSON"
-	_export_btn.custom_minimum_size = Vector2(190, 46)
-	_export_btn.add_theme_font_size_override("font_size", 17)
+	_export_btn.text = "💾 EXPORT SESSION LOG (JSON)"
+	_export_btn.custom_minimum_size = Vector2(280, 50)
+	_export_btn.add_theme_font_size_override("font_size", 18)
 	_export_btn.pressed.connect(_on_export_pressed)
-	btn_row.add_child(_export_btn)
-
-	_export_txt_btn = Button.new()
-	_export_txt_btn.text = "📄 Export TXT"
-	_export_txt_btn.custom_minimum_size = Vector2(190, 46)
-	_export_txt_btn.add_theme_font_size_override("font_size", 17)
-	_export_txt_btn.pressed.connect(_on_export_txt_pressed)
-	btn_row.add_child(_export_txt_btn)
+	ebar_hbox.add_child(_export_btn)
 
 	_export_status_lbl = Label.new()
-	_export_status_lbl.text = "No export yet. Choose a format above."
+	_export_status_lbl.text = "No export yet. Press EXPORT to save."
 	_export_status_lbl.add_theme_font_size_override("font_size", 14)
 	_export_status_lbl.add_theme_color_override("font_color", COL_MUTED)
 	_export_status_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_export_status_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD
-	btn_row.add_child(_export_status_lbl)
+	ebar_hbox.add_child(_export_status_lbl)
 
+	# Refresh hint
 	var refresh_hint := Label.new()
 	refresh_hint.text = "Auto-refreshes every 1s"
 	refresh_hint.add_theme_font_size_override("font_size", 12)
 	refresh_hint.add_theme_color_override("font_color", COL_MUTED)
-	refresh_hint.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	btn_row.add_child(refresh_hint)
+	ebar_hbox.add_child(refresh_hint)
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # POPULATE ALL SECTIONS
@@ -255,6 +202,18 @@ func _populate_all() -> void:
 
 	_add_section_header("✅  ISO/IEC 25010 COMPLIANCE")
 	_iso_vbox = _add_table_placeholder("iso")
+
+	_add_section_header("🌡  TEMPERATURE HEAT CURVE (1-second samples)")
+	_temp_curve_vbox = _add_table_placeholder("temp_curve")
+
+	_add_section_header("💾  MEMORY TREND & LEAK DETECTION")
+	_mem_trend_vbox = _add_table_placeholder("mem_trend")
+
+	_add_section_header("📊  FPS STABILITY ANALYSIS")
+	_add_fps_stability(sum)
+
+	_add_section_header("🏆  DL BASELINE COMPARISON (Rule-Based vs MobileNet on Cortex-A53)")
+	_dl_compare_vbox = _add_table_placeholder("dl_compare")
 
 	_refresh_tables()
 
@@ -385,6 +344,10 @@ func _add_live_performance(sum: Dictionary) -> void:
 	_gkv(grid, "Algo Latency Budget", "< 16.0 ms  (O(1) target)", COL_MUTED)
 	_gkv(grid, "Battery Drain", "%.3f mAh/min (%s)" % [batt, str(sum.get("battery_source", "?"))],
 		COL_GOOD if batt <= 10.0 else COL_WARN)
+	var fps_std: float = float(sum.get("fps_std_dev", 0.0))
+	_gkv(grid, "FPS Std Dev (stability)",
+		"%.2f fps" % fps_std,
+		COL_GOOD if fps_std <= 2.0 else (COL_WARN if fps_std <= 5.0 else COL_BAD))
 	_gkv(grid, "Efficiency vs Deep Learning", "%.1f%% less than MobileNet baseline" % eff,
 		COL_GOOD if eff > 0.0 else COL_MUTED)
 	_gkv(grid, "Perf Warnings", str(sum.get("perf_warnings_count", 0)))
@@ -412,6 +375,9 @@ func _refresh_tables() -> void:
 	_fill_diff_changes(sl)
 	_fill_throttles(sl)
 	_fill_iso(sl)
+	_fill_temp_curve(sl)
+	_fill_memory_trend(sl)
+	_fill_dl_comparison(sl)
 
 func _fill_sp_table(sl: Node) -> void:
 	if not _sp_table_vbox:
@@ -466,8 +432,8 @@ func _fill_mp_table(sl: Node) -> void:
 	_mp_table_vbox.add_child(_make_separator())
 
 	for r in records:
-		var p1d: Dictionary = r.get("p1", {})
-		var p2d: Dictionary = r.get("p2", {})
+		var p1d: Dictionary = r.get("p1", {}) as Dictionary
+		var p2d: Dictionary = r.get("p2", {}) as Dictionary
 		var line := "%-3d|  %-10d|  %-10d|  %-6s|  %-6.1f|  %-10.4f|  %-9s|  %-9s" % [
 			int(r.get("round_num", 0)),
 			int(p1d.get("score", 0)),
@@ -645,45 +611,17 @@ func _on_refresh_tick() -> void:
 # ACTIONS
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-func _on_change_dir_pressed() -> void:
-	if AudioManager:
-		AudioManager.play_click()
-	var new_dir: String = _dir_input.text.strip_edges()
-	if new_dir.is_empty():
-		_export_status_lbl.text = "⚠️ Path cannot be empty — use ↺ Reset to restore default."
-		_export_status_lbl.add_theme_color_override("font_color", COL_WARN)
-		return
-	var sl: Node = get_node_or_null("/root/SessionLogger")
-	if sl and sl.has_method("set_export_dir"):
-		sl.set_export_dir(new_dir)
-		_dir_input.text = sl.export_dir  # reflect normalised path (trailing /)
-		_export_status_lbl.text = "✅ Export dir set to: %s" % sl.export_dir
-		_export_status_lbl.add_theme_color_override("font_color", COL_GOOD)
-	else:
-		_export_status_lbl.text = "❌ SessionLogger not found"
-		_export_status_lbl.add_theme_color_override("font_color", COL_BAD)
-
 func _on_export_pressed() -> void:
 	if AudioManager:
 		AudioManager.play_click()
 	_export_btn.disabled = true
-	_export_status_lbl.text = "Exporting JSON…"
-	if OS.has_feature("android"):
-		var result = FileExporter.export_session_data_only()
-		if result.success:
-			_export_status_lbl.text = "✅ Exported to Downloads/WaterwiseExports/session_logs"
-			_export_status_lbl.add_theme_color_override("font_color", COL_GOOD)
-		else:
-			_export_status_lbl.text = "❌ Export failed — %s" % str(result.get("error", ""))
-			_export_status_lbl.add_theme_color_override("font_color", COL_BAD)
-		_export_btn.disabled = false
-		return
+	_export_status_lbl.text = "Exporting…"
 
 	var sl: Node = get_node_or_null("/root/SessionLogger")
 	if sl:
 		var path: String = sl.export_session()
 		if path.length() > 0:
-			_export_status_lbl.text = "✅ JSON saved: %s" % path
+			_export_status_lbl.text = "✅ Saved: %s" % path
 			_export_status_lbl.add_theme_color_override("font_color", COL_GOOD)
 		else:
 			_export_status_lbl.text = "❌ Export failed — check console"
@@ -693,37 +631,6 @@ func _on_export_pressed() -> void:
 		_export_status_lbl.add_theme_color_override("font_color", COL_BAD)
 
 	_export_btn.disabled = false
-
-func _on_export_txt_pressed() -> void:
-	if AudioManager:
-		AudioManager.play_click()
-	_export_txt_btn.disabled = true
-	_export_status_lbl.text = "Exporting TXT…"
-	if OS.has_feature("android"):
-		var result = FileExporter.export_session_data_only()
-		if result.success:
-			_export_status_lbl.text = "✅ Exported to Downloads/WaterwiseExports/session_logs"
-			_export_status_lbl.add_theme_color_override("font_color", COL_GOOD)
-		else:
-			_export_status_lbl.text = "❌ Export failed — %s" % str(result.get("error", ""))
-			_export_status_lbl.add_theme_color_override("font_color", COL_BAD)
-		_export_txt_btn.disabled = false
-		return
-
-	var sl: Node = get_node_or_null("/root/SessionLogger")
-	if sl and sl.has_method("export_session_txt"):
-		var path: String = sl.export_session_txt()
-		if path.length() > 0:
-			_export_status_lbl.text = "✅ TXT saved: %s" % path
-			_export_status_lbl.add_theme_color_override("font_color", COL_GOOD)
-		else:
-			_export_status_lbl.text = "❌ TXT export failed — check console"
-			_export_status_lbl.add_theme_color_override("font_color", COL_BAD)
-	else:
-		_export_status_lbl.text = "❌ SessionLogger.export_session_txt() not available"
-		_export_status_lbl.add_theme_color_override("font_color", COL_BAD)
-
-	_export_txt_btn.disabled = false
 
 func _on_back_pressed() -> void:
 	if AudioManager:
@@ -757,12 +664,12 @@ func _gkv(grid: GridContainer, key: String, value: String, val_color: Color = CO
 	v.add_theme_color_override("font_color", val_color)
 	grid.add_child(v)
 
-func _make_label(text: String, font_sz: int = 14, col: Color = COL_TEXT) -> Label:
+func _make_label(text: String, size: int = 14, col: Color = COL_TEXT) -> Label:
 	var lbl := Label.new()
 	lbl.text = text
 	if FONT_BODY:
 		lbl.add_theme_font_override("font", FONT_BODY)
-	lbl.add_theme_font_size_override("font_size", font_sz)
+	lbl.add_theme_font_size_override("font_size", size)
 	lbl.add_theme_color_override("font_color", col)
 	return lbl
 
@@ -780,13 +687,184 @@ func _make_separator() -> HSeparator:
 	return sep
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# THESIS DEFENCE DATA SECTIONS
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+func _fps_stability_label(std_dev: float) -> String:
+	if std_dev <= 2.0:
+		return "EXCELLENT"
+	if std_dev <= 5.0:
+		return "ACCEPTABLE"
+	return "UNSTABLE"
+
+func _add_fps_stability(sum: Dictionary) -> void:
+	var std_dev: float = float(sum.get("fps_std_dev", 0.0))
+	var fps_min_v: float = float(sum.get("fps_min", 0.0))
+	var fps_avg_v: float = float(sum.get("fps_avg", 0.0))
+	var fps_max_v: float = float(sum.get("fps_max", 0.0))
+	var col: Color = COL_GOOD if std_dev <= 2.0 else (COL_WARN if std_dev <= 5.0 else COL_BAD)
+	var grid := _make_grid(2)
+	_gkv(grid, "FPS Std Dev", "%.2f fps" % std_dev, col)
+	_gkv(grid, "Stability Rating", _fps_stability_label(std_dev), col)
+	_gkv(grid, "Min / Avg / Max", "%.1f / %.1f / %.1f fps" % [fps_min_v, fps_avg_v, fps_max_v],
+		_fps_color(fps_min_v))
+	_gkv(grid, "ISO Min Target", "30 fps  (mandatory floor)", COL_MUTED)
+	_gkv(grid, "ISO Avg Target", "60 fps  (thesis target)", COL_MUTED)
+	_gkv(grid, "Interpretation",
+		"Lower std dev = smoother gameplay = algorithm not stressing GPU",
+		COL_MUTED)
+	_vbox.add_child(grid)
+
+func _fill_temp_curve(sl: Node) -> void:
+	if not _temp_curve_vbox:
+		return
+	for c in _temp_curve_vbox.get_children():
+		c.queue_free()
+
+	var samples: Array = sl.get_temp_curve() if sl.has_method("get_temp_curve") else []
+	if samples.is_empty():
+		var src := PerformanceProfiler.get_thermal_source() if PerformanceProfiler else "unknown"
+		var msg: String
+		if src == "sensor":
+			msg = "No samples yet — collecting (updates every second)."
+		else:
+			msg = "Sensor unavailable (%s). Data will appear on Android with /sys/class/thermal access." % src
+		_temp_curve_vbox.add_child(_make_label(msg, 14, COL_MUTED))
+		return
+
+	var hdr := _make_row_label("Time(min) |  Temp (°C)  |  Status")
+	hdr.add_theme_color_override("font_color", COL_HEADER)
+	_temp_curve_vbox.add_child(hdr)
+	_temp_curve_vbox.add_child(_make_separator())
+
+	for pt in samples:
+		var t: float = float(pt.get("avg_temp_c", 0.0))
+		var status: String
+		var col: Color
+		if t <= 0.0:
+			status = "N/A"
+			col = COL_MUTED
+		elif t <= 38.0:
+			status = "COOL"
+			col = COL_GOOD
+		elif t <= 44.0:
+			status = "WARM"
+			col = COL_WARN
+		else:
+			status = "HOT (may throttle)"
+			col = COL_BAD
+		var line := "%-9.1f |  %-10.1f |  %s" % [
+			float(pt.get("elapsed_min", 0.0)), t, status
+		]
+		var lbl := _make_row_label(line)
+		lbl.add_theme_color_override("font_color", col)
+		_temp_curve_vbox.add_child(lbl)
+
+	var peak: float = float(PerformanceProfiler.cpu_temp_peak if PerformanceProfiler else 0.0)
+	_temp_curve_vbox.add_child(_make_separator())
+	_temp_curve_vbox.add_child(_make_label(
+		"Peak: %.1f°C  |  Threshold: 45.0°C  |  %s" % [
+			peak, "✅ PASS" if peak <= 45.0 else "❌ FAIL"
+		], 15,
+		COL_GOOD if peak <= 45.0 else COL_BAD
+	))
+
+func _fill_memory_trend(sl: Node) -> void:
+	if not _mem_trend_vbox:
+		return
+	for c in _mem_trend_vbox.get_children():
+		c.queue_free()
+
+	var points: Array = sl.get_memory_trend() if sl.has_method("get_memory_trend") else []
+	if points.is_empty():
+		_mem_trend_vbox.add_child(
+			_make_label("No memory trend data yet — collecting (updates every 5s).", 14, COL_MUTED))
+		return
+
+	var hdr := _make_row_label("Time(min) |  RAM (MB)  |  Delta   |  Status")
+	hdr.add_theme_color_override("font_color", COL_HEADER)
+	_mem_trend_vbox.add_child(hdr)
+	_mem_trend_vbox.add_child(_make_separator())
+
+	var prev_mb := -1.0
+	var leak_flag := false
+	for pt in points:
+		var mb: float = float(pt.get("memory_mb", 0.0))
+		var delta_str := "--"
+		var col: Color = COL_GOOD if mb <= 150.0 else (COL_WARN if mb <= 199.0 else COL_BAD)
+		if prev_mb >= 0.0:
+			var delta := mb - prev_mb
+			delta_str = "%+.1f MB" % delta
+			if delta > 5.0:
+				col = COL_WARN
+				leak_flag = true
+		var line := "%-9.1f |  %-10.1f |  %-8s |  %s" % [
+			float(pt.get("elapsed_min", 0.0)), mb, delta_str,
+			"OK" if mb <= 150.0 else ("WARNING" if mb <= 199.0 else "OVER BUDGET")
+		]
+		var lbl := _make_row_label(line)
+		lbl.add_theme_color_override("font_color", col)
+		_mem_trend_vbox.add_child(lbl)
+		prev_mb = mb
+
+	_mem_trend_vbox.add_child(_make_separator())
+	var peak: float = float(PerformanceProfiler.memory_peak_mb if PerformanceProfiler else 0.0)
+	var leak_str := " | ⚠ Memory growing — possible leak" if leak_flag else " | No leak detected"
+	_mem_trend_vbox.add_child(_make_label(
+		"Peak: %.1f MB / 200.0 MB  |  %s%s" % [
+			peak,
+			"✅ PASS" if peak <= 200.0 else "❌ FAIL",
+			leak_str
+		], 15,
+		COL_GOOD if peak <= 200.0 and not leak_flag else COL_WARN
+	))
+
+func _fill_dl_comparison(sl: Node) -> void:
+	if not _dl_compare_vbox:
+		return
+	for c in _dl_compare_vbox.get_children():
+		c.queue_free()
+
+	var rows: Array = sl.get_dl_comparison() if sl.has_method("get_dl_comparison") else []
+	if rows.is_empty():
+		_dl_compare_vbox.add_child(
+			_make_label("Data not available yet — play at least one game.", 14, COL_MUTED))
+		return
+
+	for i in rows.size():
+		var row: Array = rows[i]
+		if row.size() < 4:
+			continue
+		var line := "%-22s|  %-28s|  %-24s|  %s" % [
+			str(row[0]), str(row[1]), str(row[2]), str(row[3])
+		]
+		var lbl := _make_row_label(line)
+		if i == 0:
+			# Header row
+			lbl.add_theme_color_override("font_color", COL_HEADER)
+			_dl_compare_vbox.add_child(lbl)
+			_dl_compare_vbox.add_child(_make_separator())
+		else:
+			lbl.add_theme_color_override("font_color", COL_GOOD)
+			_dl_compare_vbox.add_child(lbl)
+
+	_dl_compare_vbox.add_child(_make_separator())
+	var note := _make_label(
+		"MobileNet baseline = TFLite MobileNetV1 on Cortex-A53 @ ~1.4GHz (literature values).\n"
+		+ "Battery data requires real Android device with /sys/class/power_supply access.",
+		12, COL_MUTED
+	)
+	note.autowrap_mode = TextServer.AUTOWRAP_WORD
+	_dl_compare_vbox.add_child(note)
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # COLOR HELPERS
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func _fps_color(fps: float) -> Color:
 	if fps >= 60.0:
 		return COL_GOOD
-	if fps >= 30.0:
+	elif fps >= 30.0:
 		return COL_WARN
 	return COL_BAD
 
@@ -800,6 +878,6 @@ func _diff_color(diff: String) -> Color:
 func _phi_color(phi: float) -> Color:
 	if phi < 0.5:
 		return COL_BAD
-	if phi > 0.85:
+	elif phi > 0.85:
 		return COL_GOOD
 	return COL_WARN

@@ -347,6 +347,10 @@ func _navigate_ui(delta: float) -> void:
 	var path: String = scene.scene_file_path
 	print("🤖 AutoNav: current scene = %s" % path)
 
+	# ── Loading screen (auto-proceeds; nothing to click) ─────────
+	if "LoadingScreen" in path:
+		return
+
 	# ── Main Menu ─────────────────────────────────────────────────
 	if "MainMenu" in path:
 		var btn: Button = scene.get_node_or_null("UI/VBoxContainer/PlayButton")
@@ -371,9 +375,17 @@ func _navigate_ui(delta: float) -> void:
 			play_btn.pressed.emit()
 		return
 
-	# ── MiniGame intro bridge (auto-proceeds; nothing for AI to do) ─
-	if "MiniGameIntroBridge" in path:
-		return
+	# ── MiniGame intro bridge & animated cutscenes (auto-advance; no button needed) ─
+	if (
+		"MiniGameIntroBridge" in path
+		or "MiniGameIntroCutscene" in path
+		or "MiniGameOutroCutscene" in path
+		or "MiniGameWinOutroCutscene" in path
+		or "MiniGameLoseOutroCutscene" in path
+		or "CharacterOutcomeNarrative" in path
+		or "SimpleCutscenePlayer" in path
+	):
+		return  # These scenes animate automatically; nothing for AutoPlay to do
 
 	# ── Instructions / Tutorial screens ───────────────────────────
 	if "Instructions" in path or "StoryScreen" in path:
@@ -403,22 +415,13 @@ func _navigate_ui(delta: float) -> void:
 
 	# ── Multiplayer Lobby / Menu ───────────────────────────────────
 	if "MultiplayerLobby" in path or "MultiplayerMenu" in path:
-		# ═══════════════════════════════════════════════════════════════
-		# CRITICAL FIX: If we're in single player mode, exit multiplayer immediately
-		# AutoPlay should never be in multiplayer when single player is active
-		# ═══════════════════════════════════════════════════════════════
-		if GameManager and GameManager.current_game_mode == GameManager.GameMode.SINGLE_PLAYER:
-			print("🤖 AutoNav: ERROR - In multiplayer screen but game mode is SINGLE_PLAYER!")
-			print("🤖 AutoNav: Forcing return to InitialScreen...")
-			var back_btn: Button = _find_button_recursive(scene, ["BackButton", "DisconnectButton"])
-			if back_btn:
-				back_btn.pressed.emit()
-			else:
-				# Force scene change if no back button
-				if GameManager.has_method("return_to_main_menu"):
-					GameManager.return_to_main_menu()
+		# When MP auto-play is active the lobby is human-driven:
+		# players connect manually, then the host presses Start (or
+		# AutoPlay auto-starts once both are ready). Never navigate
+		# away from the lobby or try to re-enter single-player here.
+		if mp_auto_play_enabled:
 			return
-		
+
 		# If a StartGameButton is present and enabled (2 players connected), start the game
 		var start_btn: Button = _find_button_recursive(scene, ["StartGameButton"])
 		if start_btn and not start_btn.disabled:

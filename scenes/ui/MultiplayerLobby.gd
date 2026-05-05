@@ -46,6 +46,9 @@ extends Control
 @onready var ready_checkbox = (
 	$MarginContainer/VBoxContainer/WaitingPanel/VBoxContainer/ReadyCheckbox
 )
+@onready var auto_play_button = (
+	$MarginContainer/VBoxContainer/WaitingPanel/VBoxContainer/AutoPlayButton
+)
 @onready var start_game_button = (
 	$MarginContainer/VBoxContainer/WaitingPanel/VBoxContainer/StartGameButton
 )
@@ -60,8 +63,6 @@ extends Control
 var current_language: String = "en"  # "en" or "tl" (Tagalog)
 var is_ready: bool = false
 var ready_status_by_peer: Dictionary = {}
-var _mp_autoplay_btn: Button = null  # Dev-only MP auto-play toggle
-var _lobby_closing: bool = false  # Set true when game starts to stop outgoing RPCs
 
 # Translations
 var translations = {
@@ -144,7 +145,6 @@ func _ready() -> void:
 
 	_update_player_list()
 	_update_start_button_state()
-	_setup_mp_autoplay_dev_button()
 	
 	# Get local IP for host
 	var local_ip = _get_local_ip()
@@ -163,6 +163,8 @@ func _connect_button_signals() -> void:
 		cancel_button.pressed.connect(_on_cancel_pressed)
 	if not ready_checkbox.toggled.is_connected(_on_ready_toggled):
 		ready_checkbox.toggled.connect(_on_ready_toggled)
+	if not auto_play_button.pressed.is_connected(_on_auto_play_pressed):
+		auto_play_button.pressed.connect(_on_auto_play_pressed)
 	if not start_game_button.pressed.is_connected(_on_start_game_pressed):
 		start_game_button.pressed.connect(_on_start_game_pressed)
 	if not disconnect_button.pressed.is_connected(_on_disconnect_pressed):
@@ -218,27 +220,34 @@ func _are_all_players_ready() -> bool:
 	return true
 
 func _update_start_button_state() -> void:
-	start_game_button.visible = _is_host()
-	start_game_button.disabled = not _are_all_players_ready()
-	# Enable the MP auto-play button only once both players are connected
-	if _mp_autoplay_btn:
-		_mp_autoplay_btn.disabled = _get_connected_peer_ids().size() < 2
+	var all_ready := _are_all_players_ready()
+	if _is_host():
+		start_game_button.visible = true
+		start_game_button.disabled = not all_ready
+		start_game_button.text = _t("start_game")
+	else:
+		# Client: show a disabled status indicator so they know the host must press Start
+		start_game_button.visible = true
+		start_game_button.disabled = true
+		start_game_button.text = "⏳ " + (
+			"Waiting for host to start..." if all_ready else "Waiting for all players..."
+		)
 
 func _sync_local_ready(ready_value: bool) -> void:
+	# Guard: peer may have been cleared by a preceding disconnect call
+	if multiplayer.multiplayer_peer == null:
+		return
 	is_ready = ready_value
-	ready_checkbox.button_pressed = ready_value
-	# Always maintain the lobby's own ready map and broadcast via RPC so the
-	# host can see both players' status regardless of NetworkManager state.
-	# Skip if the game is already starting (prevents stale RPC errors).
-	if multiplayer.multiplayer_peer != null and not _lobby_closing:
-		var my_id := multiplayer.get_unique_id()
-		ready_status_by_peer[my_id] = ready_value
-		rpc("_sync_ready_state", my_id, ready_value)
-	# Also inform NetworkManager (side-effect only — it may be empty).
-	if NetworkManager and NetworkManager.has_method("set_ready"):
-		NetworkManager.set_ready(ready_value)
+	# Use set_pressed_no_signal so we don't re-enter _on_ready_toggled
+	ready_checkbox.set_pressed_no_signal(ready_value)
+	# Sync via the lobby's own RPC (call_local so our dict updates too).
+	# NOTE: NetworkManager.players may be empty because the lobby uses
+	# GameManager.host_game(), not NetworkManager.create_server().
+	# The lobby _sync_ready_state RPC (any_peer, call_local, reliable)
+	# is the authoritative ready-sync path.
+	var my_id := multiplayer.get_unique_id()
+	rpc("_sync_ready_state", my_id, ready_value)
 	_update_player_list()
-	_update_start_button_state()
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # UI PANEL MANAGEMENT
@@ -287,8 +296,6 @@ func _on_join_pressed() -> void:
 func _on_back_pressed() -> void:
 	if _is_connected() and GameManager:
 		GameManager.disconnect_multiplayer()
-	if GameManager and GameManager.has_method("set_game_mode"):
-		GameManager.set_game_mode(GameManager.GameMode.SINGLE_PLAYER)
 	get_tree().change_scene_to_file("res://scenes/ui/InitialScreen.tscn")
 
 func _on_connect_pressed() -> void:
@@ -314,9 +321,27 @@ func _on_ready_toggled(toggled: bool) -> void:
 	_sync_local_ready(toggled)
 
 
-func _on_network_player_ready_changed(peer_id: int, p_ready: bool) -> void:
+func _on_auto_play_pressed() -> void:
+	var enabling: bool = auto_play_button.button_pressed
+	if AutoPlayManager:
+		AutoPlayManager.set_mp_auto_play_enabled(enabling)
+	if enabling:
+		auto_play_button.text = "🤖 AUTO PLAY ON"
+		auto_play_button.modulate = Color(1.2, 1.0, 0.4)  # Yellow tint when active
+		# Auto mark self as ready
+		if _is_connected() and not is_ready:
+			_sync_local_ready(true)
+		# Auto-start immediately if host and everyone already ready
+		if _is_host() and _are_all_players_ready():
+			_do_start_game()
+	else:
+		auto_play_button.text = "🤖 AUTO PLAY"
+		auto_play_button.modulate = Color.WHITE
+
+
+func _on_network_player_ready_changed(peer_id: int, ready_state: bool) -> void:
 	# Update local map when NetworkManager reports a ready change
-	ready_status_by_peer[peer_id] = p_ready
+	ready_status_by_peer[peer_id] = ready_state
 	_update_player_list()
 	_update_start_button_state()
 
@@ -336,22 +361,16 @@ func _on_network_player_disconnected(peer_id: int) -> void:
 	_update_start_button_state()
 
 func _on_start_game_pressed() -> void:
-	print("🔘 Start button pressed!")
-	
+	_do_start_game()
+
+func _do_start_game() -> void:
 	if not GameManager:
 		print("❌ GameManager is null")
 		return
-
-	if multiplayer.multiplayer_peer == null or not _is_connected():
-		_show_error(_t("connection_failed"))
-		return
 	
 	if not _is_host():
-		print("❌ Not the server, peer_id: ", multiplayer.get_unique_id())
+		print("❌ Not the host — only the host can start")
 		return
-	
-	print("✅ Is server, checking ready status...")
-	print("   Players ready: ", _are_all_players_ready())
 	
 	if _get_connected_peer_ids().size() < 2:
 		_show_error(_t("need_two_players"))
@@ -362,23 +381,23 @@ func _on_start_game_pressed() -> void:
 		return
 
 	print("🎮 Starting GameManager multiplayer session flow...")
-	_lobby_closing = true
-	# Broadcast to ALL peers (including self) that the lobby is closing so
-	# no further outgoing RPCs are sent from any peer's lobby instance.
-	rpc("_set_lobby_closing")
+	GameManager.rpc("_begin_multiplayer_session_rpc")
 	await get_tree().process_frame
-	GameManager.rpc("_start_multiplayer_match_rpc")
+	GameManager.rpc("_load_next_multiplayer_minigame")
 
 func _on_disconnect_pressed() -> void:
-	# Mark lobby closing first so _sync_local_ready skips RPCs and NetworkManager calls
-	_lobby_closing = true
 	if GameManager:
 		GameManager.disconnect_multiplayer()
 	if NetworkManager and NetworkManager.connection_active:
 		NetworkManager.disconnect_multiplayer()
 	ready_status_by_peer.clear()
 	is_ready = false
-	ready_checkbox.button_pressed = false
+	# set_pressed_no_signal prevents triggering _on_ready_toggled after the peer is gone
+	ready_checkbox.set_pressed_no_signal(false)
+	if auto_play_button:
+		auto_play_button.button_pressed = false
+		auto_play_button.text = "🤖 AUTO PLAY"
+		auto_play_button.modulate = Color.WHITE
 	
 	_show_mode_selection()
 
@@ -427,22 +446,14 @@ func _on_server_disconnected() -> void:
 	ready_status_by_peer.clear()
 	_show_mode_selection()
 
-@rpc("authority", "call_local", "reliable")
-func _set_lobby_closing() -> void:
-	_lobby_closing = true
-
 @rpc("any_peer", "call_local", "reliable")
 func _sync_ready_state(peer_id: int, ready_value: bool) -> void:
-	if not is_inside_tree():
-		return
 	ready_status_by_peer[peer_id] = ready_value
 	_update_player_list()
 	_update_start_button_state()
 
 @rpc("authority", "reliable")
 func _sync_ready_map(ready_map: Dictionary) -> void:
-	if not is_inside_tree():
-		return
 	ready_status_by_peer = ready_map.duplicate(true)
 	_update_player_list()
 	_update_start_button_state()
@@ -450,11 +461,11 @@ func _sync_ready_map(ready_map: Dictionary) -> void:
 func _on_both_players_ready() -> void:
 	print("✅ Both players ready!")
 	
-	if NetworkManager and NetworkManager.is_server():
+	if _is_host():
 		start_game_button.disabled = false
-	# Unlock the MP auto-play toggle now that both players are connected
-	if _mp_autoplay_btn:
-		_mp_autoplay_btn.disabled = false
+		# When AutoPlay is active on the host, start automatically
+		if AutoPlayManager and AutoPlayManager.is_mp_auto_play_enabled():
+			_do_start_game()
 
 func _load_level_set_games(level_set: Dictionary) -> void:
 	# Load the correct game scene for EACH PLAYER based on level set
@@ -487,45 +498,7 @@ func _load_level_set_games(level_set: Dictionary) -> void:
 func _on_game_started(scenario_id: String, _roles: Dictionary) -> void:
 	print("🎮 Game started: " + scenario_id)
 	# Scene change is handled by NetworkManager via RPC
-
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# MP AUTO-PLAY DEV BUTTON
-# Visible only in dev mode; enables per-device AI gameplay in MP.
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-func _setup_mp_autoplay_dev_button() -> void:
-	# Only shown when dev mode is active
-	var dev_mode: bool = SaveManager.get_setting("dev_mode", false) if SaveManager else false
-	if not dev_mode:
-		return
-	var btn := Button.new()
-	btn.name = "MPAutoPlayButton"
-	btn.text = "🤖 Auto-Play (Dev): OFF"
-	btn.add_theme_font_size_override("font_size", 18)
-	btn.modulate = Color(1.0, 0.85, 0.2, 0.9)
-	btn.tooltip_text = (
-		"Enable AI auto-play for this device in multiplayer."
-		+ "\nOnly works once both players are connected."
-	)
-	btn.disabled = true  # enabled once both players connect
-	btn.pressed.connect(_on_mp_autoplay_toggled)
-	var vbox: Node = waiting_panel.get_node_or_null("VBoxContainer")
-	if vbox:
-		vbox.add_child(btn)
-	_mp_autoplay_btn = btn
-
-func _on_mp_autoplay_toggled() -> void:
-	if not AutoPlayManager:
-		return
-	var new_state: bool = not AutoPlayManager.is_mp_auto_play_enabled()
-	AutoPlayManager.set_mp_auto_play_enabled(new_state)
-	if _mp_autoplay_btn:
-		if new_state:
-			_mp_autoplay_btn.text = "🤖 Auto-Play (Dev): ON"
-			_mp_autoplay_btn.modulate = Color(0.3, 1.0, 0.4, 1.0)
-		else:
-			_mp_autoplay_btn.text = "🤖 Auto-Play (Dev): OFF"
-			_mp_autoplay_btn.modulate = Color(1.0, 0.85, 0.2, 0.9)
+	pass
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # PLAYER LIST UPDATE
@@ -591,17 +564,14 @@ func _validate_ip(ip: String) -> bool:
 
 
 func _pull_network_ready_map() -> void:
-	# If NetworkManager has populated player data, use it.
-	# Only fall back to GameManager if NetworkManager.players is actually populated
-	# (it may be empty if GameManager.host_game() was used directly).
-	if NetworkManager and typeof(NetworkManager.players) == TYPE_DICTIONARY \
-			and not NetworkManager.players.is_empty():
+	# If NetworkManager is present, populate local ready map from its authoritative player data
+	if NetworkManager and typeof(NetworkManager.players) == TYPE_DICTIONARY:
+		# NetworkManager stores player info in `players` dictionary
 		for peer_id in NetworkManager.players.keys():
 			var pdata = NetworkManager.players[peer_id]
 			ready_status_by_peer[peer_id] = bool(pdata.get("ready", false))
-		return
-	# Fallback: seed the map with peer IDs from GameManager (all not-ready by default).
-	if GameManager and GameManager.has_method("get_connected_multiplayer_peer_ids"):
+	elif GameManager and GameManager.has_method("get_connected_multiplayer_peer_ids"):
+		# Fallback: initialize map with peer ids from GameManager
 		var peers = GameManager.get_connected_multiplayer_peer_ids()
 		for id in peers:
 			if not ready_status_by_peer.has(id):

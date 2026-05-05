@@ -3,7 +3,6 @@ class_name SimpleCutscenePlayer
 
 ## DWTD-style micro cutscene player - quick animated win/fail reactions
 ## Generates all graphics procedurally with particles and screen effects
-## MOBILE OPTIMIZED: Reduced particle count and simplified animations
 
 signal cutscene_finished
 
@@ -11,33 +10,10 @@ var _character: Node2D
 var _is_playing: bool = false
 var _particles: Array[Node] = []
 var _game_key: String = ""
-var _active_tweens: Array[Tween] = []
-
-# ═══════════════════════════════════════════════════════════════════
-# MOBILE OPTIMIZATION: Detect platform and adjust quality
-# ═══════════════════════════════════════════════════════════════════
-var _is_mobile: bool = false
-var _particle_count_multiplier: float = 1.0
-var _animation_complexity: int = 2  # 0=minimal, 1=reduced, 2=full
 
 func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
-	
-	# Detect mobile platform
-	_is_mobile = OS.has_feature("mobile") or OS.has_feature("android") or OS.has_feature("ios")
-	
-	if _is_mobile:
-		# Reduce particle count on mobile
-		_particle_count_multiplier = 0.3  # 30% particles on mobile
-		_animation_complexity = 0  # Minimal animations on mobile
-		print("📱 SimpleCutscenePlayer: Mobile mode enabled (reduced effects)")
-
-func _exit_tree() -> void:
-	# ═══════════════════════════════════════════════════════════════════
-	# MEMORY FIX: Clean up all tweens when scene exits
-	# ═══════════════════════════════════════════════════════════════════
-	_cleanup_tweens()
 
 func play_cutscene(minigame_key: String, cutscene_type) -> void:
 	if _is_playing:
@@ -84,11 +60,9 @@ func _show_animated_droplet(is_win: bool) -> void:
 	ft.tween_property(flash, "color:a", 0.4 if is_win else 0.3, 0.1)
 	ft.tween_property(flash, "color:a", 0.0, 0.25)
 
+	# Scene-specific props (render behind character for depth)
 	var vp = get_viewport_rect().size
-
-	# Scene-specific props (skip on mobile to reduce node count and frame drops)
-	if not _is_mobile:
-		_spawn_scene_props(container, scene_data, vp)
+	_spawn_scene_props(container, scene_data, vp)
 
 	# Center area for character
 	var center = Control.new()
@@ -126,13 +100,8 @@ func _show_animated_droplet(is_win: bool) -> void:
 		ttw.tween_interval(0.45)
 		ttw.tween_property(text_lbl, "modulate:a", 1.0, 0.3)
 
-	# Defer particle spawn to next frame to prevent frame drop spike
-	# Skip burst particles on mobile to eliminate blue bar artifacts
-	if not _is_mobile:
-		await get_tree().process_frame
-		_spawn_burst_particles(container, is_win)
-	else:
-		await get_tree().process_frame
+	# Spawn burst particles
+	_spawn_burst_particles(container, is_win)
 
 	# Animate
 	await _animate_droplet(is_win)
@@ -364,15 +333,7 @@ func _create_mouth(is_win: bool) -> Line2D:
 func _spawn_burst_particles(container: Control, is_win: bool) -> void:
 	var vp = get_viewport_rect().size
 	var center = vp / 2
-	
-	# ═══════════════════════════════════════════════════════════════════
-	# MOBILE OPTIMIZATION: Reduce particle count on mobile devices
-	# Desktop: 14 win / 8 fail particles
-	# Mobile: 6 win / 4 fail particles (57% reduction)
-	# ═══════════════════════════════════════════════════════════════════
-	var base_count = 14 if is_win else 8
-	var count = int(base_count * _particle_count_multiplier)
-	count = max(count, 4)  # Minimum 4 particles for visual effect
+	var count = 14 if is_win else 8
 
 	for i in count:
 		var p = ColorRect.new()
@@ -402,32 +363,17 @@ func _spawn_burst_particles(container: Control, is_win: bool) -> void:
 		var target = center + Vector2(cos(angle), sin(angle)) * dist
 		var dur = randf_range(0.4, 0.8)
 
-		# ═══════════════════════════════════════════════════════════════════
-		# PERFORMANCE FIX: Track tweens for cleanup
-		# ═══════════════════════════════════════════════════════════════════
 		var pt = create_tween()
-		_active_tweens.append(pt)
 		pt.set_parallel(true)
 		pt.tween_property(p, "modulate:a", 0.9, 0.08)
 		pt.tween_property(
 			p, "position", target, dur
 		).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_CUBIC)
-		
-		# Skip rotation tween on mobile for better performance
-		if not _is_mobile:
-			pt.tween_property(p, "rotation", p.rotation + randf_range(-2, 2), dur)
+		pt.tween_property(p, "rotation", p.rotation + randf_range(-2, 2), dur)
 
 		var pf = create_tween()
-		_active_tweens.append(pf)
 		pf.tween_interval(dur * 0.5)
 		pf.tween_property(p, "modulate:a", 0.0, dur * 0.5)
-
-func _cleanup_tweens() -> void:
-	## Clean up all active tweens to prevent memory leaks
-	for tween in _active_tweens:
-		if tween and tween.is_valid():
-			tween.kill()
-	_active_tweens.clear()
 
 func _animate_droplet(is_win: bool) -> void:
 	if not _character:
@@ -761,7 +707,7 @@ func _get_scene_data(key: String, is_win: bool) -> Dictionary:
 					{"e": "🔧", "x": 0.5, "y": 0.3, "size": 80, "anim": "pop", "delay": 0.0},
 					{"e": "🚰", "x": 0.5, "y": 0.78, "size": 72, "anim": "pop", "delay": 0.2},
 					{"e": "💧", "x": 0.62, "y": 0.7, "size": 36, "anim": "float", "delay": 0.72},
-					{"e": "👍", "x": 0.75, "y": 0.48, "size": 56, "anim": "pop", "delay": 0.82},
+					{"e": "🫡", "x": 0.75, "y": 0.48, "size": 56, "anim": "pop", "delay": 0.82},
 				],
 				"text": "Silence. Peace. A single drip salutes you.",
 			},
@@ -783,7 +729,7 @@ func _get_scene_data(key: String, is_win: bool) -> Dictionary:
 					{"e": "🔧", "x": 0.5, "y": 0.3, "size": 80, "anim": "pop", "delay": 0.0},
 					{"e": "🚰", "x": 0.5, "y": 0.78, "size": 72, "anim": "pop", "delay": 0.2},
 					{"e": "💧", "x": 0.62, "y": 0.7, "size": 36, "anim": "float", "delay": 0.72},
-					{"e": "👍", "x": 0.75, "y": 0.48, "size": 56, "anim": "pop", "delay": 0.82},
+					{"e": "🫡", "x": 0.75, "y": 0.48, "size": 56, "anim": "pop", "delay": 0.82},
 				],
 				"text": "Silence. Peace. A single drip salutes you.",
 			},

@@ -1588,6 +1588,12 @@ func _get_game_instruction(title: String) -> String:
 			return _loc("intro_instruction_timing_tap", "Tap on the beat!")
 		"TurnOffTap":
 			return _loc("intro_instruction_turn_off_tap", "Cut the flow on time!")
+		"CloudCatcher":
+			return _loc("intro_instruction_cloud_catcher", "Catch the clouds for water!")
+		"WaterMemory":
+			return _loc("intro_instruction_water_memory", "Match the water pairs!")
+		"DropletDash":
+			return _loc("intro_instruction_droplet_dash", "Guide the droplet to safety!")
 		_:
 			return _loc("intro_instruction_default", "Get ready...")
 
@@ -1722,16 +1728,40 @@ func _ensure_cinematic_nodes() -> void:
 		move_child(flash_beat, get_child_count() - 1)
 
 func _get_intro_icon_for_title(title: String) -> String:
-	if "Rain" in title:
+	if "Rain" in title or "Catch" in title:
 		return "🌧"
-	if "Leak" in title or "Pipe" in title:
+	if "Leak" in title or "Pipe" in title or "Plug" in title:
 		return "🔧"
-	if "Filter" in title:
-		return "🧪"
-	if "Plant" in title:
+	if "Filter" in title or "Speck" in title:
+		return "🔍"
+	if "Plant" in title or "Vegetable" in title or "Thirsty" in title:
 		return "🌱"
-	if "Tap" in title:
+	if "Tap" in title or "Timing" in title or "Turn" in title:
 		return "🚰"
-	if "Bucket" in title:
-		return "🪣"
-	return "⚡"
+	if "Bucket" in title or "Brigade" in title:
+		return "💧"
+	if "Greywater" in title or "Sort" in title:
+		return "🔄"
+	if "Wring" in title:
+		return "💦"
+	if "Mud" in title:
+		return "🌍"
+	if "Drum" in title or "Cover" in title:
+		return "🌊"
+	if "Soap" in title or "Swipe" in title or "Scrub" in title:
+		return "🛁"
+	if "Shower" in title or "Quick" in title:
+		return "🚿"
+	if "Cloud" in title:
+		return "☁️"
+	if "Memory" in title:
+		return "🃏"
+	if "Dash" in title or "Droplet" in title:
+		return "💨"
+	if "Rice" in title or "Rescue" in title:
+		return "🍚"
+	if "Toilet" in title or "Tank" in title:
+		return "🔧"
+	if "Trace" in title:
+		return "🗺"
+	return "💧"

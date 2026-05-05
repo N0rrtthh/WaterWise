@@ -16,10 +16,7 @@ extends Node
 ##   Timeline   → Scene visits, session start/end, duration
 ##
 ## Exported automatically on app quit, and manually via Dev Stats page.
-## JSON + TXT saved to the configured export directory (default: user://session_logs/).
-## Change export path via Settings > Dev Mode > "Log Export Path"
-## or call SessionLogger.set_export_dir(path) at runtime.
-## On Android, set an external path like "/sdcard/Documents/WaterWise/" for easy access.
+## Files saved to: user://session_logs/session_YYYY-MM-DD_HH-MM-SS.json
 ## ═══════════════════════════════════════════════════════════════════
 
 signal log_exported(file_path: String)
@@ -45,24 +42,6 @@ var sp_games: Array = []
 ##              p1:{score,success,difficulty,phi}, p2:{...},
 ##              team_success, team_score, sync_score}
 var mp_rounds: Array = []
-
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# MULTIPLAYER PER-DEVICE RECORDS (Each device records its own metrics)
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-## Local player's individual performance in each MP round
-## Each entry: {round_num, game_name, my_score, my_accuracy_pct, my_reaction_time_ms,
-##              my_mistakes, my_difficulty, my_phi, partner_score, team_success,
-##              latency_ms, packet_loss_pct}
-var mp_local_performance: Array = []
-
-## Connection quality metrics per round
-## Each entry: {round_num, latency_ms, packet_loss_pct, sync_events, desyncs}
-var mp_connection_metrics: Array = []
-
-## Network events (disconnects, reconnects, sync issues)
-## Each entry: {elapsed_sec, timestamp, event_type, details}
-var mp_network_events: Array = []
 
 ## Each entry: {scene, elapsed_sec, timestamp}
 var scenes_visited: Array = []
@@ -118,25 +97,6 @@ const SNAPSHOT_INTERVAL: float = 5.0
 var _snapshot_timer: float = 0.0
 var _last_exported_path: String = ""
 
-## Configurable export directory.
-## Supports user:// paths or absolute paths (e.g. /sdcard/Documents/WaterWise/).
-## Loaded from SaveManager key "session_log_dir"; defaults to user://session_logs/
-var export_dir: String = "user://session_logs/"
-
-func set_export_dir(dir: String) -> void:
-	## Set a custom export directory and persist it in SaveManager.
-	## Pass an empty string to reset to the default.
-	if dir.strip_edges().is_empty():
-		export_dir = "user://session_logs/"
-	else:
-		export_dir = dir if dir.ends_with("/") else dir + "/"
-	if SaveManager:
-		SaveManager.set_setting("session_log_dir", export_dir)
-	print("\ud83d\udcc1 SessionLogger export dir set to: %s" % export_dir)
-
-func get_export_dir() -> String:
-	return export_dir
-
 ## Helper: snap a float to N decimal places.
 ## Godot has no global snapf() — use float.snapped(step) instead.
 ## Example: snapf(3.14159, 2) → 3.14
@@ -161,19 +121,10 @@ func _ready() -> void:
 		randi() % 9999
 	]
 
-	# Load configurable export directory from SaveManager (deferred so SM is ready)
-	call_deferred("_load_export_dir")
 	# Defer signal connections so all autoloads are ready
 	call_deferred("_connect_signals")
 
 	print("📋 SessionLogger ready — %s" % session_id)
-
-func _load_export_dir() -> void:
-	if SaveManager:
-		var saved_dir: String = SaveManager.get_setting("session_log_dir", "")
-		if not saved_dir.is_empty():
-			export_dir = saved_dir
-	print("📁 SessionLogger export dir: %s" % export_dir)
 
 func _connect_signals() -> void:
 	# AdaptiveDifficulty — SP algorithm events
@@ -261,93 +212,13 @@ func record_sp_game(
 	])
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# MP LOCAL PERFORMANCE RECORDING (Per-Device)
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-func record_mp_local_round(
-	round_num: int,
-	game_name: String,
-	my_score: int,
-	my_accuracy: float,
-	my_reaction_time_ms: int,
-	my_mistakes: int,
-	my_difficulty: String,
-	my_phi: float,
-	partner_score: int,
-	team_success: bool,
-	latency_ms: float = 0.0,
-	packet_loss_pct: float = 0.0
-) -> void:
-	## Record local player's performance in this MP round
-	var connection_metrics_note := (
-		"latency and packet_loss are placeholders (0.0) - "
-		+ "ENet does not expose these via GDScript"
-	)
-	var record: Dictionary = {
-		"round_num": round_num,
-		"game_name": game_name,
-		"elapsed_sec": _elapsed(),
-		"timestamp": Time.get_datetime_string_from_system(),
-		# Local metrics
-		"my_score": my_score,
-		"my_accuracy_pct": snapf(my_accuracy * 100.0, 1),
-		"my_reaction_time_ms": my_reaction_time_ms,
-		"my_reaction_time_s": snapf(float(my_reaction_time_ms) / 1000.0, 2),
-		"my_game_duration_ms": my_reaction_time_ms,  # Clarification: this is total game time
-		"my_mistakes": my_mistakes,
-		"my_difficulty": my_difficulty,
-		"my_phi": snapf(my_phi, 4),
-		# Team metrics
-		"partner_score": partner_score,
-		"team_success": team_success,
-		"team_score": my_score + partner_score,
-		# Connection metrics (note: latency/packet_loss are placeholders, ENet doesn't expose these)
-		"latency_ms": snapf(latency_ms, 1),
-		"packet_loss_pct": snapf(packet_loss_pct, 2),
-			"connection_metrics_note": connection_metrics_note
-	}
-	mp_local_performance.append(record)
-	
-	# Also record connection metrics separately
-	mp_connection_metrics.append({
-		"round_num": round_num,
-		"elapsed_sec": _elapsed(),
-		"latency_ms": snapf(latency_ms, 1),
-		"packet_loss_pct": snapf(packet_loss_pct, 2),
-		"sync_events": 0,
-		"desyncs": 0
-	})
-	
-	print("📋 MP Local P%d #%d %s | MyScore:%d | Acc:%.0f%% | Latency:%.0fms" % [
-		_get_local_player_num(), round_num, game_name, my_score, 
-		my_accuracy * 100.0, latency_ms
-	])
-
-func record_mp_network_event(event_type: String, details: Dictionary = {}) -> void:
-	## Record network events (disconnect, reconnect, desync, etc.)
-	mp_network_events.append({
-		"elapsed_sec": _elapsed(),
-		"timestamp": Time.get_datetime_string_from_system(),
-		"event_type": event_type,
-		"details": details
-	})
-	print("📡 MP Network Event: %s" % event_type)
-
-func _get_local_player_num() -> int:
-	if GameManager:
-		return GameManager.local_player_num
-	if NetworkManager:
-		return NetworkManager.get_local_player_num()
-	return 0
-
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # SIGNAL HANDLERS
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func _on_sp_difficulty_changed(old_diff: String, new_diff: String, reason: String) -> void:
 	var metrics: Dictionary = {}
-	if AdaptiveDifficulty and AdaptiveDifficulty.has_method("get_window_metrics"):
-		metrics = AdaptiveDifficulty.get_window_metrics()
+	if AdaptiveDifficulty and AdaptiveDifficulty.has_method("_calculate_window_metrics"):
+		metrics = AdaptiveDifficulty._calculate_window_metrics()
 
 	sp_difficulty_changes.append({
 		"elapsed_sec": _elapsed(),
@@ -440,7 +311,6 @@ func _on_perf_warning(metric: String, value: float, threshold: float) -> void:
 func _take_perf_snapshot() -> void:
 	if not PerformanceProfiler:
 		return
-	var thermal_source: String = PerformanceProfiler.get_thermal_source()
 
 	var snap: Dictionary = {
 		"elapsed_sec": _elapsed(),
@@ -448,10 +318,6 @@ func _take_perf_snapshot() -> void:
 		"fps_avg": snapf(PerformanceProfiler.fps_avg, 1),
 		"memory_mb": snapf(PerformanceProfiler.memory_current_mb, 2),
 		"cpu_temp_c": snapf(PerformanceProfiler.cpu_temp_c, 1),
-		"thermal_source": thermal_source,
-		"battery_pct": PerformanceProfiler.battery_pct_current,
-		"battery_mah": snapf(PerformanceProfiler.estimated_battery_mah, 3),
-		"battery_mah_per_min": snapf(PerformanceProfiler.battery_drain_per_min, 3),
 		"algo_latency_avg_ms": snapf(PerformanceProfiler.algo_latency_avg_ms, 3),
 		"algo_latency_max_ms": snapf(PerformanceProfiler.algo_latency_max_ms, 3),
 		"frame_time_ms": snapf(PerformanceProfiler.frame_time_ms, 2),
@@ -487,9 +353,6 @@ func get_current_summary() -> Dictionary:
 	var lat_max: float = PerformanceProfiler.algo_latency_max_ms if PerformanceProfiler else 0.0
 	var batt: float = PerformanceProfiler.battery_drain_per_min if PerformanceProfiler else 0.0
 	var _ratio: float = PerformanceProfiler.rule_based_vs_dl_ratio if PerformanceProfiler else 0.0
-	var final_difficulty := "N/A"
-	if AdaptiveDifficulty:
-		final_difficulty = AdaptiveDifficulty.get_current_difficulty()
 
 	return {
 		"session_id": session_id,
@@ -500,9 +363,9 @@ func get_current_summary() -> Dictionary:
 		"mp_rounds": mp_rounds_count,
 		"sp_total_score": sp_total_score,
 		"mp_total_score": mp_total_score,
-		"total_droplets": total_droplets_earned,
+		"total_droplets": _get_session_droplets_earned(),
 		# SP Algorithm
-		"sp_difficulty": final_difficulty,
+		"sp_difficulty": AdaptiveDifficulty.get_current_difficulty() if AdaptiveDifficulty else "N/A",
 		"phi": _get_current_phi(),
 		"wma": _get_current_wma(),
 		"cp": _get_current_cp(),
@@ -530,6 +393,7 @@ func get_current_summary() -> Dictionary:
 		"battery_mah_per_min": snapf(batt, 3),
 		"battery_source": PerformanceProfiler.battery_source if PerformanceProfiler else "N/A",
 		"efficiency_vs_dl_pct": _calc_efficiency_pct(),
+		"fps_std_dev": _get_fps_std_dev(),
 		"iso_pass": _check_iso_pass(),
 		"last_exported_path": _last_exported_path,
 		"perf_warnings_count": perf_warnings.size()
@@ -579,36 +443,7 @@ func export_session() -> String:
 		"processor_name": OS.get_processor_name(),
 		"godot_version": Engine.get_version_info().get("string", "?"),
 		"screen_width": int(vp_size.x),
-		"screen_height": int(vp_size.y),
-		# ── Extended hardware info ─────────────────────────────────────
-		"screen_dpi": DisplayServer.screen_get_dpi(),
-		"os_version": OS.get_version(),
-		"gpu_name": RenderingServer.get_video_adapter_name(),
-		"gpu_vendor": RenderingServer.get_video_adapter_vendor(),
-		"system_memory_mb": int(OS.get_memory_info().get("physical", 0) / (1024 * 1024)),
-		"free_memory_mb": int(OS.get_memory_info().get("free", 0) / (1024 * 1024)),
-		"engine_fps_cap": ProjectSettings.get_setting("application/run/max_fps", 0),
-		"battery_capacity_mah": (
-			PerformanceProfiler.get_battery_capacity_mah() if PerformanceProfiler else 0.0
-		),
-		"battery_source_final": (
-			PerformanceProfiler.battery_source if PerformanceProfiler else "N/A"
-		),
-		"rendering_backend": RenderingServer.get_current_rendering_method(),
-		"orientation": (
-			"landscape" if vp_size.x >= vp_size.y else "portrait"
-		),
-		"dev_mode_enabled": (
-			bool(SaveManager.get_setting("dev_mode", false)) if SaveManager else false
-		),
-		## battery_capacity_source: 'configured_default' means 5000mAh was never changed
-		## via set_battery_capacity_mah(). 'user_configured' means it was set explicitly.
-		"battery_capacity_source": (
-			"user_configured"
-			if PerformanceProfiler
-				and PerformanceProfiler.get_battery_capacity_mah() != 5000.0
-			else "configured_default_5000mah"
-		)
+		"screen_height": int(vp_size.y)
 	}
 
 	# ── Performance summary ───────────────────────────────────────────
@@ -620,51 +455,28 @@ func export_session() -> String:
 	var throttles := _get_throttle_count()
 	var efficiency := _calc_efficiency_pct()
 	var iso_pass := _check_iso_pass()
-	var fps_stats := _calc_snapshot_stats("fps", 1)
-	var temp_stats := _calc_snapshot_stats("cpu_temp_c", 1)
-	var mem_stats := _calc_snapshot_stats("memory_mb", 2)
-	var batt_pct_stats := _calc_snapshot_stats("battery_pct", 1, true, -1.0)
-	var thermal_source := "unknown"
-	var thermal_data_available := false
-	if PerformanceProfiler:
-		thermal_source = PerformanceProfiler.get_thermal_source()
-		thermal_data_available = PerformanceProfiler.has_thermal_sensor_data()
-	var thermal_passed := cpu_temp_peak_c <= 45.0 and throttles == 0
 
 	var perf_summary: Dictionary = {
 		"iso_25010_compliant": iso_pass,
 		"fps": {
 			"target": 60,
 			"minimum_required": 30,
-			"start_observed": fps_stats.get("start", 0.0),
-			"minimum_observed": fps_stats.get("min", 0.0),
-			"maximum_observed": fps_stats.get("max", 0.0),
-			"average_observed": fps_stats.get("avg", 0.0),
-			## passed = meets the 30fps MINIMUM (iso 25010 baseline), NOT the 60fps target.
-			## average_observed >= 60 would mean target is met; this only checks survivability.
-			"passed": fps_avg >= 29.0  # Allow slight float inaccuracy for 30fps caps
+			"minimum_observed": snapf(fps_min_session if fps_min_session < 9999.0 else 0.0, 1),
+			"maximum_observed": snapf(fps_max_session, 1),
+			"average_observed": fps_avg,
+			"passed": fps_avg >= 30.0
 		},
 		"memory": {
 			"budget_mb": 200.0,
-			"start_mb": mem_stats.get("start", 0.0),
-			"minimum_mb": mem_stats.get("min", 0.0),
-			"peak_mb": mem_stats.get("max", snapf(memory_peak_mb, 2)),
-			"average_mb": mem_stats.get("avg", 0.0),
+			"peak_mb": snapf(memory_peak_mb, 2),
 			"passed": memory_peak_mb <= 200.0
 		},
 		"thermal": {
 			"threshold_c": 45.0,
-			## -1.0 = no sensor data available (not a measured 0°C).
-			## data_available: false means all values below are absent/unmeasured.
-			"start_c": temp_stats.get("start", -1.0) if thermal_data_available else -1.0,
-			"minimum_c": temp_stats.get("min", -1.0) if thermal_data_available else -1.0,
-			"peak_c": temp_stats.get("max", -1.0) if thermal_data_available else -1.0,
-			"average_c": temp_stats.get("avg", -1.0) if thermal_data_available else -1.0,
+			"peak_c": snapf(cpu_temp_peak_c, 1),
 			"throttle_events": throttles,
 			"throttle_details": get_throttle_events(),
-			"thermal_source": thermal_source,
-			"data_available": thermal_data_available,
-			"passed": thermal_passed if thermal_data_available else false
+			"passed": cpu_temp_peak_c <= 45.0 and throttles == 0
 		},
 		"algorithm_latency": {
 			"budget_ms": 16.0,
@@ -677,109 +489,21 @@ func export_session() -> String:
 			"total_frames": _get_total_frames(),
 			"drop_rate_pct": drop_rate
 		},
-		"battery": {
-			"start_pct": batt_pct_stats.get("start", -1.0),
-			"minimum_pct": batt_pct_stats.get("min", -1.0),
-			"maximum_pct": batt_pct_stats.get("max", -1.0),
-			"average_pct": batt_pct_stats.get("avg", -1.0),
-			"total_estimated_mah": snapf(
-				PerformanceProfiler.estimated_battery_mah if PerformanceProfiler else 0.0, 3
-			),
-			"battery_source": PerformanceProfiler.battery_source if PerformanceProfiler else "N/A"
-		},
 		"battery_efficiency": {
 			"measured_mah_per_min": batt,
-			## dl_baseline_mah_per_min is a PAPER CONSTANT (literature value for
-			## TFLite MobileNetV1 on Cortex-A53), not a live measurement.
-			## See thesis section on DL comparison baseline.
 			"dl_baseline_mah_per_min": 10.0,
-			"dl_baseline_is_measured": false,
-			## rule_based_savings_pct is -1.0 when battery readings are unavailable.
-			"rule_based_savings_pct": (
-				efficiency if batt > 0.0 else -1.0
-			),
+			"rule_based_savings_pct": efficiency,
 			"battery_source": PerformanceProfiler.battery_source if PerformanceProfiler else "N/A"
 		},
-		## tflite_comparison: filled in by post-session comparison test.
-		## During game-only sessions these fields are baseline placeholders.
-		## Run the TFLite app under the same conditions, capture its session log,
-		## then compare battery.total_estimated_mah and performance.fps.average_observed.
-		"tflite_comparison": {
-			"note": "Compare this block against the TFLite session captured back-to-back.",
-			"waterwise_fps_avg": fps_stats.get("avg", 0.0),
-			"waterwise_mah_per_min": batt,
-			"waterwise_memory_peak_mb": snapf(memory_peak_mb, 2),
-			"waterwise_throttle_events": throttles,
-			"tflite_fps_avg": null,
-			"tflite_mah_per_min": 10.0,
-			"tflite_memory_peak_mb": null,
-			"tflite_throttle_events": null,
-			"waterwise_wins": false,
-			"comparison_complete": false
-		},
-		"perf_warnings": perf_warnings,
-		## measurement_notes: explains method / accuracy per metric so any reader
-		## knows immediately what is real sensor data vs a proxy or configured default.
-		"measurement_notes": {
-			"fps": (
-				"Real — Engine.get_frames_per_second() per frame. "
-				+ "Frames <2fps excluded from avg (scene-load freezes)."
-			),
-			"memory_mb": (
-				"Real — OS.get_static_memory_usage(). "
-				+ "Covers GDScript heap + Godot textures; excludes Android driver overhead."
-			),
-			"algo_latency_ms": (
-				"Real — Time.get_ticks_usec() per AdaptiveDifficulty call. "
-				+ "0.0 if no game played yet."
-			),
-			"dropped_frames": (
-				"Real — delta > 36.67ms (10% above 30fps cap). "
-				+ "First 3s startup excluded."
-			),
-			"clock_speed_ratio": (
-				"PROXY — fps_current / 30.0 (target FPS). "
-				+ "NOT actual CPU frequency; requires root for real cpufreq on Android."
-			),
-			"cpu_temp_c": (
-				"UNAVAILABLE — no accessible sysfs thermal zone on test device. "
-				+ "All thermal values -1.0."
-			),
-			"battery_pct": (
-				"UNAVAILABLE — sysfs read failed (see battery_source_final). "
-				+ "Values are -1."
-			),
-			"battery_mah_estimated": (
-				"COMPUTED — (pct_drop/100) * battery_capacity_mah. "
-				+ "0.0 when battery_pct unavailable."
-			),
-			"dl_baseline_mah_per_min": (
-				"PAPER CONSTANT — literature value for TFLite MobileNetV1 on Cortex-A53. "
-				+ "Not measured. dl_baseline_is_measured=false."
-			),
-			"battery_capacity_mah": (
-				"CONFIGURED — set via set_battery_capacity_mah(). "
-				+ "Default 5000mAh matches Moto E5 Plus spec. See battery_capacity_source."
-			),
-			"gpu_name": "Real — RenderingServer.get_video_adapter_name().",
-			"rendering_backend": (
-				"Real — OS.get_current_rendering_method(). "
-				+ "e.g. 'gl_compatibility'."
-			),
-			"screen_dpi": "Real — DisplayServer.screen_get_dpi().",
-			"system_memory_mb": "Real — OS.get_memory_info() physical RAM."
-		}
+		"perf_warnings": perf_warnings
 	}
 
 	# ── SP algorithm summary ──────────────────────────────────────────
-	var final_difficulty := "N/A"
-	if AdaptiveDifficulty:
-		final_difficulty = AdaptiveDifficulty.get_current_difficulty()
 	var sp_algo: Dictionary = {
 		"algorithm": "Rule-Based Rolling Window with Proficiency Index (Φ)",
 		"window_size": AdaptiveDifficulty.window_size if AdaptiveDifficulty else 5,
 		"warmup_games": AdaptiveDifficulty.min_games_before_adaptation if AdaptiveDifficulty else 3,
-		"final_difficulty": final_difficulty,
+		"final_difficulty": AdaptiveDifficulty.get_current_difficulty() if AdaptiveDifficulty else "N/A",
 		"final_phi": _get_current_phi(),
 		"final_wma": _get_current_wma(),
 		"final_cp": _get_current_cp(),
@@ -819,25 +543,8 @@ func export_session() -> String:
 		"mp_total_score": mp_total_score,
 		"mp_team_wins": _count_mp_wins(),
 		"mp_win_rate_pct": _calc_mp_win_rate(),
-		"total_droplets_earned": total_droplets_earned,
+		"total_droplets_earned": _get_session_droplets_earned(),
 		"scenes_visited_count": scenes_visited.size()
-	}
-
-	# ── MP Local Performance (Per-Device) ─────────────────────────────
-	var mp_local_summary: Dictionary = {
-		"local_player_num": _get_local_player_num(),
-		"local_peer_id": multiplayer.get_unique_id() if multiplayer.multiplayer_peer else 0,
-		"rounds_played": mp_local_performance.size(),
-		"my_total_score": _calc_mp_local_total_score(),
-		"my_avg_score": _calc_mp_local_avg_score(),
-		"my_avg_accuracy_pct": _calc_mp_local_avg_accuracy(),
-		"my_avg_reaction_time_s": _calc_mp_local_avg_reaction_time(),
-		"my_total_mistakes": _calc_mp_local_total_mistakes(),
-		"team_wins": _count_mp_local_wins(),
-		"win_rate_pct": _calc_mp_local_win_rate(),
-		"avg_latency_ms": _calc_mp_avg_latency(),
-		"avg_packet_loss_pct": _calc_mp_avg_packet_loss(),
-		"network_events_count": mp_network_events.size()
 	}
 
 	# ── Full report ───────────────────────────────────────────────────
@@ -853,353 +560,36 @@ func export_session() -> String:
 		"gameplay_summary": gameplay,
 		"sp_algorithm": sp_algo,
 		"mp_algorithm": mp_algo,
-		"mp_local_performance": mp_local_summary,
 		"performance": perf_summary,
 		"sp_game_records": sp_games,
 		"mp_round_records": mp_rounds,
-		"mp_local_round_records": mp_local_performance,
-		"mp_connection_metrics": mp_connection_metrics,
-		"mp_network_events": mp_network_events,
 		"scenes_visited": scenes_visited,
 		"performance_snapshots": perf_snapshots
 	}
 
 	# ── Write to file ─────────────────────────────────────────────────
+	var user_dir := DirAccess.open("user://")
+	if user_dir:
+		user_dir.make_dir_recursive("session_logs")
+
 	var dt := Time.get_datetime_string_from_system() \
 		.replace(":", "-").replace(" ", "_")
+	var filename := "user://session_logs/session_%s.json" % dt
+	var file := FileAccess.open(filename, FileAccess.WRITE)
 
-	# Ensure the export directory exists (handles both user:// and absolute paths)
-	_ensure_export_dir(export_dir)
-
-	var json_path := export_dir + "session_%s.json" % dt
-	var txt_path  := export_dir + "session_%s.txt"  % dt
-
-	# Write JSON
-	var json_file := FileAccess.open(json_path, FileAccess.WRITE)
-	if json_file:
-		json_file.store_string(JSON.stringify(report, "\t"))
-		json_file.close()
-		_last_exported_path = ProjectSettings.globalize_path(json_path)
-		print("📊 SessionLogger JSON: %s" % _last_exported_path)
-	else:
-		push_error("SessionLogger: Failed to write JSON: %s" % json_path)
-
-	# Write TXT (human-readable summary alongside the JSON)
-	var txt_written := _write_txt_report(report, txt_path)
-	if txt_written:
-		print("📄 SessionLogger TXT:  %s" % ProjectSettings.globalize_path(txt_path))
-
-	if _last_exported_path != "":
+	if file:
+		file.store_string(JSON.stringify(report, "\t"))
+		file.close()
+		_last_exported_path = ProjectSettings.globalize_path(filename)
+		print("📊 SessionLogger export: %s" % _last_exported_path)
 		log_exported.emit(_last_exported_path)
 		return _last_exported_path
 
-	push_error("SessionLogger: Export failed for %s" % json_path)
+	push_error("SessionLogger: Failed to write %s" % filename)
 	return ""
-
-## Ensure the export directory exists, handling both user:// and absolute paths.
-func _ensure_export_dir(dir_path: String) -> void:
-	if dir_path.begins_with("user://") or dir_path.begins_with("res://"):
-		var da := DirAccess.open("user://")
-		if da:
-			var rel := dir_path.replace("user://", "").trim_suffix("/")
-			da.make_dir_recursive(rel)
-	else:
-		DirAccess.make_dir_recursive_absolute(dir_path.trim_suffix("/"))
-
-## Write a concise human-readable .txt companion to the JSON export.
-func _write_txt_report(report: Dictionary, txt_path: String) -> bool:
-	var f := FileAccess.open(txt_path, FileAccess.WRITE)
-	if not f:
-		return false
-
-	var sep60 := "============================================================"
-	var sep40 := "----------------------------------------"
-
-	f.store_line(sep60)
-	f.store_line("  WATERWISE SESSION LOG")
-	f.store_line(sep60)
-	f.store_line("Session ID   : " + str(report.get("session_id", "")))
-	f.store_line("Start Time   : " + str(report.get("session_start", "")))
-	f.store_line("End Time     : " + str(report.get("session_end", "")))
-	f.store_line("Duration     : " + str(report.get("session_duration_formatted", "")))
-	f.store_line("")
-
-	# Device
-	var dev: Dictionary = report.get("device", {})
-	f.store_line("[DEVICE]")
-	f.store_line("  Platform   : " + str(dev.get("platform", "?")))
-	f.store_line("  Model      : " + str(dev.get("model", "?")))
-	f.store_line("  Processors : " + str(dev.get("processor_count", "?")))
-	f.store_line("  Resolution : %dx%d" % [
-		int(dev.get("screen_width", 0)), int(dev.get("screen_height", 0))
-	])
-	f.store_line("  Godot      : " + str(dev.get("godot_version", "?")))
-	f.store_line("")
-
-	# Gameplay
-	var gp: Dictionary = report.get("gameplay_summary", {})
-	f.store_line("[GAMEPLAY SUMMARY]")
-	f.store_line("  SP Games Played    : " + str(gp.get("sp_games_played", 0)))
-	f.store_line("  SP Total Score     : " + str(gp.get("sp_total_score", 0)))
-	f.store_line("  SP Avg Score       : " + str(gp.get("sp_avg_score", 0.0)))
-	f.store_line("  SP Avg Accuracy    : " + str(gp.get("sp_avg_accuracy_pct", 0.0)) + "%")
-	f.store_line("  SP Avg Reaction    : " + str(gp.get("sp_avg_reaction_time_s", 0.0)) + "s")
-	f.store_line("  MP Rounds Played   : " + str(gp.get("mp_rounds_played", 0)))
-	f.store_line("  MP Total Score     : " + str(gp.get("mp_total_score", 0)))
-	f.store_line("  MP Team Wins       : " + str(gp.get("mp_team_wins", 0)))
-	f.store_line("  Total Droplets     : " + str(gp.get("total_droplets_earned", 0)))
-	f.store_line("")
-
-	# SP Algorithm
-	var alg: Dictionary = report.get("sp_algorithm", {})
-	f.store_line("[SP ALGORITHM]")
-	f.store_line("  Algorithm          : " + str(alg.get("algorithm", "?")))
-	f.store_line("  Final Difficulty   : " + str(alg.get("final_difficulty", "?")))
-	f.store_line("  Final Phi (Φ)      : " + str(alg.get("final_phi", 0.0)))
-	f.store_line("  Final WMA          : " + str(alg.get("final_wma", 0.0)))
-	f.store_line("  Difficulty Changes : " + str(alg.get("total_difficulty_changes", 0)))
-	f.store_line("")
-
-	# MP Algorithm
-	var mp_alg: Dictionary = report.get("mp_algorithm", {})
-	f.store_line("[MP ALGORITHM]")
-	f.store_line("  P1 Difficulty      : " + str(mp_alg.get("p1_final_difficulty", "?")))
-	f.store_line("  P2 Difficulty      : " + str(mp_alg.get("p2_final_difficulty", "?")))
-	f.store_line("  Skill Gap          : " + str(mp_alg.get("skill_gap", 0.0)))
-	f.store_line("  Team Success Rate  : " + str(mp_alg.get("team_success_rate", 0.0)))
-	f.store_line("")
-
-	# Performance
-	var perf: Dictionary = report.get("performance", {})
-	var fps_d: Dictionary = perf.get("fps", {})
-	var mem_d: Dictionary = perf.get("memory", {})
-	var therm: Dictionary = perf.get("thermal", {})
-	var lat_d: Dictionary = perf.get("algorithm_latency", {})
-	var batt_d: Dictionary = perf.get("battery", {})
-	f.store_line("[PERFORMANCE]")
-	f.store_line("  ISO 25010 Pass     : " + str(perf.get("iso_25010_compliant", false)))
-	f.store_line("  FPS Start/Min/Avg/Max: %s / %s / %s / %s" % [
-		str(fps_d.get("start_observed", 0)),
-		str(fps_d.get("minimum_observed", 0)),
-		str(fps_d.get("average_observed", 0)),
-		str(fps_d.get("maximum_observed", 0))
-	])
-	f.store_line("  FPS Pass           : " + str(fps_d.get("passed", false)))
-	f.store_line("  Memory Start/Avg/Peak: %s / %s / %s MB" % [
-		str(mem_d.get("start_mb", 0.0)),
-		str(mem_d.get("average_mb", 0.0)),
-		str(mem_d.get("peak_mb", 0.0))
-	])
-	f.store_line("  Memory Pass        : " + str(mem_d.get("passed", false)))
-	f.store_line("  CPU Temp Start/Min/Avg/Peak: %s / %s / %s / %s °C" % [
-		str(therm.get("start_c", 0.0)),
-		str(therm.get("minimum_c", 0.0)),
-		str(therm.get("average_c", 0.0)),
-		str(therm.get("peak_c", 0.0))
-	])
-	f.store_line("  Throttle Events    : " + str(therm.get("throttle_events", 0)))
-	f.store_line("  Thermal Source     : " + str(therm.get("thermal_source", "unknown")))
-	f.store_line("  Algo Latency Avg   : " + str(lat_d.get("avg_ms", 0.0)) + " ms")
-	f.store_line("  Algo Latency Max   : " + str(lat_d.get("max_ms", 0.0)) + " ms")
-	f.store_line("  Battery %% Start/Min/Avg/Max: %s / %s / %s / %s" % [
-		str(batt_d.get("start_pct", -1)),
-		str(batt_d.get("minimum_pct", -1)),
-		str(batt_d.get("average_pct", -1)),
-		str(batt_d.get("maximum_pct", -1))
-	])
-	f.store_line("")
-
-	# SP Game Records
-	var sp_games_arr: Array = report.get("sp_game_records", [])
-	f.store_line("[SP GAME RECORDS]  (%d games)" % sp_games_arr.size())
-	f.store_line("  #    | Game                  | Score | Acc%  | React | Diff   | Φ")
-	f.store_line("  " + sep40)
-	for rec in sp_games_arr:
-		f.store_line("  %d | %s | %d | %s | %s | %s | %s" % [
-			int(rec.get("game_num", 0)),
-			str(rec.get("game_name", "")).left(21).rpad(21),
-			int(rec.get("score", 0)),
-			str(snapf(float(rec.get("accuracy_pct", 0.0)), 1)).rpad(5),
-			(str(snapf(float(rec.get("reaction_time_s", 0.0)), 2)) + "s").rpad(5),
-			str(rec.get("difficulty", "?")).rpad(6),
-			str(rec.get("phi_index", 0.0))
-		])
-	f.store_line("")
-
-	# MP Round Records
-	var mp_rounds_arr: Array = report.get("mp_round_records", [])
-	f.store_line("[MP ROUND RECORDS]  (%d rounds)" % mp_rounds_arr.size())
-	for rec in mp_rounds_arr:
-		var p1d: Dictionary = rec.get("p1", {})
-		var p2d: Dictionary = rec.get("p2", {})
-		f.store_line("  Round %d | Team %s | P1 score=%d | P2 score=%d | Sync=%.1f" % [
-			int(rec.get("round_num", 0)),
-			("WIN " if rec.get("team_success", false) else "LOSS"),
-			int(p1d.get("score", 0)),
-			int(p2d.get("score", 0)),
-			float(rec.get("sync_score", 0.0))
-		])
-	f.store_line("")
-
-	f.store_line(sep60)
-	f.store_line("  Export dir: " + export_dir)
-	f.store_line(sep60)
-	f.close()
-	return true
 
 func get_last_exported_path() -> String:
 	return _last_exported_path
-
-## Export ONLY a .txt human-readable summary (no JSON).
-## Returns the absolute path on success, empty string on failure.
-func export_session_txt() -> String:
-	_take_perf_snapshot()
-
-	# Re-use export_session() to build the full report dictionary, then
-	# write only the TXT file so we don't double-write JSON.
-	var end_unix := Time.get_unix_time_from_system()
-	var duration_sec := end_unix - session_start_unix
-
-	var vp_size := Vector2.ZERO
-	if get_viewport():
-		vp_size = get_viewport().get_visible_rect().size
-
-	var device_info: Dictionary = {
-		"platform": OS.get_name(), "model": OS.get_model_name(),
-		"processor_count": OS.get_processor_count(),
-		"processor_name": OS.get_processor_name(),
-		"godot_version": Engine.get_version_info().get("string", "?"),
-		"screen_width": int(vp_size.x), "screen_height": int(vp_size.y)
-	}
-
-	var fps_avg := _calc_fps_avg()
-	var drop_rate := _calc_drop_rate()
-	var algo_lat_avg := _get_algo_latency_avg()
-	var algo_lat_max := _get_algo_latency_max()
-	var batt := _get_battery_drain()
-	var throttles := _get_throttle_count()
-	var efficiency := _calc_efficiency_pct()
-	var iso_pass := _check_iso_pass()
-	var fps_stats := _calc_snapshot_stats("fps", 1)
-	var temp_stats := _calc_snapshot_stats("cpu_temp_c", 1)
-	var mem_stats := _calc_snapshot_stats("memory_mb", 2)
-	var batt_pct_stats := _calc_snapshot_stats("battery_pct", 1, true, -1.0)
-	var thermal_source := "unknown"
-	if PerformanceProfiler:
-		thermal_source = PerformanceProfiler.get_thermal_source()
-
-	var perf_summary: Dictionary = {
-		"iso_25010_compliant": iso_pass,
-		"fps": {"target": 60, "minimum_required": 30,
-			"start_observed": fps_stats.get("start", 0.0),
-			"minimum_observed": fps_stats.get("min", 0.0),
-			"maximum_observed": fps_stats.get("max", 0.0),
-			"average_observed": fps_stats.get("avg", 0.0),
-			"passed": fps_avg >= 30.0},
-		"memory": {"budget_mb": 200.0,
-			"start_mb": mem_stats.get("start", 0.0),
-			"minimum_mb": mem_stats.get("min", 0.0),
-			"peak_mb": mem_stats.get("max", snapf(memory_peak_mb, 2)),
-			"average_mb": mem_stats.get("avg", 0.0),
-			"passed": memory_peak_mb <= 200.0},
-		"thermal": {"threshold_c": 45.0,
-			"start_c": temp_stats.get("start", 0.0),
-			"minimum_c": temp_stats.get("min", 0.0),
-			"peak_c": temp_stats.get("max", snapf(cpu_temp_peak_c, 1)),
-			"average_c": temp_stats.get("avg", 0.0),
-			"throttle_events": throttles, "throttle_details": get_throttle_events(),
-			"thermal_source": thermal_source,
-			"passed": cpu_temp_peak_c <= 45.0 and throttles == 0},
-		"algorithm_latency": {"budget_ms": 16.0, "avg_ms": algo_lat_avg,
-			"max_ms": algo_lat_max, "passed": algo_lat_max <= 16.0},
-		"dropped_frames": {"count": _get_dropped_frames(),
-			"total_frames": _get_total_frames(), "drop_rate_pct": drop_rate},
-		"battery": {
-			"start_pct": batt_pct_stats.get("start", -1.0),
-			"minimum_pct": batt_pct_stats.get("min", -1.0),
-			"maximum_pct": batt_pct_stats.get("max", -1.0),
-			"average_pct": batt_pct_stats.get("avg", -1.0),
-			"total_estimated_mah": snapf(
-				PerformanceProfiler.estimated_battery_mah if PerformanceProfiler else 0.0, 3
-			),
-			"battery_source": PerformanceProfiler.battery_source if PerformanceProfiler else "N/A"
-		},
-		"battery_efficiency": {"measured_mah_per_min": batt,
-			"dl_baseline_mah_per_min": 10.0, "rule_based_savings_pct": efficiency,
-			"battery_source": PerformanceProfiler.battery_source if PerformanceProfiler else "N/A"},
-		"perf_warnings": perf_warnings
-	}
-
-	var final_difficulty := "N/A"
-	if AdaptiveDifficulty:
-		final_difficulty = AdaptiveDifficulty.get_current_difficulty()
-	var sp_algo: Dictionary = {
-		"algorithm": "Rule-Based Rolling Window with Proficiency Index (Φ)",
-		"window_size": AdaptiveDifficulty.window_size if AdaptiveDifficulty else 5,
-		"warmup_games": AdaptiveDifficulty.min_games_before_adaptation if AdaptiveDifficulty else 3,
-		"final_difficulty": final_difficulty,
-		"final_phi": _get_current_phi(), "final_wma": _get_current_wma(),
-		"final_cp": _get_current_cp(),
-		"progressive_level": AdaptiveDifficulty.progressive_level if AdaptiveDifficulty else 0,
-		"total_difficulty_changes": sp_difficulty_changes.size(),
-		"difficulty_change_log": sp_difficulty_changes
-	}
-
-	var mp_metrics: Dictionary = {}
-	if CoopAdaptation and CoopAdaptation.has_method("get_team_metrics"):
-		mp_metrics = CoopAdaptation.get_team_metrics()
-
-	var mp_algo: Dictionary = {
-		"algorithm": "CoopAdaptation — Per-Player Φ + Skill Gap Co-Adaptation",
-		"skill_gap_threshold": 0.15,
-		"p1_final_difficulty": CoopAdaptation.get_player_difficulty(1) if CoopAdaptation else "N/A",
-		"p2_final_difficulty": CoopAdaptation.get_player_difficulty(2) if CoopAdaptation else "N/A",
-		"p1_phi": snapf(float(mp_metrics.get("player1_proficiency", 0.0)), 4),
-		"p2_phi": snapf(float(mp_metrics.get("player2_proficiency", 0.0)), 4),
-		"skill_gap": snapf(float(mp_metrics.get("skill_gap", 0.0)), 4),
-		"team_success_rate": snapf(float(mp_metrics.get("team_success_rate", 0.0)), 3),
-		"avg_sync_score": snapf(float(mp_metrics.get("avg_sync_score", 0.0)), 1),
-		"is_asymmetric_mode": bool(mp_metrics.get("is_asymmetric", false)),
-		"total_coop_adjustments": coop_difficulty_changes.size(),
-		"coop_adjustment_log": coop_difficulty_changes
-	}
-
-	var gameplay: Dictionary = {
-		"sp_games_played": sp_games_count, "sp_total_score": sp_total_score,
-		"sp_avg_score": snapf(float(sp_total_score) / max(sp_games_count, 1), 1),
-		"sp_avg_accuracy_pct": _calc_sp_avg_accuracy(),
-		"sp_avg_reaction_time_s": _calc_sp_avg_reaction_time(),
-		"mp_rounds_played": mp_rounds_count, "mp_total_score": mp_total_score,
-		"mp_team_wins": _count_mp_wins(), "mp_win_rate_pct": _calc_mp_win_rate(),
-		"total_droplets_earned": total_droplets_earned,
-		"scenes_visited_count": scenes_visited.size()
-	}
-
-	var report: Dictionary = {
-		"waterwise_session_log": true, "schema_version": "2.0",
-		"session_id": session_id, "session_start": session_start_iso,
-		"session_end": Time.get_datetime_string_from_system(),
-		"session_duration_sec": snapf(duration_sec, 1),
-		"session_duration_formatted": _format_duration(duration_sec),
-		"device": device_info, "gameplay_summary": gameplay,
-		"sp_algorithm": sp_algo, "mp_algorithm": mp_algo,
-		"performance": perf_summary, "sp_game_records": sp_games,
-		"mp_round_records": mp_rounds, "scenes_visited": scenes_visited,
-		"performance_snapshots": perf_snapshots
-	}
-
-	_ensure_export_dir(export_dir)
-	var dt := Time.get_datetime_string_from_system() \
-		.replace(":", "-").replace(" ", "_")
-	var txt_path := export_dir + "session_%s.txt" % dt
-
-	if _write_txt_report(report, txt_path):
-		var abs_path := ProjectSettings.globalize_path(txt_path)
-		print("📄 SessionLogger TXT (standalone): %s" % abs_path)
-		return abs_path
-
-	push_error("SessionLogger: TXT export failed for %s" % txt_path)
-	return ""
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # HELPERS
@@ -1209,87 +599,44 @@ func _elapsed() -> float:
 	return snapf(Time.get_unix_time_from_system() - session_start_unix, 2)
 
 func _format_duration(sec: float) -> String:
-	var h := int(sec / 3600.0)
-	var m := int((sec - h * 3600) / 60.0)
-	var s := int(sec) % 60
+	var remaining_sec: int = maxi(0, int(sec))
+	var h: int = 0
+	var m: int = 0
+	while remaining_sec >= 3600:
+		h += 1
+		remaining_sec -= 3600
+	while remaining_sec >= 60:
+		m += 1
+		remaining_sec -= 60
+	var s: int = remaining_sec
 	return "%02d:%02d:%02d" % [h, m, s]
 
 func _get_current_phi() -> float:
-	if AdaptiveDifficulty and AdaptiveDifficulty.has_method("get_window_metrics"):
-		return snapf(AdaptiveDifficulty.get_window_metrics().get("proficiency_index", 0.0), 4)
+	if AdaptiveDifficulty and AdaptiveDifficulty.has_method("_calculate_window_metrics"):
+		return snapf(AdaptiveDifficulty._calculate_window_metrics().get("proficiency_index", 0.0), 4)
 	return 0.0
 
 func _get_current_wma() -> float:
-	if AdaptiveDifficulty and AdaptiveDifficulty.has_method("get_window_metrics"):
-		return snapf(AdaptiveDifficulty.get_window_metrics().get("weighted_accuracy", 0.0), 4)
+	if AdaptiveDifficulty and AdaptiveDifficulty.has_method("_calculate_window_metrics"):
+		return snapf(AdaptiveDifficulty._calculate_window_metrics().get("weighted_accuracy", 0.0), 4)
 	return 0.0
 
 func _get_current_cp() -> float:
-	if AdaptiveDifficulty and AdaptiveDifficulty.has_method("get_window_metrics"):
-		return snapf(AdaptiveDifficulty.get_window_metrics().get("consistency_penalty", 0.0), 4)
+	if AdaptiveDifficulty and AdaptiveDifficulty.has_method("_calculate_window_metrics"):
+		return snapf(AdaptiveDifficulty._calculate_window_metrics().get("consistency_penalty", 0.0), 4)
 	return 0.0
 
-
-func _calc_snapshot_stats(
-	key: String,
-	decimals: int = 1,
-	ignore_negative: bool = false,
-	default_value: float = 0.0
-) -> Dictionary:
-	if perf_snapshots.is_empty():
-		return {
-			"start": snapf(default_value, decimals),
-			"min": snapf(default_value, decimals),
-			"max": snapf(default_value, decimals),
-			"avg": snapf(default_value, decimals),
-		}
-
-	var values: Array[float] = []
-	for s in perf_snapshots:
-		if not s.has(key):
-			continue
-		var v := float(s.get(key, default_value))
-		if ignore_negative and v < 0.0:
-			continue
-		values.append(v)
-
-	if values.is_empty():
-		return {
-			"start": snapf(default_value, decimals),
-			"min": snapf(default_value, decimals),
-			"max": snapf(default_value, decimals),
-			"avg": snapf(default_value, decimals),
-		}
-
-	var start_val := values[0]
-	var min_val := values[0]
-	var max_val := values[0]
-	var total := 0.0
-	for v in values:
-		min_val = min(min_val, v)
-		max_val = max(max_val, v)
-		total += v
-	var avg_val := total / float(values.size())
-
-	return {
-		"start": snapf(start_val, decimals),
-		"min": snapf(min_val, decimals),
-		"max": snapf(max_val, decimals),
-		"avg": snapf(avg_val, decimals),
-	}
+func _get_session_droplets_earned() -> int:
+	if GameManager and GameManager.has_method("get"):
+		return int(GameManager.get("session_droplets_earned"))
+	return total_droplets_earned
 
 func _calc_fps_avg() -> float:
-	# Use PerformanceProfiler.fps_avg directly — it is the running weighted average
-	# computed from the last 60 real frames (freeze frames fps<2 excluded).
-	# The old approach averaged fps_avg FIELDS from snapshots = average of averages,
-	# which gave lower accuracy and was still polluted by pre-fix data.
-	if PerformanceProfiler:
-		return snapf(PerformanceProfiler.fps_avg, 1)
 	if perf_snapshots.is_empty():
-		return 0.0
+		return snapf(PerformanceProfiler.fps_avg if PerformanceProfiler else 0.0, 1)
 	var total := 0.0
 	for s in perf_snapshots:
-		total += float(s.get("fps", 0.0))  # use raw fps, not fps_avg
+		total += float(s.get("fps_avg", 0.0))
 	return snapf(total / float(perf_snapshots.size()), 1)
 
 func _calc_drop_rate() -> float:
@@ -1325,7 +672,7 @@ func _calc_efficiency_pct() -> float:
 
 func _check_iso_pass() -> bool:
 	if PerformanceProfiler:
-		return PerformanceProfiler.check_iso_compliance()
+		return PerformanceProfiler._check_iso_compliance()
 	return false
 
 func _calc_sp_avg_accuracy() -> float:
@@ -1356,68 +703,29 @@ func _calc_mp_win_rate() -> float:
 		return 0.0
 	return snapf(float(_count_mp_wins()) / float(mp_rounds.size()) * 100.0, 1)
 
-
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# MP LOCAL PERFORMANCE HELPERS (Per-Device Metrics)
+# THESIS DEFENCE DATA ACCESSORS
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-func _calc_mp_local_total_score() -> int:
-	var total: int = 0
-	for rec in mp_local_performance:
-		total += int(rec.get("my_score", 0))
-	return total
+func _get_fps_std_dev() -> float:
+	if PerformanceProfiler and PerformanceProfiler.has_method("get_fps_std_dev"):
+		return snapf(PerformanceProfiler.get_fps_std_dev(), 2)
+	return 0.0
 
-func _calc_mp_local_avg_score() -> float:
-	if mp_local_performance.is_empty():
-		return 0.0
-	return snapf(float(_calc_mp_local_total_score()) / float(mp_local_performance.size()), 1)
+## Temperature heat curve — bucketed 1-second samples for DevStats display.
+func get_temp_curve() -> Array:
+	if PerformanceProfiler and PerformanceProfiler.has_method("get_temp_curve"):
+		return PerformanceProfiler.get_temp_curve()
+	return []
 
-func _calc_mp_local_avg_accuracy() -> float:
-	if mp_local_performance.is_empty():
-		return 0.0
-	var sum: float = 0.0
-	for rec in mp_local_performance:
-		sum += float(rec.get("my_accuracy_pct", 0.0))
-	return snapf(sum / float(mp_local_performance.size()), 1)
+## Memory usage over time — bucketed snapshots for leak-detection display.
+func get_memory_trend() -> Array:
+	if PerformanceProfiler and PerformanceProfiler.has_method("get_memory_curve"):
+		return PerformanceProfiler.get_memory_curve()
+	return []
 
-func _calc_mp_local_avg_reaction_time() -> float:
-	if mp_local_performance.is_empty():
-		return 0.0
-	var sum: float = 0.0
-	for rec in mp_local_performance:
-		sum += float(rec.get("my_reaction_time_s", 0.0))
-	return snapf(sum / float(mp_local_performance.size()), 2)
-
-func _calc_mp_local_total_mistakes() -> int:
-	var total: int = 0
-	for rec in mp_local_performance:
-		total += int(rec.get("my_mistakes", 0))
-	return total
-
-func _count_mp_local_wins() -> int:
-	var wins: int = 0
-	for rec in mp_local_performance:
-		if rec.get("team_success", false):
-			wins += 1
-	return wins
-
-func _calc_mp_local_win_rate() -> float:
-	if mp_local_performance.is_empty():
-		return 0.0
-	return snapf(float(_count_mp_local_wins()) / float(mp_local_performance.size()) * 100.0, 1)
-
-func _calc_mp_avg_latency() -> float:
-	if mp_connection_metrics.is_empty():
-		return 0.0
-	var sum: float = 0.0
-	for rec in mp_connection_metrics:
-		sum += float(rec.get("latency_ms", 0.0))
-	return snapf(sum / float(mp_connection_metrics.size()), 1)
-
-func _calc_mp_avg_packet_loss() -> float:
-	if mp_connection_metrics.is_empty():
-		return 0.0
-	var sum: float = 0.0
-	for rec in mp_connection_metrics:
-		sum += float(rec.get("packet_loss_pct", 0.0))
-	return snapf(sum / float(mp_connection_metrics.size()), 2)
+## Structured DL baseline comparison table for Chapter 4.
+func get_dl_comparison() -> Array:
+	if PerformanceProfiler and PerformanceProfiler.has_method("get_dl_comparison"):
+		return PerformanceProfiler.get_dl_comparison()
+	return []

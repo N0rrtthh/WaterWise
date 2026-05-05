@@ -136,7 +136,8 @@ func _process(delta: float) -> void:
 				
 				if water_missed >= MAX_MISSED:
 					water_missed = 0
-					report_miss_to_host()
+					_log("💔 Too many misses - game failed!")
+					end_game(false)
 
 func _on_water_caught(area: Area2D, stream: Area2D) -> void:
 	if not area.has_meta("capacity"):

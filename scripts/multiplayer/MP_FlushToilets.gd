@@ -34,6 +34,8 @@ func _on_multiplayer_ready() -> void:
 
 func _on_game_start() -> void:
 	spawn_timer.start()
+	if AutoPlayManager and AutoPlayManager.is_mp_auto_play_enabled():
+		AutoPlayManager.register_multiplayer_game(self, my_role)
 
 func _create_water_indicator() -> void:
 	var panel = PanelContainer.new()

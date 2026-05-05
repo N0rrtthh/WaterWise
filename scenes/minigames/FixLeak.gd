@@ -101,7 +101,6 @@ func _create_leak() -> Node2D:
 	pipe.color = Color(0.5, 0.5, 0.5)
 	pipe.size = Vector2(60, 20)
 	pipe.position = Vector2(-30, -10)
-	pipe.mouse_filter = Control.MOUSE_FILTER_IGNORE  # Let touch events pass through to Area2D
 	leak_node.add_child(pipe)
 	
 	# Water drip indicator
@@ -109,7 +108,6 @@ func _create_leak() -> Node2D:
 	drip.color = Color(0.2, 0.6, 1.0, 0.8)
 	drip.size = Vector2(10, 10)
 	drip.position = Vector2(-5, 10)
-	drip.mouse_filter = Control.MOUSE_FILTER_IGNORE  # Let touch events pass through
 	leak_node.add_child(drip)
 	
 	# Click area (Area2D is more reliable than embedded Control here)
@@ -119,7 +117,7 @@ func _create_leak() -> Node2D:
 
 	var shape = CollisionShape2D.new()
 	var circle = CircleShape2D.new()
-	circle.radius = 70.0  # Larger radius for mobile tap reliability
+	circle.radius = 46.0
 	shape.shape = circle
 	click_area.add_child(shape)
 
@@ -140,7 +138,6 @@ func _create_leak() -> Node2D:
 	icon.text = "🔧" if show_hints else ""
 	icon.add_theme_font_size_override("font_size", 28)
 	icon.position = Vector2(-18, -52)
-	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE  # Let touch events pass through
 	leak_node.add_child(icon)
 	
 	# Metadata
@@ -201,7 +198,7 @@ func _input(event: InputEvent) -> void:
 			continue
 		if leak.get_meta("fixed", false):
 			continue
-		if leak.position.distance_to(click_pos) <= 90.0:
+		if leak.position.distance_to(click_pos) <= 60.0:
 			_on_leak_clicked(leak)
 			break
 
