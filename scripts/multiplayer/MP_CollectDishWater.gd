@@ -1,4 +1,4 @@
-extends MultiplayerMiniGameBase
+extends "res://scripts/multiplayer/MultiplayerMiniGameBase.gd"
 
 ## Bundle 5: Collect Dish Water
 ## P1 catches water from dishwashing

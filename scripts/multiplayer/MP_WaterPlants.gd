@@ -1,4 +1,4 @@
-extends MultiplayerMiniGameBase
+extends "res://scripts/multiplayer/MultiplayerMiniGameBase.gd"
 
 ## ═══════════════════════════════════════════════════════════════════
 ## MP_WaterPlants - Player 2 Game (Water Reuse Theme)

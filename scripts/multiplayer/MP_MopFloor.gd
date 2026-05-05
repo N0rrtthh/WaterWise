@@ -1,4 +1,4 @@
-extends MultiplayerMiniGameBase
+extends "res://scripts/multiplayer/MultiplayerMiniGameBase.gd"
 
 ## Bundle 4: Mop Floor with Laundry Water
 ## P2 mops floors using P1's laundry water

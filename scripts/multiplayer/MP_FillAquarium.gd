@@ -1,4 +1,4 @@
-extends MultiplayerMiniGameBase
+extends "res://scripts/multiplayer/MultiplayerMiniGameBase.gd"
 
 ## Bundle 3: Fill Aquarium with Rain
 ## P2 fills aquarium with P1's rainwater

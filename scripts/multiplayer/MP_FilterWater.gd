@@ -1,4 +1,4 @@
-extends MultiplayerMiniGameBase
+extends "res://scripts/multiplayer/MultiplayerMiniGameBase.gd"
 
 ## ═══════════════════════════════════════════════════════════════════
 ## MP_FilterWater - Player 2 Game

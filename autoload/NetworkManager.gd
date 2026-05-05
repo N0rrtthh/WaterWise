@@ -308,6 +308,7 @@ func _on_connected_to_server() -> void:
 	# Called when client successfully connects to server
 	_log("✅ Connected to server!")
 	_log("🎮 You are Player 2 (User)")
+	connection_active = true
 	
 	# Register self with server
 	rpc_id(1, "_register_player", multiplayer.get_unique_id(), "Player 2 (Client)")
@@ -558,6 +559,17 @@ func _load_game_scene(scene_path: String) -> void:
 	if result != OK:
 		_log("❌ Failed to change scene, error code: " + str(result))
 
+@rpc("authority", "call_local", "reliable")
+func _reset_round_status() -> void:
+	# Clear stale completion and in-game ready state before a new game loads.
+	round_completion_status.clear()
+	round_in_progress = false
+	_ready_signal_emitted = false
+	for peer_id in players.keys():
+		players[peer_id]["ready"] = false
+		player_ready_changed.emit(peer_id, false)
+	_log("🔄 Round status reset")
+
 func start_multiplayer_game_pair(p1_scene: String, p2_scene: String) -> void:
 	# Start multiplayer game with DIFFERENT scenes for each player (host only)
 	if not is_host:
@@ -569,6 +581,9 @@ func start_multiplayer_game_pair(p1_scene: String, p2_scene: String) -> void:
 		return
 	
 	game_in_progress = true
+	
+	# Reset round completion state on ALL peers before loading new scenes
+	rpc("_reset_round_status")
 	
 	_log("🎮 Loading INTERCONNECTED games:")
 	_log("   Player 1 (Host) → %s" % p1_scene)
@@ -1197,10 +1212,7 @@ func _execute_countdown(count: int) -> void:
 			rpc("_execute_countdown", count - 1)
 	else:
 		_log("🎮 GO! Round started")
-		# Signal game can start
-		var current_scene = get_tree().current_scene
-		if current_scene and current_scene.has_method("on_countdown_complete"):
-			current_scene.on_countdown_complete()
+		# The current scene already receives round_starting and handles GO locally.
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # ROUND MANAGEMENT
@@ -1508,6 +1520,9 @@ func _transition_to_next_round() -> void:
 @rpc("authority", "call_local", "reliable")
 func _load_next_round(level_set: Dictionary, _total_score: int, lives: int, rounds: int) -> void:
 	# Load next round for all players
+	# Clear stale round completion and ready state BEFORE changing scenes
+	_reset_round_status()
+
 	var my_player_num = get_local_player_num()
 	var my_game_scene: String
 	
