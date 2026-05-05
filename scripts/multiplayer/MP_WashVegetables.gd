@@ -1,4 +1,4 @@
-extends MultiplayerMiniGameBase
+extends "res://scripts/multiplayer/MultiplayerMiniGameBase.gd"
 
 ## ═══════════════════════════════════════════════════════════════════
 ## MP_WashVegetables - Player 1 Game (Water Reuse Theme)

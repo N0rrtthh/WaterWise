@@ -61,6 +61,9 @@ func _ready() -> void:
 	
 	if not NetworkManager or not NetworkManager.is_multiplayer_connected():
 		push_error(" MultiplayerMiniGameBase: Not connected to multiplayer")
+		# Return to lobby instead of leaving a blank screen
+		if GameManager:
+			GameManager.return_to_multiplayer_lobby()
 		return
 	
 	# Get player info
@@ -82,6 +85,10 @@ func _ready() -> void:
 	
 	# Initialize game-specific setup FIRST (sets game_name and game_duration)
 	_on_multiplayer_ready()
+	
+	# Register with AutoPlayManager so the MP bot can drive this game
+	if AutoPlayManager and AutoPlayManager.is_mp_auto_play_enabled():
+		AutoPlayManager.register_multiplayer_game(self, my_role)
 	
 	# Create background
 	_create_background()
@@ -526,6 +533,22 @@ func _create_instruction_overlay() -> void:
 	tween.tween_property(start_label, "modulate:a", 0.3, 0.8)
 	tween.tween_property(start_label, "modulate:a", 1.0, 0.8)
 
+	# Transparent full-screen button so mouse, touch, and AutoPlay can dismiss.
+	var click_catcher = Button.new()
+	click_catcher.name = "ClickCatcher"
+	click_catcher.set_anchors_preset(Control.PRESET_FULL_RECT)
+	click_catcher.focus_mode = Control.FOCUS_NONE
+	click_catcher.flat = true
+	click_catcher.mouse_filter = Control.MOUSE_FILTER_STOP
+	click_catcher.text = ""
+	var empty_style = StyleBoxEmpty.new()
+	click_catcher.add_theme_stylebox_override("normal", empty_style)
+	click_catcher.add_theme_stylebox_override("hover", empty_style)
+	click_catcher.add_theme_stylebox_override("pressed", empty_style)
+	click_catcher.add_theme_stylebox_override("focus", empty_style)
+	click_catcher.pressed.connect(_on_instruction_dismissed)
+	instruction_overlay.add_child(click_catcher)
+
 func show_instructions(instructions_text: String) -> void:
 	# Show instruction overlay with custom text
 	if instruction_overlay:
@@ -549,34 +572,47 @@ func show_instructions(instructions_text: String) -> void:
 		
 		instruction_overlay.visible = true
 		instruction_overlay.mouse_filter = Control.MOUSE_FILTER_STOP # Block input until clicked
-		
-		# Wait for click to dismiss
-		instruction_overlay.gui_input.connect(_on_instruction_clicked)
+		var click_catcher = instruction_overlay.get_node_or_null("ClickCatcher")
+		if click_catcher and click_catcher is Button:
+			click_catcher.disabled = false
 
 func _on_instruction_clicked(event: InputEvent) -> void:
 	# Handle click on instruction overlay
-	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
-		if instruction_overlay and instruction_overlay.visible:
-			instruction_overlay.gui_input.disconnect(_on_instruction_clicked)
-			
-			# Fade out instructions
-			var tween = create_tween()
-			tween.set_loops(1)
-			tween.tween_property(instruction_overlay, "modulate:a", 0.0, 0.5)
-			tween.tween_callback(func(): 
-				instruction_overlay.visible = false
-				instruction_overlay.modulate.a = 1.0
-			)
-			
-			# Show waiting overlay and notify readiness
-			_show_waiting_for_start()
-			if NetworkManager.has_method("set_local_player_ready"):
-				NetworkManager.set_local_player_ready()
-			else:
-				# Fallback for older NetworkManager versions
-				if NetworkManager.is_server():
-					NetworkManager.start_countdown()
-				_show_countdown_overlay()
+	var is_mouse_click = (
+		event is InputEventMouseButton
+		and event.pressed
+		and event.button_index == MOUSE_BUTTON_LEFT
+	)
+	var is_touch = event is InputEventScreenTouch and event.pressed
+	if is_mouse_click or is_touch:
+		_on_instruction_dismissed()
+
+func _on_instruction_dismissed() -> void:
+	if not instruction_overlay or not instruction_overlay.visible:
+		return
+
+	var click_catcher = instruction_overlay.get_node_or_null("ClickCatcher")
+	if click_catcher and click_catcher is Button:
+		click_catcher.disabled = true
+
+	# Fade out instructions
+	var tween = create_tween()
+	tween.set_loops(1)
+	tween.tween_property(instruction_overlay, "modulate:a", 0.0, 0.5)
+	tween.tween_callback(func(): 
+		instruction_overlay.visible = false
+		instruction_overlay.modulate.a = 1.0
+	)
+
+	# Show waiting overlay and notify readiness
+	_show_waiting_for_start()
+	if NetworkManager.has_method("set_local_player_ready"):
+		NetworkManager.set_local_player_ready()
+	else:
+		# Fallback for older NetworkManager versions
+		if NetworkManager.is_server():
+			NetworkManager.start_countdown()
+		_show_countdown_overlay()
 
 func _show_waiting_for_start() -> void:
 	# Show waiting message while waiting for partner to click ready
@@ -771,6 +807,12 @@ func add_score(points: int) -> void:
 	if win_quota > 0 and local_score >= win_quota:
 		_log(" Quota met! (%d/%d)" % [local_score, win_quota])
 		end_game(true)
+
+func report_miss_to_host() -> void:
+	# Report a miss event - deducts one team life via the host
+	_log("💔 Miss reported - losing team life")
+	if GameManager:
+		GameManager.rpc("report_damage")
 
 # 
 # PAUSE HANDLING

@@ -1,4 +1,4 @@
-extends MultiplayerMiniGameBase
+extends "res://scripts/multiplayer/MultiplayerMiniGameBase.gd"
 
 ## Bundle 2: Shower Water Collection
 ## P1 collects shower water in buckets

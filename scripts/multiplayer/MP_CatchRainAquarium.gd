@@ -1,4 +1,4 @@
-extends MultiplayerMiniGameBase
+extends "res://scripts/multiplayer/MultiplayerMiniGameBase.gd"
 
 ## Bundle 3: Rain Collection for Aquarium
 ## P1 catches raindrops for aquarium

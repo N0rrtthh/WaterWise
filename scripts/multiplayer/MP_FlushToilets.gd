@@ -1,4 +1,4 @@
-extends MultiplayerMiniGameBase
+extends "res://scripts/multiplayer/MultiplayerMiniGameBase.gd"
 
 ## Bundle 2: Flush Toilet with Shower Water
 ## P2 uses P1's shower water to flush toilet

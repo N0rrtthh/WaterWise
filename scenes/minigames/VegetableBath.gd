@@ -1,4 +1,4 @@
-extends MiniGameBase
+extends "res://scripts/MiniGameBase.gd"
 
 var veggies_to_wash: int = 5
 var veggies_washed: int = 0

@@ -240,6 +240,9 @@ func _sync_local_ready(ready_value: bool) -> void:
 	is_ready = ready_value
 	# Use set_pressed_no_signal so we don't re-enter _on_ready_toggled
 	ready_checkbox.set_pressed_no_signal(ready_value)
+	# Keep NetworkManager's authoritative ready state in sync with the lobby UI.
+	if NetworkManager:
+		NetworkManager.set_ready(ready_value)
 	# Sync via the lobby's own RPC (call_local so our dict updates too).
 	# NOTE: NetworkManager.players may be empty because the lobby uses
 	# GameManager.host_game(), not NetworkManager.create_server().
@@ -383,7 +386,12 @@ func _do_start_game() -> void:
 	print("🎮 Starting GameManager multiplayer session flow...")
 	GameManager.rpc("_begin_multiplayer_session_rpc")
 	await get_tree().process_frame
-	GameManager.rpc("_load_next_multiplayer_minigame")
+	# Use LevelSets so P1 and P2 get paired complementary tasks
+	if not LevelSets:
+		push_error("❌ LevelSets not available!")
+		return
+	var level_set = LevelSets.get_random_level_set()
+	_load_level_set_games(level_set)
 
 func _on_disconnect_pressed() -> void:
 	if GameManager:
