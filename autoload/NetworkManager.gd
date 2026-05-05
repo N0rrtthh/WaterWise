@@ -90,6 +90,73 @@ func _ready() -> void:
 	
 	_log("NetworkManager initialized")
 
+func adopt_existing_peer(as_host: bool) -> bool:
+	# Adopt an already-created multiplayer peer (e.g. from GameManager).
+	var existing_peer = multiplayer.multiplayer_peer
+	if existing_peer == null:
+		_log("⚠️ No existing multiplayer peer to adopt")
+		return false
+
+	if network == existing_peer and connection_active:
+		return true
+
+	network = existing_peer
+	is_host = as_host
+	local_player_id = 1 if as_host else 2
+
+	# Server is active immediately; client will flip on connect signal.
+	if not as_host and network.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED:
+		connection_active = true
+	else:
+		connection_active = as_host
+
+	remote_player_id = 0
+	_ready_signal_emitted = false
+
+	# Ensure multiplayer signals are connected.
+	if not multiplayer.peer_connected.is_connected(_on_player_connected):
+		multiplayer.peer_connected.connect(_on_player_connected)
+	if not multiplayer.peer_disconnected.is_connected(_on_player_disconnected):
+		multiplayer.peer_disconnected.connect(_on_player_disconnected)
+	if not multiplayer.connected_to_server.is_connected(_on_connected_to_server):
+		multiplayer.connected_to_server.connect(_on_connected_to_server)
+	if not multiplayer.connection_failed.is_connected(_on_connection_failed):
+		multiplayer.connection_failed.connect(_on_connection_failed)
+	if not multiplayer.server_disconnected.is_connected(_on_server_disconnected):
+		multiplayer.server_disconnected.connect(_on_server_disconnected)
+
+	# Bootstrap local player entry (skip if peer id is not assigned yet).
+	players.clear()
+	var my_peer_id = multiplayer.get_unique_id()
+	if my_peer_id > 0:
+		var my_label = "Player 1 (Host)" if as_host else "Player 2 (Client)"
+		players[my_peer_id] = {
+			"player_num": local_player_id,
+			"ready": false,
+			"name": my_label
+		}
+
+		# If peers are already connected, register them locally.
+		for peer_id in multiplayer.get_peers():
+			if peer_id == my_peer_id:
+				continue
+			var other_num = 2 if local_player_id == 1 else 1
+			players[peer_id] = {
+				"player_num": other_num,
+				"ready": false,
+				"name": "Player %d" % other_num
+			}
+			remote_player_id = peer_id
+
+		if not g_counter.has(my_peer_id):
+			g_counter[my_peer_id] = 0
+
+	if player_roles.is_empty():
+		player_roles = {1: "Collector", 2: "User"}
+
+	_log("🔄 Adopted existing multiplayer peer")
+	return true
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # HOST/SERVER FUNCTIONS
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

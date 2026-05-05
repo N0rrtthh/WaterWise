@@ -540,6 +540,10 @@ func apply_mobile_scaling(node: Control) -> void:
 	if not node:
 		push_warning("MobileUIManager.apply_mobile_scaling: node is null")
 		return
+
+	# Avoid compounding scale when a parent is already scaled for mobile.
+	if _has_mobile_scaled_ancestor(node):
+		return
 	
 	_log_debug("Scaling Control node: %s (original size: %s)" % [node.name, node.size])
 
@@ -548,6 +552,7 @@ func apply_mobile_scaling(node: Control) -> void:
 	
 	# Apply UI scale factor
 	node.scale = base_scale * mobile_ui_scale
+	node.set_meta("_mobile_scaled_root", true)
 	
 	# Apply button-specific handling
 	if node is Button:
@@ -586,6 +591,15 @@ func apply_mobile_scaling(node: Control) -> void:
 	UIScalerUtil.ensure_minimum_size(node, mobile_touch_target_min_size)
 	
 	_log_debug("Scaled Control node: %s (final size: %s)" % [node.name, node.size])
+
+
+func _has_mobile_scaled_ancestor(node: Control) -> bool:
+	var current = node.get_parent()
+	while current and current is Control:
+		if current.has_meta("_mobile_scaled_root"):
+			return true
+		current = current.get_parent()
+	return false
 
 
 func _get_or_store_base_scale(node: Control) -> Vector2:
