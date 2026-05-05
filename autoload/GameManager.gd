@@ -291,6 +291,8 @@ func host_game(port: int = DEFAULT_PORT) -> bool:
 		return false
 	
 	multiplayer.multiplayer_peer = peer
+	if NetworkManager:
+		NetworkManager.adopt_existing_peer(true)
 	is_host = true
 	is_multiplayer_connected = true
 	local_player_num = 1
@@ -321,6 +323,8 @@ func join_game(ip: String, port: int = DEFAULT_PORT) -> bool:
 		return false
 	
 	multiplayer.multiplayer_peer = peer
+	if NetworkManager:
+		NetworkManager.adopt_existing_peer(false)
 	is_host = false
 	local_player_num = 2
 	current_game_mode = GameMode.MULTIPLAYER_COOP
@@ -334,7 +338,9 @@ func join_game(ip: String, port: int = DEFAULT_PORT) -> bool:
 func disconnect_multiplayer() -> void:
 	# Disconnect from multiplayer session
 	_disconnect_multiplayer_callbacks()
-	if peer:
+	if NetworkManager and NetworkManager.network:
+		NetworkManager.disconnect_multiplayer()
+	elif peer:
 		peer.close()
 	if multiplayer.multiplayer_peer:
 		multiplayer.multiplayer_peer = null
