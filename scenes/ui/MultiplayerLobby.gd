@@ -326,20 +326,28 @@ func _on_ready_toggled(toggled: bool) -> void:
 
 func _on_auto_play_pressed() -> void:
 	var enabling: bool = auto_play_button.button_pressed
+	# Sync to partner WITH call_local so both sides run the same setup
+	rpc("_sync_auto_play_state", enabling)
+
+@rpc("any_peer", "call_local", "reliable")
+func _sync_auto_play_state(enabled: bool) -> void:
 	if AutoPlayManager:
-		AutoPlayManager.set_mp_auto_play_enabled(enabling)
-	if enabling:
-		auto_play_button.text = "🤖 AUTO PLAY ON"
-		auto_play_button.modulate = Color(1.2, 1.0, 0.4)  # Yellow tint when active
+		AutoPlayManager.set_mp_auto_play_enabled(enabled)
+	if auto_play_button:
+		auto_play_button.set_pressed_no_signal(enabled)
+		if enabled:
+			auto_play_button.text = "🤖 AUTO PLAY ON"
+			auto_play_button.modulate = Color(1.2, 1.0, 0.4)
+		else:
+			auto_play_button.text = "🤖 AUTO PLAY"
+			auto_play_button.modulate = Color.WHITE
+	if enabled:
 		# Auto mark self as ready
 		if _is_connected() and not is_ready:
 			_sync_local_ready(true)
-		# Auto-start immediately if host and everyone already ready
+		# Auto-start if host and all players are already ready
 		if _is_host() and _are_all_players_ready():
 			_do_start_game()
-	else:
-		auto_play_button.text = "🤖 AUTO PLAY"
-		auto_play_button.modulate = Color.WHITE
 
 
 func _on_network_player_ready_changed(peer_id: int, ready_state: bool) -> void:
@@ -347,6 +355,10 @@ func _on_network_player_ready_changed(peer_id: int, ready_state: bool) -> void:
 	ready_status_by_peer[peer_id] = ready_state
 	_update_player_list()
 	_update_start_button_state()
+	# If host and autoplay is on, auto-start the moment all players become ready
+	if _is_host() and ready_state and _are_all_players_ready():
+		if AutoPlayManager and AutoPlayManager.is_mp_auto_play_enabled():
+			_do_start_game()
 
 
 func _on_network_player_connected(peer_id: int, _player_num: int) -> void:

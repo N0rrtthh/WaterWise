@@ -266,6 +266,23 @@ func _check_all_players_ready() -> void:
 		start_countdown()
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# AUTO-PLAY SYNC
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+@rpc("any_peer", "reliable")
+func sync_mp_auto_play(enabled: bool) -> void:
+	## Called on the REMOTE peer when a player toggles MP auto-play in the lobby.
+	## Mirrors the state and, when enabling, also marks the local player as lobby-ready
+	## so the host can detect that both are ready and auto-start.
+	var ap = get_node_or_null("/root/AutoPlayManager")
+	if ap and ap.has_method("set_mp_auto_play_enabled"):
+		ap.set_mp_auto_play_enabled(enabled)
+	_log("🤖 MP AutoPlay synced from partner: %s" % ("ON" if enabled else "OFF"))
+	# When partner enables autoplay, mark self ready so host can auto-start
+	if enabled and connection_active:
+		set_ready(true)
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # CLIENT FUNCTIONS
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 

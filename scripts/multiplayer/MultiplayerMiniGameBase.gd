@@ -51,6 +51,7 @@ var waiting_overlay: Control
 var pause_menu: Control
 var instruction_overlay: Control
 var timer_label: Label
+var _instruction_dismissed: bool = false  # Guard against re-entry in _on_instruction_dismissed
 
 # 
 # INITIALIZATION
@@ -588,8 +589,12 @@ func _on_instruction_clicked(event: InputEvent) -> void:
 		_on_instruction_dismissed()
 
 func _on_instruction_dismissed() -> void:
+	# Guard: only run once per game instance (AutoPlay fires this every frame otherwise)
+	if _instruction_dismissed:
+		return
 	if not instruction_overlay or not instruction_overlay.visible:
 		return
+	_instruction_dismissed = true
 
 	var click_catcher = instruction_overlay.get_node_or_null("ClickCatcher")
 	if click_catcher and click_catcher is Button:
@@ -614,9 +619,18 @@ func _on_instruction_dismissed() -> void:
 			NetworkManager.start_countdown()
 		_show_countdown_overlay()
 
+	# HOST FALLBACK: if partner never signals ready within 6 seconds, force-start countdown.
+	# This covers the case where the client's ready RPC is lost or arrives late.
+	if NetworkManager.is_server():
+		await get_tree().create_timer(6.0).timeout
+		if not game_active:
+			_log("⚠️ Partner ready timeout — force-starting countdown")
+			NetworkManager.start_countdown()
+
 func _show_waiting_for_start() -> void:
 	# Show waiting message while waiting for partner to click ready
 	if not hud_layer: return
+	_hide_waiting_for_start_overlay()
 	
 	var overlay = Control.new()
 	overlay.name = "WaitingStartOverlay"
@@ -634,11 +648,18 @@ func _show_waiting_for_start() -> void:
 	label.add_theme_font_size_override("font_size", 32)
 	overlay.add_child(label)
 
+func _hide_waiting_for_start_overlay() -> void:
+	if not hud_layer:
+		return
+	for child in hud_layer.get_children():
+		if child.name == "WaitingStartOverlay":
+			child.visible = false
+			child.queue_free()
+
 func _on_countdown_tick(count: int) -> void:
 	# Countdown tick received
 	# Remove waiting overlay if exists
-	var waiting = hud_layer.get_node_or_null("WaitingStartOverlay")
-	if waiting: waiting.queue_free()
+	_hide_waiting_for_start_overlay()
 	
 	_show_countdown_overlay() # Ensure countdown is visible
 	
@@ -668,6 +689,12 @@ func _on_countdown_tick(count: int) -> void:
 
 func start_game() -> void:
 	# Start the game (called after countdown or immediately)
+	_hide_waiting_for_start_overlay()
+	_hide_countdown_overlay()
+	if instruction_overlay:
+		instruction_overlay.visible = false
+	if waiting_overlay:
+		waiting_overlay.visible = false
 	game_active = true
 	game_started_time = Time.get_ticks_msec()
 	game_started.emit()
@@ -688,6 +715,14 @@ func _update_timer_display() -> void:
 	if not game_active:
 		ui_timer.stop()
 		return
+
+	# Gameplay is active; no pre-start waiting or instruction overlay should remain visible.
+	_hide_waiting_for_start_overlay()
+	_hide_countdown_overlay()
+	if instruction_overlay:
+		instruction_overlay.visible = false
+	if waiting_overlay:
+		waiting_overlay.visible = false
 		
 	var elapsed = (Time.get_ticks_msec() - game_started_time) / 1000.0
 	var remaining = max(0.0, game_duration - elapsed)
