@@ -695,8 +695,8 @@ func _load_translations() -> void:
 			"tl": "%s: %s"
 		},
 		"posttest_interpretation_line": {
-			"en": "[CHECK] %s",
-			"tl": "[CHECK] %s"
+			"en": "Interpretation: %s",
+			"tl": "Interpretasyon: %s"
 		},
 		"export_data": {
 			"en": "📁 EXPORT DATA",

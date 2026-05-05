@@ -41,10 +41,12 @@ var particles_check: CheckBox
 var dev_mode_check: CheckBox
 var dev_profiler_check: CheckBox
 var dev_algorithm_check: CheckBox
+var auto_play_check: CheckBox
+var mp_auto_play_check: CheckBox
+var autoplay_duration_spinbox: SpinBox
 var dev_stats_button: Button
 var erase_data_button: Button
 var export_data_button: Button
-var autoplay_duration_spinbox: SpinBox
 
 var _feedback_tweens: Dictionary = {}
 var _panel_ambient_tween: Tween
@@ -336,6 +338,9 @@ func _setup_interaction_polish() -> void:
 		dev_mode_check,
 		dev_profiler_check,
 		dev_algorithm_check,
+		auto_play_check,
+		mp_auto_play_check,
+		autoplay_duration_spinbox,
 		volume_slider,
 	]
 
@@ -678,27 +683,31 @@ func _setup_dev_mode_section() -> void:
 	dev_algorithm_check.toggled.connect(_on_dev_algorithm_toggled)
 	dev_grid.add_child(dev_algorithm_check)
 
-	var autoplay_label = Label.new()
+	# SP Auto-Play
+	var ap_label = Label.new()
 	_register_localized_text_control(
-		autoplay_label,
+		ap_label,
 		"settings_auto_play",
-		"Auto-Play Mode (Testing)"
+		"🤖 Auto-Play (SP)"
 	)
-	autoplay_label.add_theme_font_size_override("font_size", 18)
-	dev_grid.add_child(autoplay_label)
+	ap_label.add_theme_font_size_override("font_size", 18)
+	dev_grid.add_child(ap_label)
 
-	var autoplay_check = CheckBox.new()
+	auto_play_check = CheckBox.new()
 	_register_localized_text_control(
-		autoplay_check,
+		auto_play_check,
 		"settings_enable",
 		"Enable"
 	)
-	autoplay_check.button_pressed = bool(
-		_get_dev_setting("auto_play_enabled", false)
-	)
-	autoplay_check.toggled.connect(_on_auto_play_toggled)
-	dev_grid.add_child(autoplay_check)
+	var save_mgr_ap = get_node_or_null("/root/SaveManager")
+	auto_play_check.button_pressed = bool(
+		save_mgr_ap.get_setting("auto_play_enabled", false)
+	) if save_mgr_ap else false
+	auto_play_check.disabled = not dev_mode_enabled
+	auto_play_check.toggled.connect(_on_auto_play_toggled)
+	dev_grid.add_child(auto_play_check)
 
+	# Duration
 	var duration_label = Label.new()
 	_register_localized_text_control(
 		duration_label,
@@ -713,7 +722,7 @@ func _setup_dev_mode_section() -> void:
 
 	autoplay_duration_spinbox = SpinBox.new()
 	autoplay_duration_spinbox.min_value = 0
-	autoplay_duration_spinbox.max_value = 180  # 3 hours max
+	autoplay_duration_spinbox.max_value = 180
 	autoplay_duration_spinbox.step = 5
 	autoplay_duration_spinbox.suffix = " min"
 	autoplay_duration_spinbox.custom_minimum_size = Vector2(150, 40)
@@ -729,8 +738,24 @@ func _setup_dev_mode_section() -> void:
 	duration_hint.add_theme_font_size_override("font_size", 14)
 	duration_hint.modulate = Color(0.7, 0.7, 0.7)
 	duration_hbox.add_child(duration_hint)
-
 	dev_grid.add_child(duration_hbox)
+
+	# MP Auto-Play
+	var mp_ap_label = Label.new()
+	mp_ap_label.text = "🤖 Auto-Play (MP)"
+	mp_ap_label.add_theme_font_size_override("font_size", 18)
+	dev_grid.add_child(mp_ap_label)
+
+	mp_auto_play_check = CheckBox.new()
+	_register_localized_text_control(
+		mp_auto_play_check,
+		"settings_enable",
+		"Enable"
+	)
+	mp_auto_play_check.button_pressed = AutoPlayManager.mp_auto_play_enabled if AutoPlayManager else false
+	mp_auto_play_check.disabled = not dev_mode_enabled
+	mp_auto_play_check.toggled.connect(_on_mp_auto_play_toggled)
+	dev_grid.add_child(mp_auto_play_check)
 
 	var note = Label.new()
 	_register_localized_text_control(
@@ -761,8 +786,7 @@ func _setup_dev_mode_section() -> void:
 	erase_data_button.pressed.connect(_on_erase_data_pressed)
 	vbox.add_child(erase_data_button)
 
-	# Add export button (Android only)
-	if OS.has_feature("android"):
+	if FileExporter.is_external_storage_available():
 		export_data_button = Button.new()
 		export_data_button.text = "📤 Export Session Logs"
 		export_data_button.custom_minimum_size = Vector2(0, 60)
@@ -848,6 +872,27 @@ func _on_particles_toggled(pressed: bool) -> void:
 		if save_mgr:
 			save_mgr.set_setting("particles", pressed)
 
+func _on_auto_play_toggled(pressed: bool) -> void:
+	if AudioManager:
+		AudioManager.play_click()
+	if not _get_dev_setting("dev_mode", false):
+		if auto_play_check:
+			auto_play_check.set_pressed_no_signal(false)
+		return
+	_set_dev_setting("auto_play_enabled", pressed)
+	if AutoPlayManager:
+		AutoPlayManager.set_auto_play_enabled(pressed)
+
+func _on_mp_auto_play_toggled(pressed: bool) -> void:
+	if AudioManager:
+		AudioManager.play_click()
+	if not _get_dev_setting("dev_mode", false):
+		if mp_auto_play_check:
+			mp_auto_play_check.set_pressed_no_signal(false)
+		return
+	if AutoPlayManager:
+		AutoPlayManager.set_mp_auto_play_enabled(pressed)
+
 func _get_dev_setting(key: String, default_val: bool = false) -> bool:
 	var save_mgr = get_node_or_null("/root/SaveManager")
 	if save_mgr:
@@ -864,6 +909,12 @@ func _apply_dev_mode_visibility(enabled: bool) -> void:
 		dev_profiler_check.disabled = not enabled
 	if dev_algorithm_check:
 		dev_algorithm_check.disabled = not enabled
+	if auto_play_check:
+		auto_play_check.disabled = not enabled
+	if autoplay_duration_spinbox:
+		autoplay_duration_spinbox.editable = enabled
+	if mp_auto_play_check:
+		mp_auto_play_check.disabled = not enabled
 	if dev_stats_button:
 		dev_stats_button.disabled = not enabled
 	if erase_data_button:
@@ -886,6 +937,12 @@ func _on_erase_data_pressed() -> void:
 	if AutoPlayManager:
 		AutoPlayManager.set_auto_play_enabled(false)
 	get_tree().reload_current_scene()
+
+func _on_auto_play_duration_changed(value: float) -> void:
+	if not _get_dev_setting("dev_mode", false):
+		return
+	if AutoPlayManager:
+		AutoPlayManager.set_auto_play_duration(value)
 
 func _sync_dev_overlay_state() -> void:
 	var dev_mode_enabled = _get_dev_setting("dev_mode", false)
@@ -912,6 +969,14 @@ func _on_dev_mode_toggled(pressed: bool) -> void:
 			dev_profiler_check.set_pressed_no_signal(false)
 		if dev_algorithm_check:
 			dev_algorithm_check.set_pressed_no_signal(false)
+		# Turn off auto-play when dev mode is disabled
+		if auto_play_check:
+			auto_play_check.set_pressed_no_signal(false)
+		if mp_auto_play_check:
+			mp_auto_play_check.set_pressed_no_signal(false)
+		if AutoPlayManager:
+			AutoPlayManager.set_auto_play_enabled(false)
+			AutoPlayManager.set_mp_auto_play_enabled(false)
 
 	_sync_dev_overlay_state()
 
@@ -927,13 +992,6 @@ func _on_dev_profiler_toggled(pressed: bool) -> void:
 	_set_dev_setting("dev_show_profiler", pressed)
 	_sync_dev_overlay_state()
 
-func _on_auto_play_duration_changed(value: float) -> void:
-	if not _get_dev_setting("dev_mode", false):
-		return
-	
-	if AutoPlayManager:
-		AutoPlayManager.set_auto_play_duration(value)
-
 func _on_dev_algorithm_toggled(pressed: bool) -> void:
 	if AudioManager:
 		AudioManager.play_click()
@@ -945,18 +1003,6 @@ func _on_dev_algorithm_toggled(pressed: bool) -> void:
 
 	_set_dev_setting("dev_show_algorithm_overlay", pressed)
 	_sync_dev_overlay_state()
-
-func _on_auto_play_toggled(pressed: bool) -> void:
-	if AudioManager:
-		AudioManager.play_click()
-
-	if not _get_dev_setting("dev_mode", false):
-		return
-
-	_set_dev_setting("auto_play_enabled", pressed)
-	
-	if AutoPlayManager:
-		AutoPlayManager.set_auto_play_enabled(pressed)
 
 func _update_translations() -> void:
 	title_label.text = _loc("settings", "⚙️ SETTINGS")

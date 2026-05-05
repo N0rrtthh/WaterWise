@@ -131,10 +131,10 @@ func _get_save_manager() -> Node:
 func _load_volume_settings() -> void:
 	var save_mgr = _get_save_manager()
 	if save_mgr:
-		music_volume = save_mgr.get_setting("music_volume", 0.8)
-		sfx_volume = save_mgr.get_setting("sfx_volume", 1.0)
+		music_volume = clampf(float(save_mgr.get_setting("music_volume", 0.8)), 0.0, 1.0)
+		sfx_volume = clampf(float(save_mgr.get_setting("sfx_volume", 1.0)), 0.0, 1.0)
 	
-	music_player.volume_db = linear_to_db(music_volume)
+	music_player.volume_db = _safe_linear_to_db(music_volume)
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # MUSIC CONTROL
@@ -163,7 +163,7 @@ func play_music(music_id: String, fade_duration: float = 1.0) -> void:
 	# Fade in
 	var fade_in_tween = create_tween()
 	fade_in_tween.tween_property(
-		music_player, "volume_db", linear_to_db(music_volume), fade_duration / 2
+		music_player, "volume_db", _safe_linear_to_db(music_volume), fade_duration / 2
 	)
 
 func stop_music(fade_duration: float = 1.0) -> void:
@@ -444,9 +444,14 @@ func _fill_cutscene_music(data: PackedByteArray, num_samples: int, sample_rate: 
 		data[i * 2] = sample_int & 0xFF
 		data[i * 2 + 1] = (sample_int >> 8) & 0xFF
 
+## Returns a finite dB value safe to assign to volume_db.
+## linear_to_db(0) = -INF which causes NaN when used as a tween target.
+func _safe_linear_to_db(linear: float) -> float:
+	return linear_to_db(maxf(linear, 0.001))
+
 func set_music_volume(volume: float) -> void:
 	music_volume = clampf(volume, 0.0, 1.0)
-	music_player.volume_db = linear_to_db(music_volume)
+	music_player.volume_db = _safe_linear_to_db(music_volume)
 	var save_mgr = _get_save_manager()
 	if save_mgr:
 		save_mgr.set_setting("music_volume", music_volume)
@@ -470,7 +475,7 @@ func play_sfx(sfx_type: SFXType) -> void:
 	var def = sfx_definitions[sfx_type]
 	var stream = _generate_sfx(def.freq, def.duration, def.wave)
 	player.stream = stream
-	player.volume_db = linear_to_db(sfx_volume)
+	player.volume_db = _safe_linear_to_db(sfx_volume)
 	player.play()
 
 func _get_available_sfx_player() -> AudioStreamPlayer:

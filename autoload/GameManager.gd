@@ -112,7 +112,7 @@ var completed_minigames: Array = []
 var current_minigame_index: int = 0
 var minigame_random_bag: Array[String] = []
 var pending_next_minigame_name: String = ""
-var force_full_singleplayer_pool: bool = false
+var force_full_singleplayer_pool: bool = true
 const ALL_SINGLEPLAYER_MINIGAMES: Array = [
 	"RiceWashRescue",
 	"VegetableBath",
@@ -161,15 +161,11 @@ var session_active: bool = false
 var minigames_played_this_session: int = 0
 var local_player_num: int = 0
 var _session_finalized: bool = false
-var _pending_multiplayer_notice: String = ""
 
-# Story chapter thresholds (show story at these game counts)
+# Story chapter cadence: intro once, then every 5 completed minigames.
 var _story_shown_at: Array[int] = []
 var _story_transition_active: bool = false
-const STORY_THRESHOLDS: Array = [0, 3, 6, 9, 12, 15]
-## Pre-cached StoryScreen resource. Threaded-loaded at startup so the first
-## story trigger at game-5 never blocks the main thread with a synchronous load.
-var _story_screen_cache: PackedScene = null
+const STORY_INTERVAL_GAMES: int = 5
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # INITIALIZATION
@@ -179,33 +175,14 @@ func _ready() -> void:
 	_load_saved_data()
 	_refresh_available_minigames()
 	_setup_transition_overlay()
-	# Pre-warm the StoryScreen packed scene in the background so the first
-	# story trigger (after game 5) doesn't block the main thread.
-	_prewarm_story_resource.call_deferred()
-
+	
 	# Connect signals from other autoloads
 	if has_node("/root/AdaptiveDifficulty"):
 		AdaptiveDifficulty.difficulty_changed.connect(_on_difficulty_changed)
-
+	
 	print("🎮 GameManager initialized")
 	print("   G-Counter ready for multiplayer scoring")
 	print("   Rolling Window ready for difficulty adaptation")
-
-func _prewarm_story_resource() -> void:
-	## Load StoryScreen.tscn once using the threaded loader so subsequent calls
-	## to _show_story_then_continue() return instantly from _story_screen_cache.
-	var path := "res://scenes/ui/StoryScreen.tscn"
-	if not ResourceLoader.exists(path):
-		return
-	ResourceLoader.load_threaded_request(path)
-	# Poll in the background one frame at a time — no main-thread stall.
-	while ResourceLoader.load_threaded_get_status(path) \
-			== ResourceLoader.THREAD_LOAD_IN_PROGRESS:
-		await get_tree().process_frame
-	if ResourceLoader.load_threaded_get_status(path) \
-			== ResourceLoader.THREAD_LOAD_LOADED:
-		_story_screen_cache = ResourceLoader.load_threaded_get(path) as PackedScene
-		print("📖 StoryScreen pre-cached")
 
 # ── Scene Transition Overlay ─────────────────────────────────────
 var _transition_layer: CanvasLayer
@@ -214,10 +191,6 @@ var _is_transitioning: bool = false
 
 const LIGHT_TRANSITION_TINT := Color(0.16, 0.31, 0.46, 0.0)
 const DARK_TRANSITION_TINT := Color(0.08, 0.14, 0.24, 0.0)
-
-## Public accessor so other nodes can wait for a transition to finish.
-func is_scene_transitioning() -> bool:
-	return _is_transitioning
 
 func _setup_transition_overlay() -> void:
 	_transition_layer = CanvasLayer.new()
@@ -235,33 +208,15 @@ func _get_transition_tint() -> Color:
 		return DARK_TRANSITION_TINT
 	return LIGHT_TRANSITION_TINT
 
+func is_scene_transitioning() -> bool:
+	return _is_transitioning
+
 func transition_to_scene(scene_path: String, duration: float = 0.4) -> void:
 	if _is_transitioning:
 		return
 	if not ResourceLoader.exists(scene_path):
 		push_error("Cannot transition. Scene does not exist: %s" % scene_path)
 		return
-	
-	# ═══════════════════════════════════════════════════════════════════
-	# CRITICAL FIX: Block multiplayer scenes when in single player mode
-	# This prevents the bug where single player redirects to multiplayer
-	# ═══════════════════════════════════════════════════════════════════
-	var is_multiplayer_scene = (
-		"Multiplayer" in scene_path or 
-		"multiplayer" in scene_path or
-		"MultiplayerGameOver" in scene_path
-	)
-	var is_multiplayer_shell_scene = (
-		"MultiplayerLobby" in scene_path or
-		"MultiplayerMenu" in scene_path
-	)
-	
-	if is_multiplayer_scene and not is_multiplayer_shell_scene \
-			and current_game_mode == GameMode.SINGLE_PLAYER:
-		print("🚫 BLOCKED: MP scene '%s' blocked (single-player mode)." % scene_path)
-		print("\U0001f504 Redirecting to InitialScreen instead...")
-		scene_path = "res://scenes/ui/InitialScreen.tscn"
-	
 	if not _transition_rect or not is_instance_valid(_transition_rect):
 		_setup_transition_overlay()
 
@@ -273,55 +228,15 @@ func transition_to_scene(scene_path: String, duration: float = 0.4) -> void:
 
 	_is_transitioning = true
 	_transition_rect.mouse_filter = Control.MOUSE_FILTER_STOP
-	
 	# Fade to themed tint.
 	var fade_out = create_tween().set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
 	fade_out.tween_property(_transition_rect, "color:a", fade_alpha, fade_duration)
 	await fade_out.finished
-	
-	# ═══════════════════════════════════════════════════════════════════
-	# MOBILE OPTIMIZATION: Async scene loading to prevent frame drops
-	# Old: get_tree().change_scene_to_file() blocks main thread (200-500ms)
-	# New: ResourceLoader.load_threaded_request() loads in background
-	# ═══════════════════════════════════════════════════════════════════
-	var is_mobile = OS.has_feature("mobile") or OS.has_feature("android") or OS.has_feature("ios")
-	
-	if is_mobile:
-		# Async loading for mobile
-		ResourceLoader.load_threaded_request(scene_path)
-		
-		# Poll until loaded (non-blocking)
-		var status = ResourceLoader.load_threaded_get_status(scene_path)
-		while status == ResourceLoader.THREAD_LOAD_IN_PROGRESS:
-			await get_tree().process_frame
-			status = ResourceLoader.load_threaded_get_status(scene_path)
-		
-		if status == ResourceLoader.THREAD_LOAD_LOADED:
-			var packed_scene = ResourceLoader.load_threaded_get(scene_path)
-			if packed_scene:
-				get_tree().change_scene_to_packed(packed_scene)
-			else:
-				push_error("Failed to get loaded scene: %s" % scene_path)
-				_is_transitioning = false
-				return
-		else:
-			push_error("Failed to load scene: %s (status: %d)" % [scene_path, status])
-			_is_transitioning = false
-			return
-	else:
-		# Synchronous loading for desktop (faster, no need for async)
-		get_tree().change_scene_to_file(scene_path)
-	
+	# Change scene
+	get_tree().change_scene_to_file(scene_path)
 	# Wait a frame for the new scene to load
 	await get_tree().process_frame
 	await get_tree().process_frame
-
-	# Record the scene visit so SessionLogger can track navigation paths.
-	var session_logger = get_node_or_null("/root/SessionLogger")
-	if session_logger and session_logger.has_method("record_scene_visit"):
-		var short := scene_path.get_file().get_basename()
-		session_logger.record_scene_visit(short)
-
 	# Fade from themed tint.
 	var fade_in = create_tween().set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 	fade_in.tween_property(_transition_rect, "color:a", 0.0, reveal_duration)
@@ -346,8 +261,6 @@ func _load_saved_data() -> void:
 	var save_mgr = get_node_or_null("/root/SaveManager")
 	if save_mgr and save_mgr.has_method("get_droplets"):
 		water_droplets = int(save_mgr.get_droplets())
-	if save_mgr and save_mgr.has_method("get_sp_session_high_score"):
-		high_score = max(high_score, int(save_mgr.get_sp_session_high_score()))
 
 func _save_data() -> void:
 	var config := ConfigFile.new()
@@ -368,41 +281,13 @@ func host_game(port: int = DEFAULT_PORT) -> bool:
 	# Host a LAN multiplayer game
 	if multiplayer.multiplayer_peer:
 		disconnect_multiplayer()
-	# Also clear NetworkManager socket if it was used in a previous MP flow.
-	if NetworkManager and NetworkManager.has_method("disconnect_multiplayer"):
-		NetworkManager.disconnect_multiplayer()
 	_disconnect_multiplayer_callbacks()
-
-	var candidate_ports: Array[int] = [port, 8888, 9999, 7778]
-	var tried: Dictionary = {}
-	var selected_port: int = -1
-	var last_error: int = ERR_CANT_CREATE
-
-	for candidate in candidate_ports:
-		if tried.has(candidate):
-			continue
-		tried[candidate] = true
-
-		peer = ENetMultiplayerPeer.new()
-		var error: int = peer.create_server(candidate, MAX_PLAYERS - 1)
-		if error == OK:
-			selected_port = candidate
-			break
-
-		last_error = error
-		print("❌ Failed to create server on port %d: %s"
-			% [candidate, error_string(error)])
+	peer = ENetMultiplayerPeer.new()
+	var error: int = peer.create_server(port, MAX_PLAYERS - 1)
+	
+	if error != OK:
+		print("❌ Failed to create server: ", error)
 		peer = null
-
-	if selected_port == -1 or peer == null:
-		print("❌ ENet host creation failed on all ports. Last error: %s"
-			% error_string(last_error))
-		queue_multiplayer_notice(
-			"Unable to host right now. Check firewall/LAN and try again."
-		)
-		current_game_mode = GameMode.SINGLE_PLAYER
-		is_host = false
-		is_multiplayer_connected = false
 		return false
 	
 	multiplayer.multiplayer_peer = peer
@@ -418,7 +303,7 @@ func host_game(port: int = DEFAULT_PORT) -> bool:
 	# Connect signals
 	_connect_multiplayer_callbacks()
 	
-	print("✅ Server created on port ", selected_port)
+	print("✅ Server created on port ", port)
 	print("🎮 You are Player 1 (Host)")
 	return true
 
@@ -501,13 +386,10 @@ func _on_peer_connected(peer_id: int) -> void:
 func _on_peer_disconnected(peer_id: int) -> void:
 	print("❌ Player disconnected: ", peer_id)
 	g_counter.erase(peer_id)
-	if current_game_mode == GameMode.MULTIPLAYER_COOP and session_active and not _session_finalized:
+	if current_game_mode == GameMode.MULTIPLAYER_COOP and session_active:
 		session_active = false
-		var player_label := _get_disconnected_player_label(peer_id)
-		var notice := "%s quit the match." % player_label
-		push_warning(notice)
-		queue_multiplayer_notice(notice)
-		call_deferred("return_to_multiplayer_menu")
+		push_warning("Multiplayer peer disconnected during session. Returning to lobby.")
+		call_deferred("return_to_multiplayer_lobby")
 
 func _on_connected_to_server() -> void:
 	print("✅ Connected to server!")
@@ -532,9 +414,7 @@ func _on_server_disconnected() -> void:
 		multiplayer.multiplayer_peer = null
 	if current_game_mode == GameMode.MULTIPLAYER_COOP and session_active:
 		session_active = false
-		var notice := "Player 1 (Host) quit the match."
-		queue_multiplayer_notice(notice)
-		call_deferred("return_to_multiplayer_menu")
+		call_deferred("return_to_multiplayer_lobby")
 
 @rpc("authority", "reliable", "call_local")
 func _sync_game_state(counters: Dictionary, lives: int, diff_mult: float) -> void:
@@ -700,93 +580,6 @@ func _check_both_players_done() -> void:
 	pending_mp_performance.clear()
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# MULTIPLAYER ROUND COMPLETION (GameManager connection path)
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-# Per-round completion tracking – used when GameManager owns the ENet peer.
-var _mp_round_completions: Dictionary = {}  # {peer_id: {victory, score}}
-
-@rpc("any_peer", "call_local", "reliable")
-func complete_mp_round(victory: bool, score: int) -> void:
-	## Called by each player at end of their minigame (GameManager path).
-	## Host collects both reports then deducts a life if needed and loads next game.
-	if not is_multiplayer_connected:
-		return
-	var sender_id: int = multiplayer.get_remote_sender_id()
-	if sender_id == 0:
-		sender_id = multiplayer.get_unique_id()
-	_mp_round_completions[sender_id] = {"victory": victory, "score": score}
-	if not is_host:
-		return  # Host drives the transition
-	var peer_ids := get_connected_multiplayer_peer_ids()
-	if _mp_round_completions.size() < peer_ids.size():
-		return  # Still waiting for the other player
-	# All players reported — evaluate round
-	var any_win := false
-	for data in _mp_round_completions.values():
-		if data.get("victory", false):
-			any_win = true
-	record_multiplayer_round_result(
-		current_multiplayer_game_name, 0.0, any_win, 0
-	)
-	if not any_win:
-		team_lives = max(0, team_lives - 1)
-		rpc("_sync_team_lives", team_lives)
-	_mp_round_completions.clear()
-	# Brief results window, then advance
-	await get_tree().create_timer(3.5).timeout
-	if is_multiplayer_connected:
-		rpc("_load_next_multiplayer_minigame")
-
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# COOPERATIVE RESOURCE TRANSFER (GameManager connection path)
-# Used when NetworkManager is not managing the session.
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-signal gm_resource_received(
-	from_player: int, resource_type: String, amount: int, quality: float
-)
-
-@rpc("any_peer", "reliable")
-func send_resource_rpc(
-	resource_type: String, amount: int, quality: float
-) -> void:
-	## Delivers a resource-send event ONLY to the receiving peer (no call_local)
-	## so the sender's _on_resource_received does NOT fire.
-	var from_player: int = multiplayer.get_remote_sender_id()
-	if from_player == 0:
-		from_player = multiplayer.get_unique_id()
-	gm_resource_received.emit(from_player, resource_type, amount, quality)
-
-@rpc("any_peer", "call_local", "reliable")
-func _mp_sync_pause(paused: bool) -> void:
-	## Broadcast pause/resume state to all players on the GameManager connection path.
-	get_tree().paused = paused
-	var scene := get_tree().current_scene
-	if scene:
-		if paused and scene.has_method("_on_remote_pause"):
-			scene.call("_on_remote_pause")
-		elif not paused and scene.has_method("_on_remote_resume"):
-			scene.call("_on_remote_resume")
-
-@rpc("any_peer", "call_local", "reliable")
-func lose_life_rpc() -> void:
-	## Called by a game when the local player misses enough items.
-	## Host deducts a team life and broadcasts to all.
-	if not is_host:
-		return
-	team_lives = max(0, team_lives - 1)
-	print("💔 Team lost a life! Remaining: ", team_lives)
-	rpc("_sync_team_lives", team_lives)
-	if team_lives <= 0:
-		rpc("_announce_team_lost")
-
-@rpc("authority", "call_local", "reliable")
-func sync_player_modes(modes: Dictionary) -> void:
-	## Sync host's player_modes dict to all clients.
-	player_modes = modes
-
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # TEAM LIVES: DAMAGE REPORTING
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -898,7 +691,6 @@ func reset_multiplayer_game() -> void:
 	player_modes.clear()
 	current_multiplayer_game_name = ""
 	_recorded_multiplayer_round_game = ""
-	_mp_round_completions.clear()
 	
 	if is_host:
 		rpc("_sync_game_state", g_counter, team_lives, difficulty_multiplier)
@@ -920,54 +712,24 @@ func is_multiplayer_session_ready() -> bool:
 func _begin_multiplayer_session_rpc() -> void:
 	start_new_session(GameMode.MULTIPLAYER_COOP)
 
-@rpc("authority", "call_local", "reliable")
-func _start_multiplayer_match_rpc() -> void:
-	# Atomically start a multiplayer session and launch the first round.
-	# Doing this in one RPC avoids lobby-side race conditions between two RPC calls.
-	if multiplayer.multiplayer_peer == null or not is_multiplayer_connected:
-		push_warning("Cannot start multiplayer match: connection is not active.")
-		return
-
-	start_new_session(GameMode.MULTIPLAYER_COOP)
-	await get_tree().process_frame
-
-	if not is_host:
-		return
-
-	if get_connected_multiplayer_peer_ids().size() < MAX_PLAYERS:
-		push_warning("Cannot start multiplayer match: waiting for all players.")
-		return
-
-	rpc("_load_next_multiplayer_minigame")
-
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # MULTIPLAYER MINIGAME PROGRESSION
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-# Multiplayer minigame pool — only the 6 "collector/producer" (Mode-1) base games.
-# The paired consumer game for the Mode-2 player is resolved via MULTIPLAYER_GAME_PAIRS.
-const MULTIPLAYER_GAME_PAIRS: Dictionary = {
-	"MP_CatchTheRain":       "MP_FilterWater",
-	"MP_FilterWater":        "MP_CatchTheRain",
-	"MP_CatchRainAquarium":  "MP_FillAquarium",
-	"MP_FillAquarium":       "MP_CatchRainAquarium",
-	"MP_CollectShowerWater": "MP_FlushToilets",
-	"MP_FlushToilets":       "MP_CollectShowerWater",
-	"MP_CollectLaundryWater":"MP_MopFloor",
-	"MP_MopFloor":           "MP_CollectLaundryWater",
-	"MP_CollectDishWater":   "MP_WashCar",
-	"MP_WashCar":            "MP_CollectDishWater",
-	"MP_WashVegetables":     "MP_WaterPlants",
-	"MP_WaterPlants":        "MP_WashVegetables",
-}
-
+# Multiplayer minigame pool (all cooperative water-themed games)
 var multiplayer_minigames: Array[String] = [
 	"MP_CatchRainAquarium",
 	"MP_CatchTheRain",
 	"MP_CollectDishWater",
 	"MP_CollectLaundryWater",
 	"MP_CollectShowerWater",
+	"MP_FillAquarium",
+	"MP_FilterWater",
+	"MP_FlushToilets",
+	"MP_MopFloor",
+	"MP_WashCar",
 	"MP_WashVegetables",
+	"MP_WaterPlants"
 ]
 
 var multiplayer_game_order: Array[String] = []
@@ -994,8 +756,6 @@ func assign_random_modes() -> void:
 		player_modes[peer_ids[i]] = (i % 2) + 1  # Alternates between 1 and 2
 	
 	print("🎲 Mode assignments: ", player_modes)
-	if is_host and is_multiplayer_connected:
-		rpc("sync_player_modes", player_modes)
 
 func get_my_player_mode() -> int:
 	# Get my assigned mode (1 or 2)
@@ -1082,33 +842,6 @@ func _apply_multiplayer_round_result(
 			"round_time_s": clamped_time,
 		})
 
-	# Log MP local performance to SessionLogger for thesis export
-	var _session_logger = get_node_or_null("/root/SessionLogger")
-	if _session_logger and _session_logger.has_method("record_mp_local_round"):
-		var my_phi: float = 0.0
-		var my_difficulty: String = "Unknown"
-		var partner_score: int = 0
-		if CoopAdaptation:
-			my_difficulty = CoopAdaptation.get_player_difficulty(local_player_num)
-			if CoopAdaptation.has_method("get_team_metrics"):
-				var tm: Dictionary = CoopAdaptation.get_team_metrics()
-				var phi_key = "player%d_proficiency" % local_player_num
-				my_phi = float(tm.get(phi_key, 0.0))
-			# Estimate partner score from global minus mine
-			partner_score = max(0, get_global_score() - clamped_score)
-		_session_logger.record_mp_local_round(
-			minigames_played_this_session,
-			resolved_game_name,
-			clamped_score,
-			accuracy,
-			int(clamped_time * 1000.0),
-			clamped_mistakes,
-			my_difficulty,
-			my_phi,
-			partner_score,
-			victory
-		)
-
 @rpc("authority", "call_local", "reliable")
 func _load_next_multiplayer_minigame() -> void:
 	# Load next random multiplayer minigame (loop until lives depleted)
@@ -1126,8 +859,6 @@ func _load_next_multiplayer_minigame() -> void:
 	if not session_active:
 		session_active = true
 
-	_cleanup_multiplayer_overlays()
-
 	print("🎮 [Multiplayer] Loading next minigame...")
 	
 	# Reset G-Counter for next round (but keep lives and difficulty)
@@ -1139,11 +870,6 @@ func _load_next_multiplayer_minigame() -> void:
 	current_minigame_quota = 0
 	_recorded_multiplayer_round_game = ""
 	
-	# Only the host picks and broadcasts the game to avoid shuffle desync.
-	# Non-host peers wait for _load_multiplayer_game() RPC.
-	if not is_host:
-		return
-	
 	# Randomly assign modes for the next game
 	assign_random_modes()
 	
@@ -1154,53 +880,17 @@ func _load_next_multiplayer_minigame() -> void:
 		multiplayer_game_index = 0
 		print("🔀 Shuffled multiplayer minigame order: ", multiplayer_game_order)
 	
-	# Get next game and broadcast to ALL peers (including self via call_local)
+	# Get next game
 	var game_name: String = multiplayer_game_order[multiplayer_game_index]
 	multiplayer_game_index += 1
+	current_multiplayer_game_name = game_name
+	
 	print("🎯 Next game: ", game_name)
 	print("❤️ Team Lives: ", team_lives)
 	print("⚡ Difficulty Multiplier: %.2f" % difficulty_multiplier)
-	rpc("_load_multiplayer_game", game_name)
-
-func _cleanup_multiplayer_overlays() -> void:
-	var scene := get_tree().current_scene
-	if scene == null:
-		return
-	var overlay_names := [
-		"ResultsOverlay",
-		"ResultOverlay",
-		"ScoringOverlay",
-		"WaitingStartOverlay",
-		"CountdownOverlay",
-		"InstructionOverlay",
-		"GameOverOverlay"
-	]
-	for overlay_name in overlay_names:
-		var overlay = scene.find_child(overlay_name, true, false)
-		if overlay:
-			overlay.queue_free()
-
-@rpc("authority", "call_local", "reliable")
-func _load_multiplayer_game(game_name: String) -> void:
-	## Load a specific multiplayer minigame scene on all peers.
-	## Only called by the host after it has selected the game.
-	## Mode-1 players load the base game; Mode-2 players load the paired game
-	## so each player gets a complementary cooperative role.
-	if current_game_mode != GameMode.MULTIPLAYER_COOP:
-		current_game_mode = GameMode.MULTIPLAYER_COOP
-	current_multiplayer_game_name = game_name
-	current_minigame_quota = 0
-	_recorded_multiplayer_round_game = ""
-
-	# Resolve which scene to load for this peer.
-	var my_mode: int = get_my_player_mode()
-	var scene_game_name: String = game_name
-	if my_mode == 2 and MULTIPLAYER_GAME_PAIRS.has(game_name):
-		scene_game_name = MULTIPLAYER_GAME_PAIRS[game_name]
-	print("🎮 [%s] Loading scene: %s (my mode: %d)" % [
-		"HOST" if is_host else "CLIENT", scene_game_name, my_mode])
-
-	var game_path: String = "res://scenes/multiplayer/%s.tscn" % scene_game_name
+	
+	# Load the scene
+	var game_path: String = "res://scenes/multiplayer/%s.tscn" % game_name
 	if ResourceLoader.exists(game_path):
 		transition_to_scene(game_path, 0.25)
 	else:
@@ -1239,17 +929,6 @@ func start_session(mode: GameMode = GameMode.SINGLE_PLAYER) -> void:
 		start_next_minigame()
 
 func start_new_session(mode: GameMode = GameMode.SINGLE_PLAYER) -> void:
-	# ═══════════════════════════════════════════════════════════════════
-	# CRITICAL FIX: Validate multiplayer mode before starting session
-	# If multiplayer mode is requested but no connection exists, force single player
-	# ═══════════════════════════════════════════════════════════════════
-	if mode == GameMode.MULTIPLAYER_COOP:
-		var nm_connected := NetworkManager and NetworkManager.is_multiplayer_connected()
-		var gm_connected := is_multiplayer_connected and multiplayer.multiplayer_peer != null
-		if not nm_connected and not gm_connected:
-			print("⚠️ MULTIPLAYER mode requested but no connection - forcing SINGLE_PLAYER")
-			mode = GameMode.SINGLE_PLAYER
-	
 	current_game_mode = mode
 	session_active = true
 	_session_finalized = false
@@ -1269,6 +948,7 @@ func start_new_session(mode: GameMode = GameMode.SINGLE_PLAYER) -> void:
 		# Hard reset any multiplayer remnants so single-player never hijacks flow.
 		if is_multiplayer_connected or multiplayer.multiplayer_peer:
 			disconnect_multiplayer()
+			session_active = true  # Restore: disconnect_multiplayer() resets this flag
 		if save_mgr and save_mgr.has_method("reset_session_stats"):
 			save_mgr.reset_session_stats()
 		_refresh_available_minigames()
@@ -1291,21 +971,8 @@ func start_new_session(mode: GameMode = GameMode.SINGLE_PLAYER) -> void:
 
 func start_next_minigame() -> void:
 	if _story_transition_active:
-		print("⏸️ Story transition active, waiting...")
 		return
 
-	# ═══════════════════════════════════════════════════════════════════
-	# CRITICAL FIX: Force single player mode if not in multiplayer session
-	# This prevents the bug where single player redirects to multiplayer
-	# ═══════════════════════════════════════════════════════════════════
-	if current_game_mode == GameMode.MULTIPLAYER_COOP:
-		# Check if we're actually in a multiplayer session
-		var nm_connected := NetworkManager and NetworkManager.is_multiplayer_connected()
-		var gm_connected := is_multiplayer_connected and multiplayer.multiplayer_peer != null
-		if not nm_connected and not gm_connected:
-			print("⚠️ Game mode was MULTIPLAYER but no connection - forcing SINGLE_PLAYER")
-			current_game_mode = GameMode.SINGLE_PLAYER
-	
 	if current_game_mode == GameMode.MULTIPLAYER_COOP:
 		if is_host:
 			rpc("_load_next_multiplayer_minigame")
@@ -1322,30 +989,19 @@ func start_next_minigame() -> void:
 		_show_final_score()
 		return
 
-	
-	# Check if a story chapter should play (desktop only)
-	print("🎮 Games played this session: %d" % minigames_played_this_session)
+	# Check if a story chapter should play
 	if _should_show_story():
-		print("📖 Story screen should show - loading story...")
 		_show_story_then_continue()
 		return
 
-	print("✅ No story screen - launching next game...")
 	_launch_next_minigame_internal()
 
 func _should_show_story() -> bool:
-	# ═══════════════════════════════════════════════════════════════════
-	# CRITICAL FIX: Never show story screens during multiplayer sessions
-	# Story is single-player only - multiplayer has its own flow
-	# ═══════════════════════════════════════════════════════════════════
-	if current_game_mode == GameMode.MULTIPLAYER_COOP:
+	if minigames_played_this_session == 0:
+		return 0 not in _story_shown_at
+	if minigames_played_this_session % STORY_INTERVAL_GAMES != 0:
 		return false
-	
-	if minigames_played_this_session > 0 and minigames_played_this_session % 5 == 0:
-		if minigames_played_this_session not in _story_shown_at:
-			return true
-			
-	return false
+	return minigames_played_this_session not in _story_shown_at
 
 func _show_story_then_continue() -> void:
 	if _story_transition_active:
@@ -1353,63 +1009,27 @@ func _show_story_then_continue() -> void:
 	_story_transition_active = true
 	_story_shown_at.append(minigames_played_this_session)
 	var story_path := "res://scenes/ui/StoryScreen.tscn"
-
 	if not ResourceLoader.exists(story_path):
-		print("⚠️ Story screen not found at: %s" % story_path)
 		_story_transition_active = false
 		_launch_next_minigame_internal()
 		return
-
-	# Use pre-cached resource when available; fall back to synchronous load.
-	var story_scene_resource: PackedScene = (
-		_story_screen_cache
-		if _story_screen_cache != null
-		else load(story_path) as PackedScene
-	)
-	if not story_scene_resource:
-		print("⚠️ Story screen failed to load, skipping...")
-		_story_transition_active = false
-		_launch_next_minigame_internal()
-		return
-	
-	var story_scene = story_scene_resource.instantiate()
-	if not story_scene:
-		print("⚠️ Story screen failed to instantiate, skipping...")
-		_story_transition_active = false
-		_launch_next_minigame_internal()
-		return
-	
+	var story_scene = load(story_path).instantiate()
 	var scene_root := get_tree().current_scene
 	if scene_root == null:
-		print("⚠️ No current scene, skipping story...")
-		story_scene.queue_free()
 		_story_transition_active = false
 		_launch_next_minigame_internal()
 		return
-	
 	var story_layer := CanvasLayer.new()
 	story_layer.name = "StoryScreenLayer"
 	story_layer.layer = 200
 	story_layer.add_child(story_scene)
 	scene_root.add_child(story_layer)
-	
-	# Connect story finished signal with error handling
-	if story_scene.has_signal("story_finished"):
-		story_scene.story_finished.connect(func():
-			if is_instance_valid(story_layer):
-				story_layer.queue_free()
-			_story_transition_active = false
-			_launch_next_minigame_internal()
-		, CONNECT_ONE_SHOT)
-	else:
-		# No signal, use timeout fallback
-		print("⚠️ Story scene has no story_finished signal, using timeout...")
-		await get_tree().create_timer(5.0).timeout
+	story_scene.story_finished.connect(func():
 		if is_instance_valid(story_layer):
 			story_layer.queue_free()
 		_story_transition_active = false
 		_launch_next_minigame_internal()
-	
+	, CONNECT_ONE_SHOT)
 	story_scene.tree_exited.connect(func():
 		_story_transition_active = false
 	, CONNECT_ONE_SHOT)
@@ -1457,10 +1077,7 @@ func _start_intro_cutscene_for_game(game_name: String) -> void:
 	pending_next_minigame_name = game_name
 	var bridge_path := "res://scenes/ui/cutscenes/MiniGameIntroBridge.tscn"
 	if ResourceLoader.exists(bridge_path):
-		# Use the fade-overlay transition instead of raw change_scene_to_file.
-		# This hides the instantiation freeze (Snapdragon 425 takes 0.5-2s)
-		# behind a smooth black wipe so the user doesn't see a frozen screen.
-		transition_to_scene(bridge_path, 0.25)
+		get_tree().change_scene_to_file(bridge_path)
 		return
 
 	# Fallback for safety: if bridge scene is missing, go straight to minigame.
@@ -1567,7 +1184,7 @@ func complete_minigame(
 	# GameManager then forwards this data to AdaptiveDifficulty.add_performance()
 	# which:
 	#   1) Adds it to the Rolling Window (last 5 games)
-	#   2) Every 2 games, calculates Φ (Proficiency Index)
+	#   2) After warmup, evaluates Φ on each completed game
 	#   3) Uses the decision tree to adjust difficulty (Easy/Medium/Hard)
 	#
 	# The NEW difficulty then applies to the NEXT minigame the player starts!
@@ -1575,40 +1192,15 @@ func complete_minigame(
 	if current_game_mode == GameMode.SINGLE_PLAYER:
 		# Single-player uses AdaptiveDifficulty (Φ = WMA - CP algorithm)
 		# This is the RULE-BASED ROLLING WINDOW ALGORITHM in action!
-		# IMPORTANT: capture played difficulty BEFORE add_performance() may update it,
-		# so the session log records what difficulty the player actually experienced.
-		var _sp_diff_played = (
-			AdaptiveDifficulty.get_current_difficulty()
-			if AdaptiveDifficulty
-			else "Unknown"
-		)
 		if AdaptiveDifficulty:
 			AdaptiveDifficulty.add_performance(accuracy, reaction_time, mistakes, game_name)
 		# Log SP game to SessionLogger for thesis defence export
 		var _session_logger = get_node_or_null("/root/SessionLogger")
 		if _session_logger and _session_logger.has_method("record_sp_game"):
-			# Calculate per-game droplets earned (mirrors MiniGameBase.end_game() logic)
-			# NOTE: We don't use SaveManager.get_droplets() here because that returns
-			# the TOTAL lifetime droplets, not what was earned in this specific game.
-			var _droplets_earned: int = session_droplets_earned
-			# session_droplets_earned is updated by MiniGameBase → add_session_droplets()
-			# before complete_minigame is called, so it reflects the per-session total.
-			# For per-game, we subtract what was recorded before this game:
-			var _previously_logged_droplets: int = 0
-			if _session_logger.has_method("get_sp_records"):
-				var prev_records: Array = _session_logger.get_sp_records()
-				for rec in prev_records:
-					_previously_logged_droplets += int(rec.get("droplets_earned", 0))
-			_droplets_earned = max(0, session_droplets_earned - _previously_logged_droplets)
-			_session_logger.record_sp_game(
-				game_name,
-				round_score,
-				accuracy,
-				reaction_time,
-				mistakes,
-				_sp_diff_played,
-				_droplets_earned
-			)
+			var _sp_diff = AdaptiveDifficulty.get_current_difficulty() if AdaptiveDifficulty else "Unknown"
+			var _logged_droplets := int(_session_logger.get("total_droplets_earned"))
+			var _droplets_this_round: int = max(0, session_droplets_earned - _logged_droplets)
+			_session_logger.record_sp_game(game_name, round_score, accuracy, reaction_time, mistakes, _sp_diff, _droplets_this_round)
 	else:
 		# Multiplayer uses CoopAdaptation (per-player difficulty with sync scoring)
 		# Note: In multiplayer, performance is tracked via submit_score RPC
@@ -1648,6 +1240,19 @@ func add_session_droplets(amount: int) -> void:
 		return
 	session_droplets_earned += amount
 
+func _persist_singleplayer_session_results() -> void:
+	if current_game_mode != GameMode.SINGLE_PLAYER:
+		return
+
+	var save_mgr = get_node_or_null("/root/SaveManager")
+	if save_mgr and save_mgr.has_method("record_sp_session_score"):
+		save_mgr.record_sp_session_score(session_score)
+
+	if session_score > high_score:
+		high_score = session_score
+
+	_save_data()
+
 func get_current_difficulty() -> String:
 	# Dynamic difficulty classification that works with uncapped values
 	if difficulty_multiplier >= 2.0:
@@ -1663,90 +1268,16 @@ func return_to_main_menu() -> void:
 	change_state(GameState.MAIN_MENU)
 	get_tree().paused = false
 	
-	var save_mgr = get_node_or_null("/root/SaveManager")
-	if save_mgr and save_mgr.has_method("record_sp_session_score") \
-			and current_game_mode == GameMode.SINGLE_PLAYER:
-		save_mgr.record_sp_session_score(session_score)
-		
-	# Reset game mode to prevent multiplayer redirect bug
-	current_game_mode = GameMode.SINGLE_PLAYER
-
-	if save_mgr and save_mgr.has_method("get_sp_session_high_score"):
-		high_score = max(high_score, int(save_mgr.get_sp_session_high_score()))
-	
-	if session_score > high_score:
-		high_score = session_score
-		_save_data()
-	
 	get_tree().change_scene_to_file("res://scenes/ui/InitialScreen.tscn")
-	var _sl = get_node_or_null("/root/SessionLogger")
-	if _sl and _sl.has_method("record_scene_visit"):
-		_sl.record_scene_visit("InitialScreen")
 
 func return_to_multiplayer_lobby() -> void:
 	get_tree().paused = false
 	disconnect_multiplayer()
-	current_game_mode = GameMode.MULTIPLAYER_COOP
 	transition_to_scene("res://scenes/ui/MultiplayerLobby.tscn", 0.2)
-
-func return_to_multiplayer_menu() -> void:
-	get_tree().paused = false
-	disconnect_multiplayer()
-	current_game_mode = GameMode.MULTIPLAYER_COOP
-	transition_to_scene("res://scenes/ui/MultiplayerMenu.tscn", 0.2)
-
-func queue_multiplayer_notice(message: String) -> void:
-	_pending_multiplayer_notice = message.strip_edges()
-
-func consume_multiplayer_notice() -> String:
-	var message := _pending_multiplayer_notice
-	_pending_multiplayer_notice = ""
-	return message
-
-func _get_disconnected_player_label(peer_id: int) -> String:
-	if NetworkManager:
-		var player_info: Dictionary = NetworkManager.players.get(peer_id, {})
-		var player_name := str(player_info.get("name", "")).strip_edges()
-		if not player_name.is_empty():
-			return player_name
-		var player_num := int(player_info.get("player_num", 0))
-		if player_num > 0:
-			return "Player %d" % player_num
-	if local_player_num == 1:
-		return "Player 2"
-	return "Player %d" % peer_id
 
 func _show_final_score() -> void:
 	print("🎉 Session complete! Showing final score...")
 	change_state(GameState.FINAL_RESULTS)
-	
-	# ═══════════════════════════════════════════════════════════════════
-	# CRITICAL FIX: Reset game mode BEFORE showing final score
-	# This prevents FinalScore screen from routing to multiplayer lobby
-	# ═══════════════════════════════════════════════════════════════════
-	if current_game_mode == GameMode.MULTIPLAYER_COOP:
-		# Check if we're actually in a multiplayer session
-		if not NetworkManager or not NetworkManager.is_multiplayer_connected():
-			print("⚠️ Resetting game mode to SINGLE_PLAYER before final score")
-			current_game_mode = GameMode.SINGLE_PLAYER
-	
-	var save_mgr = get_node_or_null("/root/SaveManager")
-	if save_mgr:
-		var is_connected_multiplayer_session := current_game_mode == GameMode.MULTIPLAYER_COOP \
-			and NetworkManager \
-			and NetworkManager.is_multiplayer_connected()
-		if not is_connected_multiplayer_session and save_mgr.has_method("record_sp_session_score"):
-			save_mgr.record_sp_session_score(session_score)
-		if (
-			not is_connected_multiplayer_session
-			and save_mgr.has_method("get_sp_session_high_score")
-		):
-			high_score = max(high_score, int(save_mgr.get_sp_session_high_score()))
-
-	# Update high score before showing FinalScore so the screen can compare
-	if session_score > high_score:
-		high_score = session_score
-	_save_data()
 
 	_finalize_session_for_logging()
 	
@@ -1760,6 +1291,7 @@ func _finalize_session_for_logging() -> void:
 		return
 
 	_session_finalized = true
+	_persist_singleplayer_session_results()
 	session_active = false
 
 	var adaptive_summary: Dictionary = {}
@@ -1781,12 +1313,19 @@ func _finalize_session_for_logging() -> void:
 			"adaptive_window_size": int(adaptive_summary.get("games_in_window", 0)),
 			"adaptive_min_games": int(adaptive_summary.get("min_games_before_adaptation", 0)),
 		})
+		PerformanceProfiler.export_session_log_to_file()
 
 	if AdaptiveDifficulty:
 		if AdaptiveDifficulty.has_method("export_to_json_file"):
 			AdaptiveDifficulty.export_to_json_file()
 		if AdaptiveDifficulty.has_method("reset"):
 			AdaptiveDifficulty.reset()
+
+	# Export SessionLogger data - ensures session is saved even if app is killed
+	# via Home button on Android (NOTIFICATION_WM_CLOSE_REQUEST may not fire)
+	var _sl = get_node_or_null("/root/SessionLogger")
+	if _sl and _sl.has_method("export_session"):
+		_sl.export_session()
 
 	var save_mgr = get_node_or_null("/root/SaveManager")
 	if save_mgr and save_mgr.has_method("reset_session_stats"):
@@ -1835,9 +1374,7 @@ func reset_all_data() -> void:
 	
 	# Also reset SaveManager if available
 	var save_mgr = get_node_or_null("/root/SaveManager")
-	if save_mgr and save_mgr.has_method("reset_all_data"):
-		save_mgr.reset_all_data()
-	elif save_mgr and save_mgr.has_method("reset_all"):
+	if save_mgr and save_mgr.has_method("reset_all"):
 		save_mgr.reset_all()
 	
 	print("🔄 All data reset to defaults")

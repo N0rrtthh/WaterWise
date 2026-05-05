@@ -2,10 +2,10 @@ extends Node
 class_name FileExporter
 
 ## ═══════════════════════════════════════════════════════════════════
-## FILE EXPORTER - ANDROID EXTERNAL STORAGE
+## FILE EXPORTER - DOWNLOADS EXPORT
 ## ═══════════════════════════════════════════════════════════════════
-## Exports game files to Downloads folder (accessible without ADB)
-## Works on Android 10+ with proper permissions
+## Exports game files to the OS Downloads folder.
+## Works on Android and desktop platforms that expose Downloads.
 ## ═══════════════════════════════════════════════════════════════════
 
 const EXPORT_FOLDER_NAME = "WaterwiseExports"
@@ -24,6 +24,9 @@ static func _normalize_dir(path: String) -> String:
 		dir += "/"
 	return dir
 
+static func _get_downloads_dir() -> String:
+	return OS.get_system_dir(OS.SYSTEM_DIR_DOWNLOADS).strip_edges()
+
 static func _is_user_or_res_path(path: String) -> bool:
 	return path.begins_with("user://") or path.begins_with("res://")
 
@@ -41,8 +44,8 @@ static func _get_session_log_dir() -> String:
 static func export_save_file() -> Dictionary:
 	var result = {"success": false, "path": "", "error": ""}
 	
-	if not OS.has_feature("android"):
-		result.error = "Not on Android - files are in user:// folder"
+	if not is_external_storage_available():
+		result.error = "Downloads folder not available"
 		return result
 	
 	# Read save file from internal storage
@@ -82,24 +85,13 @@ static func export_save_file() -> Dictionary:
 static func export_session_data_only() -> Dictionary:
 	var result = {"success": false, "path": "", "error": "", "files_exported": 0}
 	
-	if not OS.has_feature("android"):
-		result.error = "Not on Android - files are in user:// folder"
-		print("📊 Session logs location: user://session_logs/")
+	if not is_external_storage_available():
+		result.error = "Downloads folder not available"
 		return result
 
 	# Ensure a log exists for the current session before copying.
 	var session_logger = _get_session_logger()
-	var previous_dir := ""
-	var should_restore_dir := false
 	if session_logger and session_logger.has_method("export_session"):
-		if session_logger.has_method("get_export_dir"):
-			previous_dir = str(session_logger.call("get_export_dir"))
-		elif session_logger.has_method("get"):
-			previous_dir = str(session_logger.get("export_dir"))
-		should_restore_dir = not previous_dir.is_empty()
-
-		# Always export from user:// so we can reliably copy out.
-		session_logger.set("export_dir", "user://session_logs/")
 		session_logger.call("export_session")
 	
 	print("📊 Starting session data export...")
@@ -115,17 +107,14 @@ static func export_session_data_only() -> Dictionary:
 		result.error = logs_result.error
 		print("❌ Failed to export session logs: %s" % result.error)
 
-	if session_logger and should_restore_dir:
-		session_logger.set("export_dir", previous_dir)
-	
 	return result
 
 ## Export all session logs to Downloads folder
 static func export_session_logs() -> Dictionary:
 	var result = {"success": false, "path": "", "error": "", "files_exported": 0}
 	
-	if not OS.has_feature("android"):
-		result.error = "Not on Android - files are in user:// folder"
+	if not is_external_storage_available():
+		result.error = "Downloads folder not available"
 		return result
 	
 	# Check if session logs exist
@@ -178,8 +167,8 @@ static func export_session_logs() -> Dictionary:
 static func export_all_data() -> Dictionary:
 	var result = {"success": false, "path": "", "error": "", "files_exported": 0}
 	
-	if not OS.has_feature("android"):
-		result.error = "Not on Android - files are in user:// folder"
+	if not is_external_storage_available():
+		result.error = "Downloads folder not available"
 		return result
 	
 	var total_exported = 0
@@ -218,8 +207,8 @@ static func export_all_data() -> Dictionary:
 static func export_settings_file() -> Dictionary:
 	var result = {"success": false, "path": "", "error": ""}
 	
-	if not OS.has_feature("android"):
-		result.error = "Not on Android"
+	if not is_external_storage_available():
+		result.error = "Downloads folder not available"
 		return result
 	
 	var internal_path = "user://waterwise_settings.json"
@@ -257,11 +246,9 @@ static func export_settings_file() -> Dictionary:
 
 ## Get external storage path (Downloads folder)
 static func _get_external_path(filename: String) -> String:
-	if not OS.has_feature("android"):
+	var external_dir = _get_downloads_dir()
+	if external_dir.is_empty():
 		return ""
-	
-	# Get external storage directory (usually /storage/emulated/0/)
-	var external_dir = OS.get_system_dir(OS.SYSTEM_DIR_DOWNLOADS)
 	
 	# Create our export folder
 	var export_dir = external_dir + "/" + EXPORT_FOLDER_NAME
@@ -287,24 +274,21 @@ static func _get_external_path(filename: String) -> String:
 
 ## Get base export path
 static func _get_external_base_path() -> String:
-	if not OS.has_feature("android"):
+	var external_dir = _get_downloads_dir()
+	if external_dir.is_empty():
 		return ""
 	
-	var external_dir = OS.get_system_dir(OS.SYSTEM_DIR_DOWNLOADS)
 	return external_dir + "/" + EXPORT_FOLDER_NAME
 
 ## Check if external storage is accessible
 static func is_external_storage_available() -> bool:
-	if not OS.has_feature("android"):
-		return false
-	
-	var downloads_dir = OS.get_system_dir(OS.SYSTEM_DIR_DOWNLOADS)
+	var downloads_dir = _get_downloads_dir()
 	return not downloads_dir.is_empty() and DirAccess.dir_exists_absolute(downloads_dir)
 
 ## Get user-friendly export location message
 static func get_export_location_message() -> String:
-	if not OS.has_feature("android"):
-		return "Files are in: user:// folder"
+	if not is_external_storage_available():
+		return "Downloads folder is not available on this device"
 	
 	return "Files exported to:\nDownloads/" + EXPORT_FOLDER_NAME + "/"
 
@@ -312,8 +296,8 @@ static func get_export_location_message() -> String:
 static func create_export_summary() -> Dictionary:
 	var result = {"success": false, "path": "", "error": ""}
 	
-	if not OS.has_feature("android"):
-		result.error = "Not on Android"
+	if not is_external_storage_available():
+		result.error = "Downloads folder not available"
 		return result
 	
 	var summary = "WATERWISE GAME DATA EXPORT\n"

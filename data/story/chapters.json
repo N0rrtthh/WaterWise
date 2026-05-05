@@ -30,7 +30,7 @@
 			"id": "ch2_kitchen",
 			"title_en": "Lessons in the Kitchen",
 			"title_tl": "Mga Aral sa Kusina",
-			"unlocks_after_games": 3,
+			"unlocks_after_games": 5,
 			"pages": [
 				{
 					"text_en": "Droppy arrives at Ate Rosa's kitchen. Rice water is flowing down the drain!",
@@ -56,7 +56,7 @@
 			"id": "ch3_garden",
 			"title_en": "The Thirsty Garden",
 			"title_tl": "Ang Nauuhaw na Hardin",
-			"unlocks_after_games": 6,
+			"unlocks_after_games": 10,
 			"pages": [
 				{
 					"text_en": "Kuya Ben uses a big hose to water his garden. So much water is wasted!",
@@ -82,7 +82,7 @@
 			"id": "ch4_bathroom",
 			"title_en": "Quick Shower Challenge",
 			"title_tl": "Hamon ng Mabilis na Paligo",
-			"unlocks_after_games": 9,
+			"unlocks_after_games": 15,
 			"pages": [
 				{
 					"text_en": "Little Maria loves long showers. She sings three songs every time! But 50 liters of water go down the drain.",
@@ -108,7 +108,7 @@
 			"id": "ch5_community",
 			"title_en": "The Community Bucket Brigade",
 			"title_tl": "Ang Bayanihan ng Timba",
-			"unlocks_after_games": 12,
+			"unlocks_after_games": 20,
 			"pages": [
 				{
 					"text_en": "Uh-oh! A big pipe burst on the main road! Water is gushing everywhere!",
@@ -134,7 +134,7 @@
 			"id": "ch6_victory",
 			"title_en": "Droppy's Promise",
 			"title_tl": "Ang Pangako ni Droppy",
-			"unlocks_after_games": 15,
+			"unlocks_after_games": 25,
 			"pages": [
 				{
 					"text_en": "The river is flowing strong again! The barrio is green and beautiful.",

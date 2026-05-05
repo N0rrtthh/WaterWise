@@ -29,9 +29,9 @@ signal case_study_exported(file_path: String)
 ## Rolling Window Configuration
 @export_category("Algorithm Settings")
 @export var window_size: int = 5  # Rolling window keeps last 5 games (as per outline)
-@export var adaptation_frequency: int = 5  # Every N games (Paper: evaluate after 5 games)
-# Warmup games before adaptation starts (thesis: full window of 5 games required)
-@export_range(3, 5, 1) var min_games_before_adaptation: int = 5
+@export var adaptation_frequency: int = 1  # Every N games (Paper: evaluate each new game)
+# Warmup games before adaptation starts (configured to 3-5 games)
+@export_range(3, 5, 1) var min_games_before_adaptation: int = 3
 @export var target_latency_ms: float = 100.0
 
 ## Behavioral Thresholds
@@ -678,12 +678,12 @@ func _calculate_window_metrics() -> Dictionary:
 	# Normalize standard deviation to penalty range [0.0, 0.2]
 	# High σ → High penalty (erratic timing)
 	# Low σ → Low penalty (consistent timing)
-	# Paper: CP = min(σ / 5000, 0.2)  — fixed 5000ms normalizer (thesis-specified)
-	# Using a FIXED normalizer ensures the penalty is consistent regardless of
-	# the current difficulty level, so Φ is comparable across difficulty changes.
-	# (Thesis mathematical formulation: Section "Consistency Penalty")
-	const CP_NORMALIZER_MS: float = 5000.0  # Fixed normalizer per thesis formula
-	var consistency_penalty: float = min(std_deviation / CP_NORMALIZER_MS, 0.2)
+	# Paper: CP = min(σ / normalizer, 0.2)
+	# Normalizer scaled to current difficulty's time_limit so CP fairly
+	# reflects timing variability RELATIVE to the available time window.
+	# (e.g., σ=2s is very erratic in a 10s game, but normal in a 20s game)
+	var time_limit_ms: float = float(DIFFICULTY_SETTINGS[current_difficulty]["time_limit"]) * 1000.0
+	var consistency_penalty: float = min(std_deviation / time_limit_ms, 0.2)
 	
 	# ═══════════════════════════════════════════════════════════════════════
 	# STEP 4: Calculate Proficiency Index (Φ - Greek letter Phi)
@@ -1094,6 +1094,7 @@ func get_algorithm_status() -> Dictionary:
 	var required_games = _get_effective_min_games()
 	var session_games = performance_history.size()
 	var lifetime_games = _get_lifetime_games_played()
+	
 	var status = {
 		# Current State
 		"current_difficulty": current_difficulty,
@@ -1104,19 +1105,22 @@ func get_algorithm_status() -> Dictionary:
 		"lifetime_games_played": lifetime_games,
 		"min_games_before_adaptation": required_games,
 		"games_until_algorithm_activation": max(0, required_games - performance_window.size()),
+		
 		# Algorithm Metrics (if available)
 		"proficiency_index": metrics.get("proficiency_index", 0.0),
 		"weighted_accuracy": metrics.get("weighted_accuracy", 0.0),
 		"consistency_penalty": metrics.get("consistency_penalty", 0.0),
 		"std_deviation": metrics.get("std_deviation", 0.0),
+		
 		# Window Data (for visualization)
 		"window_accuracies": [],
 		"window_times": [],
+		
 		# Status Messages (human-readable)
 		"status_message": "",
 		"algorithm_active": performance_window.size() >= required_games
 	}
-
+	
 	# Populate window data for visualization
 	for i in range(performance_window.size()):
 		var perf = performance_window[i]
@@ -1126,7 +1130,7 @@ func get_algorithm_status() -> Dictionary:
 			"game_name": perf.get("game_name", "Game")
 		})
 		status["window_times"].append(perf["reaction_time"])
-
+	
 	# Generate status message
 	if performance_window.size() < required_games:
 		var games_left = required_games - performance_window.size()
@@ -1148,11 +1152,8 @@ func get_algorithm_status() -> Dictionary:
 			status["status_message"] = (
 				"Algorithm: FLOW STATE (Φ=%.2f)"
 				+ " → Medium difficulty") % phi
-
+	
 	return status
-
-func get_window_metrics() -> Dictionary:
-	return _get_window_metrics()
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # JUICE SYSTEM (Game Feel)

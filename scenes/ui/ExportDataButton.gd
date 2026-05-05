@@ -3,7 +3,7 @@ extends Button
 var popup: AcceptDialog
 
 func _ready() -> void:
-	if not OS.has_feature("android"):
+	if not FileExporter.is_external_storage_available():
 		visible = false
 		return
 	

@@ -51,6 +51,8 @@ func _on_multiplayer_ready() -> void:
 func _on_game_start() -> void:
 	spawn_timer.start()
 	_log("🚿 Start washing!")
+	if AutoPlayManager and AutoPlayManager.is_mp_auto_play_enabled():
+		AutoPlayManager.register_multiplayer_game(self, my_role)
 
 func _create_sink() -> void:
 	# Create sink area where vegetables are washed

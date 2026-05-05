@@ -245,31 +245,18 @@ func _on_connected_to_server() -> void:
 	# Register self with server
 	rpc_id(1, "_register_player", multiplayer.get_unique_id(), "Player 2 (Client)")
 	connection_succeeded.emit()
-	
-	# Log network event for session export
-	var sl = get_node_or_null("/root/SessionLogger")
-	if sl and sl.has_method("record_mp_network_event"):
-		sl.record_mp_network_event("client_connected", {"peer_id": multiplayer.get_unique_id()})
 
 func _on_connection_failed() -> void:
 	# Called when client fails to connect
 	_log("❌ Connection failed!")
 	connection_active = false
 	connection_failed.emit()
-	
-	var sl = get_node_or_null("/root/SessionLogger")
-	if sl and sl.has_method("record_mp_network_event"):
-		sl.record_mp_network_event("connection_failed", {})
 
 func _on_server_disconnected() -> void:
 	# Called when server disconnects (client side)
 	_log("⚠️ Server disconnected!")
 	_start_grace_period()
 	server_disconnected.emit()
-	
-	var sl = get_node_or_null("/root/SessionLogger")
-	if sl and sl.has_method("record_mp_network_event"):
-		sl.record_mp_network_event("server_disconnected", {"grace_period_sec": RECONNECT_GRACE_PERIOD})
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # CONNECTION MANAGEMENT
@@ -311,10 +298,6 @@ func _on_player_disconnected(peer_id: int) -> void:
 	# Called when a player disconnects
 	_log("⚠️ Player disconnected (Peer ID: " + str(peer_id) + ")")
 	
-	var sl = get_node_or_null("/root/SessionLogger")
-	if sl and sl.has_method("record_mp_network_event"):
-		sl.record_mp_network_event("peer_disconnected", {"peer_id": peer_id, "game_in_progress": game_in_progress})
-	
 	if players.has(peer_id):
 		var _player_num = players[peer_id]["player_num"]
 		players.erase(peer_id)
@@ -346,10 +329,6 @@ func _on_grace_period_timeout() -> void:
 	# Called when grace period expires
 	grace_period_active = false
 	_log("⏰ Grace period expired - game failed")
-	
-	var sl = get_node_or_null("/root/SessionLogger")
-	if sl and sl.has_method("record_mp_network_event"):
-		sl.record_mp_network_event("grace_period_expired", {"game_was_in_progress": game_in_progress})
 	
 	if game_in_progress:
 		# Auto-fail the game
@@ -397,9 +376,6 @@ func disconnect_multiplayer() -> void:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func set_ready(is_ready: bool) -> void:
-	# Guard: peer may be gone already (e.g. called during disconnect flow)
-	if not multiplayer.multiplayer_peer:
-		return
 	# Set local player ready status
 	var my_peer_id = multiplayer.get_unique_id()
 	
@@ -1087,9 +1063,19 @@ func _execute_pause() -> void:
 		current_scene.call("_on_remote_pause")
 
 func request_resume() -> void:
-	# Request game resume — any peer can broadcast resume (matches pause behaviour).
-	_log("▶️ Resume requested by Player %d" % local_player_id)
-	rpc("_execute_resume")
+	# Request game resume (either player can resume, but host has priority)
+	if is_host:
+		_log("▶️ Resume requested by host")
+		rpc("_execute_resume")
+	else:
+		_log("▶️ Resume requested by Player %d" % local_player_id)
+		rpc_id(1, "_request_resume_from_client")
+
+@rpc("any_peer", "reliable")
+func _request_resume_from_client() -> void:
+	# Client requests host to resume
+	if is_host:
+		rpc("_execute_resume")
 
 @rpc("any_peer", "call_local", "reliable")
 func _execute_resume() -> void:
@@ -1248,12 +1234,7 @@ func start_round() -> void:
 	round_completion_status.clear()
 	_log("🎮 Round started")
 
-func report_player_completion(
-	success: bool,
-	score: int,
-	accuracy: float = -1.0,
-	reaction_time_ms: int = -1
-) -> void:
+func report_player_completion(success: bool, score: int, accuracy: float = -1.0, reaction_time_ms: int = -1) -> void:
 	# Report that local player has completed their game
 	if not round_in_progress:
 		round_in_progress = true
@@ -1277,13 +1258,7 @@ func report_player_completion(
 	_check_both_completed()
 
 @rpc("any_peer", "reliable")
-func _sync_player_completion(
-	peer_id: int,
-	success: bool,
-	score: int,
-	accuracy: float = -1.0,
-	reaction_time_ms: int = -1
-) -> void:
+func _sync_player_completion(peer_id: int, success: bool, score: int, accuracy: float = -1.0, reaction_time_ms: int = -1) -> void:
 	# Receive completion report from remote player
 	round_completion_status[peer_id] = {
 		"success": success,
@@ -1374,8 +1349,7 @@ func _check_both_completed() -> void:
 			break
 	var my_score: int = my_data.get("score", 0)
 	if my_score > 0 and save_mgr and save_mgr.has_method("add_droplets"):
-		@warning_ignore("integer_division")
-		var earned: int = max(1, my_score / 10)
+		var earned: int = int(max(1, my_score / 10.0))
 		save_mgr.add_droplets(earned)
 		if gm and gm.has_method("add_session_droplets"):
 			gm.add_session_droplets(earned)
