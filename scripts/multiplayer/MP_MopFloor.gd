@@ -3,7 +3,7 @@ extends "res://scripts/multiplayer/MultiplayerMiniGameBase.gd"
 ## Bundle 4: Mop Floor with Laundry Water
 ## P2 mops floors using P1's laundry water
 
-const MAX_DIRTY_TILES: int = 10
+const MAX_DIRTY_TILES: int = 12   # was 10 — more breathing room
 
 var available_water: int = 0
 var tiles_mopped: int = 0
@@ -24,7 +24,7 @@ func _on_multiplayer_ready() -> void:
 	_create_floor()
 	
 	dirty_timer = Timer.new()
-	dirty_timer.wait_time = 5.0
+	dirty_timer.wait_time = 8.0   # was 5.0 — tiles dirty less often so P2 can keep up
 	dirty_timer.timeout.connect(_make_tile_dirty)
 	add_child(dirty_timer)
 	
@@ -32,6 +32,11 @@ func _on_multiplayer_ready() -> void:
 
 func _on_game_start() -> void:
 	dirty_timer.start()
+	# Give P2 starter water so they can mop immediately before P1’s
+	# first full container arrives (which takes ~2-4 catches at 1.2s each).
+	available_water = 5
+	_update_water_display()
+	_log("💧 Starting with %d laundry water" % available_water)
 	if AutoPlayManager and AutoPlayManager.is_mp_auto_play_enabled():
 		AutoPlayManager.register_multiplayer_game(self, my_role)
 

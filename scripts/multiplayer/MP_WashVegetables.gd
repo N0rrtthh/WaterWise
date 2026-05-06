@@ -10,8 +10,9 @@ extends "res://scripts/multiplayer/MultiplayerMiniGameBase.gd"
 
 const VEGETABLE_SIZE: float = 60.0
 const DIRTY_WATER_PER_VEGGIE: int = 1  # Each vegetable produces 1 unit of water
-const MAX_MISSES: int = 5  # Miss 5 vegetables = lose 1 life
-const QUOTA_P1: int = 12  # Wash 12 veggies to succeed
+const MAX_MISSES: int = 8   # was 5 — more forgiving
+const QUOTA_P1: int = 8   # was 12 — shorter game, P2 gets water sooner
+const MAX_ON_SCREEN: int = 6   # new — when exceeded oldest is "missed" to keep pressure fair
 
 var vegetables_washed: int = 0
 var vegetables_missed: int = 0
@@ -42,7 +43,7 @@ func _on_multiplayer_ready() -> void:
 	
 	# Create spawn timer for endless spawning
 	spawn_timer = Timer.new()
-	spawn_timer.wait_time = 2.0
+	spawn_timer.wait_time = 1.5   # was 2.0 — more vegetables = more water sent to P2
 	spawn_timer.timeout.connect(_spawn_vegetable)
 	add_child(spawn_timer)
 	
@@ -122,6 +123,13 @@ func _spawn_vegetable() -> void:
 	veggie.input_event.connect(_on_veggie_input.bind(veggie))
 	
 	vegetables.append(veggie)
+
+	# Enforce on-screen cap — if too many pile up, remove oldest as a miss
+	if vegetables.size() > MAX_ON_SCREEN:
+		var oldest: Area2D = vegetables[0]
+		vegetables.remove_at(0)
+		oldest.queue_free()
+		_on_vegetable_missed()
 
 func _on_veggie_input(_viewport: Node, event: InputEvent, _shape_idx: int, veggie: Area2D) -> void:
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:

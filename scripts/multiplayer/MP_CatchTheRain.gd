@@ -8,9 +8,9 @@ extends "res://scripts/multiplayer/MultiplayerMiniGameBase.gd"
 ## ═══════════════════════════════════════════════════════════════════
 
 const DROP_SPEED: float = 200.0
-const SPAWN_INTERVAL: float = 1.5
+const SPAWN_INTERVAL: float = 1.0   # was 1.5 — faster rain = more water for P2
 const BUCKET_SPEED: float = 400.0
-const MAX_ALLOWED_MISSES: int = 3
+const MAX_ALLOWED_MISSES: int = 8   # was 3 — generous, uses shared life
 const QUOTA: int = 50  # Team needs 50 points total to win
 
 var bucket: Area2D
@@ -200,10 +200,11 @@ func _on_drop_missed() -> void:
 	drops_missed += 1
 	_log("❌ Missed raindrop! Missed: %d" % drops_missed)
 	
-	# Fail if too many misses
+	# Use shared life system instead of hard-failing instantly
 	if drops_missed >= MAX_ALLOWED_MISSES:
-		_log("💔 Too many misses - game failed!")
-		end_game(false)
+		drops_missed = 0
+		_log("💔 Too many misses - losing shared life!")
+		report_miss_to_host()
 
 func _play_catch_effect(pos: Vector2) -> void:
 	# Show catch effect

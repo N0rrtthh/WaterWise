@@ -49,6 +49,11 @@ var _last_tick_second: int = -1
 ## Internal timer reference (so we can stop it in end_game)
 var _game_timer: Timer
 
+## Mistake time penalty — seconds deducted per wrong action.
+## Set after difficulty is loaded; scales Easy → Medium → Hard.
+var mistake_time_penalty: float = 3.0
+var _time_penalty_total: float = 0.0
+
 ## Chaos effect timer references (stopped on game end to prevent leaks)
 var _chaos_timers: Array[Timer] = []
 
@@ -344,6 +349,8 @@ func _load_difficulty_settings() -> void:
 		}
 		current_difficulty = "Medium"
 		print("🎮 %s | Difficulty: %s (fallback)" % [game_name, current_difficulty])
+	# Always set penalty after current_difficulty is resolved.
+	mistake_time_penalty = _penalty_for_difficulty(current_difficulty)
 
 func _apply_difficulty_settings() -> void:
 	# Override this in child classes to apply specific settings
@@ -356,6 +363,27 @@ func _apply_difficulty_settings() -> void:
 	# Activate chaos effects
 	for effect in chaos_effects_active:
 		_activate_chaos_effect(effect)
+
+func _penalty_for_difficulty(diff: String) -> float:
+	## Seconds deducted per mistake — generous on Easy, punishing on Hard.
+	match diff:
+		"Easy":   return 3.0
+		"Medium": return 6.0
+		"Hard":   return 10.0
+		_:        return 5.0
+
+func _apply_sp_time_penalty() -> void:
+	## Deduct mistake_time_penalty from the SP timer and show a visual flash.
+	if not game_active or not timer_running:
+		return
+	_time_penalty_total += mistake_time_penalty
+	print("💔 [%s] Mistake! -%ds (total: %.0fs)" % [game_name, int(mistake_time_penalty), _time_penalty_total])
+	if timer_bar:
+		var tw := create_tween()
+		tw.tween_property(timer_bar, "modulate", Color(2.0, 0.3, 0.3), 0.12)
+		tw.tween_property(timer_bar, "modulate", Color.WHITE, 0.18)
+	if timer_label:
+		timer_label.text = "-%ds" % int(mistake_time_penalty)
 
 func get_difficulty_multiplier(setting_name: String, default_value: float = 1.0) -> float:
 	return difficulty_settings.get(setting_name, default_value)
@@ -506,6 +534,9 @@ func record_action(is_correct: bool) -> void:
 		# Audio: mistake
 		if AudioManager:
 			AudioManager.play_damage()
+		
+		# Deduct time penalty scaled by difficulty.
+		_apply_sp_time_penalty()
 		
 		# Flash timer red to show time penalty (actual penalty applied in _process)
 		if timer_bar:
@@ -1436,9 +1467,8 @@ func _process(_delta):
 	var elapsed = (Time.get_ticks_msec() - game_start_time) / 1000.0
 	var time_left = max(0.0, game_duration - elapsed)
 	
-	# Note: Removed mistake penalty - timer should run at normal speed
-	# Mistakes affect score, not time remaining
-	var effective_time_left = time_left
+	# Note: mistake penalty is tracked in _time_penalty_total and subtracted here.
+	var effective_time_left = max(0.0, time_left - _time_penalty_total)
 	
 	if timer_bar:
 		timer_bar.value = effective_time_left

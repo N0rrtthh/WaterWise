@@ -8,7 +8,7 @@ extends "res://scripts/multiplayer/MultiplayerMiniGameBase.gd"
 ## ═══════════════════════════════════════════════════════════════════
 
 const DIRT_SPEED: float = 150.0
-const PARTICLES_PER_WATER: int = 3
+const PARTICLES_PER_WATER: int = 2   # was 3 — fewer particles = less work per water unit
 const QUOTA: int = 50  # Team needs 50 points total (shared with P1)
 const AQUARIUM_WIDTH: float = 320.0
 const AQUARIUM_HEIGHT: float = 160.0
@@ -40,6 +40,10 @@ func _on_multiplayer_ready() -> void:
 func _on_game_start() -> void:
 	# Called when game starts (after countdown)
 	_log("Filtering started - waiting for water from partner...")
+	# Give P2 a small starter batch so they have something to do right away
+	# while waiting for P1 to catch the first real drops.
+	_spawn_dirt_particles(PARTICLES_PER_WATER * 2)
+	aquarium_fill_units = min(AQUARIUM_CAPACITY, aquarium_fill_units + 2)
 
 func _on_resource_received(_from_player: int, resource_type: String, amount: int, quality: float) -> void:
 	# Receive water from Player 1

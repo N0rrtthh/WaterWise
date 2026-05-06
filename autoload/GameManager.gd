@@ -98,6 +98,7 @@ const LEVEL_QUOTA: int = 20
 var peer: ENetMultiplayerPeer = null
 var is_host: bool = false
 var is_multiplayer_connected: bool = false
+var _play_again_pending: bool = false  # Guard: prevents double-restart race condition
 const DEFAULT_PORT: int = 7777
 const MAX_PLAYERS: int = 2
 
@@ -175,12 +176,27 @@ func _ready() -> void:
 	_load_saved_data()
 	_refresh_available_minigames()
 	_setup_transition_overlay()
+	_request_android_storage_permissions()
 	
 	# Connect signals from other autoloads
 	if has_node("/root/AdaptiveDifficulty"):
 		AdaptiveDifficulty.difficulty_changed.connect(_on_difficulty_changed)
 	
 	print("🎮 GameManager initialized")
+
+func _request_android_storage_permissions() -> void:
+	if OS.get_name() != "Android":
+		return
+	# Request all dangerous permissions declared in the manifest.
+	# This shows the system permission dialog on first install. Subsequent
+	# launches skip the dialog if the user already granted permissions.
+	var granted := OS.get_granted_permissions()
+	var needs_write := "android.permission.WRITE_EXTERNAL_STORAGE" not in granted
+	var needs_read  := "android.permission.READ_EXTERNAL_STORAGE"  not in granted
+	if needs_write or needs_read:
+		# request_permissions() asks for all permissions listed in the manifest
+		# at once — this is the standard Android runtime-permission flow.
+		OS.request_permissions()
 	print("   G-Counter ready for multiplayer scoring")
 	print("   Rolling Window ready for difficulty adaptation")
 
@@ -697,6 +713,7 @@ func reset_multiplayer_game() -> void:
 	player_modes.clear()
 	current_multiplayer_game_name = ""
 	_recorded_multiplayer_round_game = ""
+	_play_again_pending = false
 	
 	if is_host:
 		rpc("_sync_game_state", g_counter, team_lives, difficulty_multiplier)
@@ -717,6 +734,18 @@ func is_multiplayer_session_ready() -> bool:
 @rpc("authority", "call_local", "reliable")
 func _begin_multiplayer_session_rpc() -> void:
 	start_new_session(GameMode.MULTIPLAYER_COOP)
+
+@rpc("any_peer", "call_local", "reliable")
+func _play_again_multiplayer_rpc() -> void:
+	## Called by either player to restart the session without going to the lobby.
+	## The 'any_peer' mode lets both host and client trigger a restart.
+	## Guard prevents a race-condition when both players press at the same time.
+	if _play_again_pending:
+		return
+	_play_again_pending = true
+	print("🔄 [Multiplayer] Play Again — restarting session!")
+	start_new_session(GameMode.MULTIPLAYER_COOP)
+	_load_next_multiplayer_minigame()
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # MULTIPLAYER MINIGAME PROGRESSION

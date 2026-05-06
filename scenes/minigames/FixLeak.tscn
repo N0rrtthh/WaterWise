@@ -6,11 +6,13 @@
 script = ExtResource("1_fixleak")
 
 [node name="Background" type="ColorRect" parent="."]
+mouse_filter = 2
 offset_right = 1920.0
 offset_bottom = 1080.0
 color = Color(0.7, 0.85, 0.95, 1)
 
 [node name="Wall" type="ColorRect" parent="."]
+mouse_filter = 2
 offset_top = 150.0
 offset_right = 1920.0
 offset_bottom = 900.0

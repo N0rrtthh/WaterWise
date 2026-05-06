@@ -43,9 +43,15 @@ func _on_export_pressed() -> void:
 	print("📤 Export button pressed - exporting SESSION DATA ONLY...")
 	
 	if not FileExporter.is_external_storage_available():
-		print("❌ External storage not available")
-		_show_error("External storage not available. Check permissions.")
+		# On Android, storage may be unavailable because the runtime permission
+		# was denied. Re-request it and tell the user what to do.
+		if OS.get_name() == "Android":
+			OS.request_permissions()
+			_show_error("Storage permission is required to export.\n\nA permission dialog has been shown — please tap 'Allow' then press Export again.\n\nIf the dialog did not appear, go to:\nSettings → Apps → WaterWise → Permissions → Storage → Allow")
+		else:
+			_show_error("External storage not available. Check permissions.")
 		text = original_text
+		disabled = false
 		return
 	
 	print("✅ External storage available - exporting session logs...")

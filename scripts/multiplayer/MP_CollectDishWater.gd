@@ -3,7 +3,7 @@ extends "res://scripts/multiplayer/MultiplayerMiniGameBase.gd"
 ## Bundle 5: Collect Dish Water
 ## P1 catches water from dishwashing
 
-const MAX_SPILLS: int = 5
+const MAX_SPILLS: int = 8   # was 5 — more forgiving
 
 var water_collected: int = 0
 var spills: int = 0
@@ -25,7 +25,7 @@ func _on_multiplayer_ready() -> void:
 	_create_buckets()
 	
 	spawn_timer = Timer.new()
-	spawn_timer.wait_time = 1.8
+	spawn_timer.wait_time = 1.2   # was 1.8 — more drops = more water for P2
 	spawn_timer.timeout.connect(_spawn_water_drop)
 	add_child(spawn_timer)
 	
@@ -113,11 +113,10 @@ func _on_drop_caught(area: Area2D, drop: Area2D) -> void:
 	
 	water_collected += 1
 	add_score(5)
-	
-	if water_collected % 3 == 0:  # Every 3 drops
-		send_resource_to_partner("dishwater", 3, 1.0)
-		_log("📤 Sent dish water!")
-	
+	# Send 1 unit per drop so P2 gets water immediately each catch
+	send_resource_to_partner("dishwater", 1, 1.0)
+	_log("📤 Sent dish water (total: %d)" % water_collected)
+
 	drop.queue_free()
 
 func _on_game_over() -> void:

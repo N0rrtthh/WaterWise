@@ -45,6 +45,7 @@ const UI_FONT_BRICK := preload("res://fonts/NTBrickSans.otf")
 var _bg_layer: Node2D
 var _char_layer: Node2D
 var _title_node: Label
+var _subtitle_node: Label
 var _main_character: Node2D
 
 
@@ -294,12 +295,6 @@ func _apply_responsive_layout() -> void:
 
 	_layout_characters_for_viewport(vp_size)
 
-	if _title_node:
-		var title_width = _title_node.size.x
-		if title_width <= 1.0:
-			title_width = 390.0
-		_title_node.position.x = (vp_size.x - title_width) * 0.5
-
 	if not _is_mobile_layout():
 		return
 
@@ -379,13 +374,6 @@ func _on_viewport_resized() -> void:
 
 	# Reposition characters to match new viewport
 	_layout_characters_for_viewport(vp)
-
-	# Reposition title
-	if _title_node:
-		var title_width = _title_node.size.x
-		if title_width <= 1.0:
-			title_width = 390.0
-		_title_node.position.x = (vp.x - title_width) * 0.5
 
 	# Signboard uses fixed coords (HighscorePost is fixed-size, anchored top-left)
 
@@ -1076,9 +1064,39 @@ func _build_title() -> void:
 	_title_node.add_theme_color_override("font_color", Color(1, 1, 1))
 	_title_node.add_theme_color_override("font_outline_color", Color(0.1, 0.3, 0.6))
 	_title_node.add_theme_constant_override("outline_size", 10)
-	_title_node.position = Vector2(0, 18)
+	# Full-width anchors so HORIZONTAL_ALIGNMENT_CENTER works on any screen size
+	# without needing to measure text width at layout time.
+	_title_node.anchor_left = 0.0
+	_title_node.anchor_right = 1.0
+	_title_node.anchor_top = 0.0
+	_title_node.anchor_bottom = 0.0
+	_title_node.offset_left = 0.0
+	_title_node.offset_right = 0.0
+	_title_node.offset_top = 18.0
+	_title_node.offset_bottom = 130.0
 	_title_node.modulate.a = 0.0  # start hidden
 	add_child(_title_node)
+
+	# Subtitle label
+	_subtitle_node = Label.new()
+	_subtitle_node.text = _loc("subtitle", "Every Drop Matters")
+	_subtitle_node.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_subtitle_node.add_theme_font_size_override("font_size", 22)
+	if title_font:
+		_subtitle_node.add_theme_font_override("font", title_font)
+	_subtitle_node.add_theme_color_override("font_color", Color(1.0, 0.85, 0.3))
+	_subtitle_node.add_theme_color_override("font_outline_color", Color(0.1, 0.3, 0.6))
+	_subtitle_node.add_theme_constant_override("outline_size", 6)
+	_subtitle_node.anchor_left = 0.0
+	_subtitle_node.anchor_right = 1.0
+	_subtitle_node.anchor_top = 0.0
+	_subtitle_node.anchor_bottom = 0.0
+	_subtitle_node.offset_left = 0.0
+	_subtitle_node.offset_right = 0.0
+	_subtitle_node.offset_top = 132.0
+	_subtitle_node.offset_bottom = 172.0
+	_subtitle_node.modulate.a = 0.0  # start hidden
+	add_child(_subtitle_node)
 
 
 # ── Entrance animation ─────────────────────────────────────────────
@@ -1093,6 +1111,8 @@ func _animate_entrance() -> void:
 	# Return visit: characters fade in from their spawn positions — no drop-in
 	if _has_been_shown:
 		_title_node.modulate.a = 1.0
+		if _subtitle_node:
+			_subtitle_node.modulate.a = 1.0
 		for ch in _characters:
 			var ds := float(ch.get_meta("depth_scale", 1.0))
 			ch.scale = Vector2(ds, ds)
@@ -1120,6 +1140,13 @@ func _animate_entrance() -> void:
 		_title_node, "position:y",
 		_title_node.position.y + 40, 0.5
 	).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_BACK)
+
+	# Subtitle fades in after the title settles
+	if _subtitle_node:
+		var sub_tw = create_tween()
+		_tweens.append(sub_tw)
+		sub_tw.tween_interval(0.5)
+		sub_tw.tween_property(_subtitle_node, "modulate:a", 1.0, 0.4)
 
 	# Characters staggered drop-in with squash-stretch
 	for i in range(_characters.size()):

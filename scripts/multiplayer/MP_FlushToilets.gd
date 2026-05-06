@@ -3,7 +3,7 @@ extends "res://scripts/multiplayer/MultiplayerMiniGameBase.gd"
 ## Bundle 2: Flush Toilet with Shower Water
 ## P2 uses P1's shower water to flush toilet
 
-const MAX_UNFLUSHED: int = 3
+const MAX_UNFLUSHED: int = 5   # was 3 — more forgiving while P2 waits for water
 
 var available_water: int = 0
 var toilets_flushed: int = 0
@@ -26,7 +26,7 @@ func _on_multiplayer_ready() -> void:
 	_create_toilets()
 	
 	spawn_timer = Timer.new()
-	spawn_timer.wait_time = 8.0
+	spawn_timer.wait_time = 12.0   # was 8.0 — slower dirtying so P2 isn’t penalised while waiting for water
 	spawn_timer.timeout.connect(_mark_toilet_dirty)
 	add_child(spawn_timer)
 	
@@ -34,6 +34,11 @@ func _on_multiplayer_ready() -> void:
 
 func _on_game_start() -> void:
 	spawn_timer.start()
+	# Give P2 a small starter supply so they can flush right away
+	# before P1’s first full bucket arrives.
+	available_water = 3
+	_update_water_display()
+	_log("💧 Starting with %d shower water" % available_water)
 	if AutoPlayManager and AutoPlayManager.is_mp_auto_play_enabled():
 		AutoPlayManager.register_multiplayer_game(self, my_role)
 
