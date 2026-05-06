@@ -18,6 +18,11 @@ var max_water_wasted: float = 100.0
 func _ready() -> void:
 	game_name = Localization.get_text("fix_leak") if Localization else "Fix the Leak"
 	super._ready()
+	# Ensure background/wall ColorRects never intercept touch events that
+	# should reach the leak Area2D nodes.
+	for child in get_children():
+		if child is ColorRect:
+			(child as ColorRect).mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 func _apply_difficulty_settings() -> void:
 	super._apply_difficulty_settings()

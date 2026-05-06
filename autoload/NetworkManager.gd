@@ -76,6 +76,11 @@ const MAX_TEAM_LIVES: int = 5
 const START_TEAM_LIVES: int = 3
 var rounds_survived: int = 0
 
+# Session-cumulative per-player score accumulators (persist across rounds).
+# Reset when a new multiplayer session starts.
+var mp_session_p1_score: int = 0
+var mp_session_p2_score: int = 0
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # INITIALIZATION
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -681,6 +686,15 @@ func get_player_score(peer_id: int) -> int:
 	# Get individual player's score
 	return g_counter.get(peer_id, 0)
 
+func get_mp_session_scores() -> Dictionary:
+	## Returns session-cumulative per-player and team totals.
+	## Keyed as "p1_total", "p2_total", "team_total".
+	return {
+		"p1_total": mp_session_p1_score,
+		"p2_total": mp_session_p2_score,
+		"team_total": mp_session_p1_score + mp_session_p2_score
+	}
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # SHARED LIVES SYSTEM
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -692,6 +706,8 @@ func reset_team_lives() -> void:
 	
 	team_lives = START_TEAM_LIVES
 	rounds_survived = 0
+	mp_session_p1_score = 0
+	mp_session_p2_score = 0
 	_log("❤️ Team lives reset to %d" % team_lives)
 	
 	# Sync to all clients
@@ -891,6 +907,8 @@ func is_server() -> bool:
 func _log(message: String) -> void:
 	# Internal logging function
 	print("[NetworkManager] " + message)
+	if SessionLogger:
+		SessionLogger.log_entry("NetworkManager", message)
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # PRODUCER-CONSUMER PATTERN (Bounded Buffer)
@@ -1254,22 +1272,33 @@ func complete_round() -> void:
 	
 	var team_total = get_total_score()
 	
+	# Accumulate into session totals
+	mp_session_p1_score += p1_score
+	mp_session_p2_score += p2_score
+
 	_log("🏁 Round %d done! P1:%d P2:%d Total:%d"
 		% [rounds_survived, p1_score,
 			p2_score, team_total])
 	
-	# Broadcast round completion
-	rpc("_show_round_results", p1_score, p2_score, team_total, rounds_survived)
+	# Broadcast round completion (includes session totals so clients stay in sync)
+	rpc("_show_round_results", p1_score, p2_score, team_total, rounds_survived,
+		mp_session_p1_score, mp_session_p2_score)
 
 @rpc("authority", "call_local", "reliable")
-func _show_round_results(p1_score: int, p2_score: int, team_total: int, rounds: int) -> void:
+func _show_round_results(p1_score: int, p2_score: int, team_total: int, rounds: int,
+		session_p1_total: int = 0, session_p2_total: int = 0) -> void:
+	# Sync session accumulators on the client side
+	mp_session_p1_score = session_p1_total
+	mp_session_p2_score = session_p2_total
 	# Show round results on all clients
 	round_completed.emit(p1_score, p2_score, team_total)
-	_log("📊 Round %d results - Your score: %d | Partner: %d | Team: %d" % [
+	_log("📊 Round %d results - Your score: %d | Partner: %d | Team: %d | Session P1: %d | Session P2: %d" % [
 		rounds,
 		g_counter.get(multiplayer.get_unique_id(), 0),
 		team_total - g_counter.get(multiplayer.get_unique_id(), 0),
-		team_total
+		team_total,
+		session_p1_total,
+		session_p2_total
 	])
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

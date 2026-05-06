@@ -10,8 +10,8 @@ extends "res://scripts/multiplayer/MultiplayerMiniGameBase.gd"
 
 const PLANT_SIZE: float = 80.0
 const WATER_PER_PLANT: int = 1  # Each plant needs 1 unit of water
-const MAX_WILTED: int = 5  # 5 plants wilt = lose 1 life
-const QUOTA_P2: int = 12  # Water 12 plants to succeed
+const MAX_WILTED: int = 8   # was 5 — more tolerance while P2 waits for P1
+const QUOTA_P2: int = 8   # was 12 — shorter quota matches P1’s
 
 var plants_watered: int = 0
 var plants_wilted: int = 0
@@ -44,7 +44,7 @@ func _on_multiplayer_ready() -> void:
 	
 	# Wilt timer - plants wilt if not watered
 	wilt_timer = Timer.new()
-	wilt_timer.wait_time = 15.0  # Plants wilt after 15 seconds
+	wilt_timer.wait_time = 20.0  # was 15.0 — plants wilt more slowly so P2 can keep up
 	wilt_timer.timeout.connect(_check_wilted_plants)
 	add_child(wilt_timer)
 	
@@ -53,6 +53,11 @@ func _on_multiplayer_ready() -> void:
 func _on_game_start() -> void:
 	wilt_timer.start()
 	_log("🚿 Waiting for water from partner...")
+	# Give P2 starter water so they can water the first plants
+	# before P1 washes the very first vegetable.
+	available_water = 3
+	_update_water_display()
+	_log("💧 Starting with %d dirty water" % available_water)
 	if AutoPlayManager and AutoPlayManager.is_mp_auto_play_enabled():
 		AutoPlayManager.register_multiplayer_game(self, my_role)
 

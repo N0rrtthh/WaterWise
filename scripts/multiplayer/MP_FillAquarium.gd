@@ -3,7 +3,7 @@ extends "res://scripts/multiplayer/MultiplayerMiniGameBase.gd"
 ## Bundle 3: Fill Aquarium with Rain
 ## P2 fills aquarium with P1's rainwater
 
-const MAX_EMPTY_TIME: float = 20.0
+const MAX_EMPTY_TIME: float = 30.0   # was 20.0 — more time before losing life
 
 var available_water: int = 0
 var aquarium_level: float = 0.0
@@ -30,6 +30,10 @@ func _on_multiplayer_ready() -> void:
 
 func _on_game_start() -> void:
 	_log("💧 Waiting for rainwater...")
+	# Give P2 starter water so the aquarium doesn’t immediately start draining
+	# to the danger threshold before P1 catches the first drops.
+	available_water = 3
+	_update_water_display()
 
 func _create_water_indicator() -> void:
 	var panel = PanelContainer.new()
@@ -119,8 +123,8 @@ func _process(delta: float) -> void:
 	if not game_active:
 		return
 	
-	# Water evaporates
-	aquarium_level = max(0, aquarium_level - delta * 2.0)
+	# Water evaporates slowly — was 2.0/s which drained too fast for P2
+	aquarium_level = max(0, aquarium_level - delta * 1.0)
 	_update_aquarium()
 	
 	# Check if empty too long

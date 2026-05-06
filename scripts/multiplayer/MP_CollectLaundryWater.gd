@@ -3,7 +3,7 @@ extends "res://scripts/multiplayer/MultiplayerMiniGameBase.gd"
 ## Bundle 4: Collect Laundry Water
 ## P1 collects water from washing machine
 
-const MAX_MISSED: int = 5
+const MAX_MISSED: int = 8   # was 5 — more forgiving, uses shared life
 
 var water_collected: int = 0
 var water_missed: int = 0
@@ -32,7 +32,7 @@ func _on_multiplayer_ready() -> void:
 	_create_containers()
 	
 	spawn_timer = Timer.new()
-	spawn_timer.wait_time = 2.0
+	spawn_timer.wait_time = 1.2   # was 2.0 — faster streams = more water for P2
 	spawn_timer.timeout.connect(_spawn_water_stream)
 	add_child(spawn_timer)
 	
@@ -45,7 +45,7 @@ func _create_containers() -> void:
 	for i in range(3):
 		var container = Area2D.new()
 		container.position = Vector2(288 + i * 288, 500)
-		container.set_meta("capacity", 5)
+		container.set_meta("capacity", 2)   # was 5 — fills after 2 catches, sends water to P2 much sooner
 		container.set_meta("current", 0)
 		add_child(container)
 		
@@ -136,8 +136,8 @@ func _process(delta: float) -> void:
 				
 				if water_missed >= MAX_MISSED:
 					water_missed = 0
-					_log("💔 Too many misses - game failed!")
-					end_game(false)
+					_log("💔 Too many misses - losing shared life!")
+					report_miss_to_host()
 
 func _on_water_caught(area: Area2D, stream: Area2D) -> void:
 	if not area.has_meta("capacity"):

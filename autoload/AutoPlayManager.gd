@@ -38,6 +38,10 @@ var auto_play_duration: float = 0.0  # 0 = unlimited
 var auto_play_start_time: int = 0
 var auto_play_elapsed: float = 0.0
 
+# MP-specific duration (mirrors SP duration concept)
+var mp_auto_play_duration: float = 0.0  # 0 = unlimited
+var mp_auto_play_start_time: int = 0
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # AUTO-PLAY BEHAVIOR TIMERS & STATE
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -140,10 +144,32 @@ func is_auto_play_enabled() -> bool:
 
 func set_mp_auto_play_enabled(enabled: bool) -> void:
 	mp_auto_play_enabled = enabled
-	print("🤖 MP Auto-play %s" % ("ENABLED" if enabled else "DISABLED"))
+	if enabled:
+		mp_auto_play_start_time = Time.get_ticks_msec()
+		var dur_str = _format_duration(mp_auto_play_duration) if mp_auto_play_duration > 0 else "Unlimited"
+		print("🤖 MP Auto-play ENABLED (Duration: %s)" % dur_str)
+	else:
+		mp_auto_play_start_time = 0
+		print("🤖 MP Auto-play DISABLED")
 
 func is_mp_auto_play_enabled() -> bool:
 	return mp_auto_play_enabled
+
+func set_mp_auto_play_duration(minutes: float) -> void:
+	mp_auto_play_duration = minutes * 60.0
+	var dur_str = _format_duration(mp_auto_play_duration) if mp_auto_play_duration > 0 else "Unlimited"
+	print("🤖 MP Auto-play duration set to: %s" % dur_str)
+
+func get_mp_auto_play_duration_minutes() -> float:
+	return mp_auto_play_duration / 60.0
+
+func get_mp_remaining_time() -> float:
+	if mp_auto_play_duration <= 0:
+		return -1.0  # Unlimited
+	if mp_auto_play_start_time == 0:
+		return mp_auto_play_duration
+	var elapsed := (Time.get_ticks_msec() - mp_auto_play_start_time) / 1000.0
+	return max(0.0, mp_auto_play_duration - elapsed)
 
 func _reset_state() -> void:
 	current_game = null
@@ -1869,6 +1895,14 @@ func _format_duration(_seconds: float) -> String:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func _process_mp_auto_play(delta: float) -> void:
+	# Check MP duration limit
+	if mp_auto_play_duration > 0 and mp_auto_play_start_time > 0:
+		var mp_elapsed := (Time.get_ticks_msec() - mp_auto_play_start_time) / 1000.0
+		if mp_elapsed >= mp_auto_play_duration:
+			print("🤖 MP Auto-play duration reached (%s) — stopping" % _format_duration(mp_auto_play_duration))
+			set_mp_auto_play_enabled(false)
+			return
+
 	# Drive the registered multiplayer game using the chosen strategy.
 	if not current_game or not is_instance_valid(current_game):
 		# No game registered — try to auto-dismiss instruction overlay

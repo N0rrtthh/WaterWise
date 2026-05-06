@@ -39,10 +39,19 @@ var partner_role: String = ""
 var local_score: int = 0
 var is_waiting_for_partner: bool = false
 
+# Cached reference to the progress bar for smooth 60fps update.
+var _timer_progress_bar: ProgressBar = null
+
 # Performance tracking for CoopAdaptation
 var mistakes_made: int = 0
 var correct_actions: int = 0
 var total_actions: int = 0
+
+# Mistake time penalty — seconds removed from remaining time per wrong action.
+# Scaled by difficulty so Easy is forgiving and Hard is punishing.
+# 0 = disabled (safe default before _ready() sets the real value).
+var mistake_time_penalty: float = 0.0
+var _time_penalty_total: float = 0.0
 
 # UI References
 var hud_layer: CanvasLayer
@@ -81,6 +90,10 @@ func _ready() -> void:
 			coop.get_player_difficulty(my_player_num),
 			GameManager.difficulty_multiplier
 		])
+		mistake_time_penalty = _penalty_for_difficulty(coop.get_player_difficulty(my_player_num))
+	else:
+		mistake_time_penalty = _penalty_for_difficulty("Medium")
+	_log("⏱️ Mistake penalty: %.0fs per wrong action (difficulty-scaled)" % mistake_time_penalty)
 	
 	_log(" Multiplayer game starting - Player %d (%s)" % [my_player_num, my_role])
 	
@@ -275,8 +288,7 @@ func _setup_multiplayer_ui() -> void:
 	timer_progress.add_theme_stylebox_override("fill", fill_style)
 	
 	timer_container.add_child(timer_progress)
-	
-	# --- RIGHT SECTION: ROLES & PAUSE ---
+	_timer_progress_bar = timer_progress  # Cache for smooth _process() updates
 	var right_box = HBoxContainer.new()
 	right_box.add_theme_constant_override("separation", 20)
 	right_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -699,62 +711,71 @@ func start_game() -> void:
 	game_started_time = Time.get_ticks_msec()
 	game_started.emit()
 	
-	# Start UI timer
+	# Start UI timer — fires every second for a clean, human-readable countdown.
+	# Do NOT use a shorter interval here: _process() must NOT also update the
+	# timer label or the two writes will fight each other and produce decimal
+	# flicker at 60fps.
 	ui_timer = Timer.new()
-	ui_timer.wait_time = 0.1
+	ui_timer.wait_time = 1.0
 	ui_timer.timeout.connect(_update_timer_display)
 	add_child(ui_timer)
 	ui_timer.start()
+	# Fire immediately so the label shows the full duration right away.
+	_update_timer_display()
 	
 	_log(" Game started! Duration: %.0fs | Inputs enabled" % game_duration)
 	_log(" Player %d (%s) - Ready to play!" % [my_player_num, my_role])
 	_on_game_start()
 
 func _update_timer_display() -> void:
-	# Update timer label and progress bar
+	# Single source of truth for the timer label — called every 1 second by
+	# ui_timer. _process() must NOT write to timer_label or the two paths
+	# fight and produce decimal flicker / super-fast animation.
 	if not game_active:
 		ui_timer.stop()
 		return
 
-	# Gameplay is active; no pre-start waiting or instruction overlay should remain visible.
 	_hide_waiting_for_start_overlay()
 	_hide_countdown_overlay()
 	if instruction_overlay:
 		instruction_overlay.visible = false
 	if waiting_overlay:
 		waiting_overlay.visible = false
-		
-	var elapsed = (Time.get_ticks_msec() - game_started_time) / 1000.0
-	var remaining = max(0.0, game_duration - elapsed)
-	
+
+	var elapsed := (Time.get_ticks_msec() - game_started_time) / 1000.0
+	var remaining: float = max(0.0, game_duration - elapsed - _time_penalty_total)
+
 	if timer_label:
+		# Ensure the pivot is centred for the scale-pop animation.
+		if timer_label.pivot_offset == Vector2.ZERO:
+			timer_label.pivot_offset = timer_label.size / 2.0
+
 		if game_duration >= 999999.0:
-			timer_label.text = "ENDLESS"
+			# Endless mode — show elapsed MM:SS
+			var minutes := int(elapsed / 60)
+			var seconds := int(elapsed) % 60
+			timer_label.text = "%02d:%02d" % [minutes, seconds]
+			timer_label.add_theme_color_override("font_color", Color.WHITE)
+			timer_label.scale = Vector2.ONE
 		else:
-			timer_label.text = "%.0f" % remaining
-			
-			# Change color based on time remaining
-			if remaining <= 5:
+			# Countdown — whole seconds only, no decimals.
+			var secs_left := int(ceil(remaining))
+			timer_label.text = str(secs_left)
+
+			if remaining <= 5.0:
 				timer_label.add_theme_color_override("font_color", Color(1.0, 0.3, 0.3))
-			elif remaining <= 10:
+				# Pop animation on each tick in the danger zone.
+				var tw := create_tween()
+				tw.tween_property(timer_label, "scale", Vector2(1.35, 1.35), 0.08)
+				tw.tween_property(timer_label, "scale", Vector2.ONE, 0.15)
+			elif remaining <= 10.0:
 				timer_label.add_theme_color_override("font_color", Color(1.0, 0.9, 0.3))
-	
-	# Update progress bar (find dynamically since it's created in code)
-	var progress_bar = hud_layer.find_child("TimerProgress", true, false)
-	if progress_bar and game_duration < 999999.0:
-		progress_bar.value = remaining
-		
-		# Change bar color based on time
-		var fill_style = progress_bar.get_theme_stylebox("fill")
-		if fill_style is StyleBoxFlat:
-			if remaining <= 5:
-				fill_style.bg_color = Color(1.0, 0.3, 0.3)
-			elif remaining <= 10:
-				fill_style.bg_color = Color(1.0, 0.9, 0.3)
+				timer_label.scale = Vector2.ONE
 			else:
-				fill_style.bg_color = Color(0.3, 0.8, 1.0)
-	
-	if remaining <= 0 and game_duration < 999999.0:
+				timer_label.add_theme_color_override("font_color", Color.WHITE)
+				timer_label.scale = Vector2.ONE
+
+	if remaining <= 0.0 and game_duration < 999999.0:
 		_on_time_up()
 
 func _on_time_up() -> void:
@@ -803,6 +824,41 @@ func end_game(success: bool) -> void:
 			accuracy = 1.0 if success else 0.0
 		NetworkManager.report_player_completion(success, local_score, accuracy, reaction_time_ms)
 
+func _penalty_for_difficulty(diff: String) -> float:
+	## Returns seconds removed from the clock per mistake for each difficulty tier.
+	##   Easy   →  3s  (generous — player needs ~10 mistakes to lose 30s)
+	##   Medium →  6s  (moderate — 5 mistakes costs half a minute)
+	##   Hard   → 10s  (punishing — 3 mistakes can end the game)
+	match diff:
+		"Easy":   return 3.0
+		"Medium": return 6.0
+		"Hard":   return 10.0
+	return 5.0  # safe fallback
+
+func _apply_time_penalty() -> void:
+	## Remove mistake_time_penalty seconds from the remaining game time and
+	## show a brief "-Xs" flash on the timer label so the player knows why
+	## the clock jumped.
+	if not game_active or game_duration >= 999999.0:
+		return
+	_time_penalty_total += mistake_time_penalty
+	_log("💔 Mistake! -%ds  (total deducted: %.0fs)" % [int(mistake_time_penalty), _time_penalty_total])
+	# Visual feedback: show penalty amount in red for 0.6s then restore.
+	if timer_label:
+		timer_label.text = "-%ds" % int(mistake_time_penalty)
+		timer_label.add_theme_color_override("font_color", Color(1.0, 0.2, 0.2))
+		var tw := create_tween()
+		tw.tween_interval(0.6)
+		tw.tween_callback(func():
+			if is_instance_valid(timer_label):
+				timer_label.add_theme_color_override("font_color", Color.WHITE)
+			_update_timer_display()
+		)
+	# Check immediately if the penalty ended the game.
+	var elapsed := (Time.get_ticks_msec() - game_started_time) / 1000.0
+	if game_duration - elapsed - _time_penalty_total <= 0.0:
+		_on_time_up()
+
 func record_mp_action(correct: bool) -> void:
 	## Record a player action for CoopAdaptation accuracy tracking.
 	## Call this from child games when the player makes a correct or incorrect move.
@@ -811,6 +867,7 @@ func record_mp_action(correct: bool) -> void:
 		correct_actions += 1
 	else:
 		mistakes_made += 1
+		_apply_time_penalty()
 
 func show_waiting_overlay() -> void:
 	# Show waiting for partner overlay
@@ -876,12 +933,14 @@ func _on_quit_pressed() -> void:
 	
 	_log(" Player quitting session")
 	
-	if NetworkManager:
-		# Disconnect and return both players to lobby
-		NetworkManager.disconnect_multiplayer()
-	
-	# Return to lobby
-	get_tree().change_scene_to_file("res://scenes/ui/MultiplayerLobby.tscn")
+	# Use GameManager to fully close the ENet peer and reset all state,
+	# which triggers server_disconnected on the partner side so they
+	# are returned to mode-selection instead of being stuck on the
+	# waiting panel with a stale connection.
+	if GameManager:
+		GameManager.return_to_multiplayer_lobby()
+	else:
+		get_tree().change_scene_to_file("res://scenes/ui/MultiplayerLobby.tscn")
 
 func _on_remote_pause() -> void:
 	# Partner paused the game
@@ -935,67 +994,47 @@ func _on_player_left_session(_peer_id: int) -> void:
 	if tree:
 		await tree.create_timer(2.0).timeout
 		
-		if NetworkManager:
-			NetworkManager.disconnect_multiplayer()
-		
-		if is_inside_tree():
+		# Use GameManager to fully close peer + reset state so the
+		# lobby shows mode-selection, not a stuck waiting panel.
+		if GameManager:
+			GameManager.return_to_multiplayer_lobby()
+		elif is_inside_tree():
 			tree.change_scene_to_file("res://scenes/ui/MultiplayerLobby.tscn")
 
 func _on_server_disconnected() -> void:
 	# Handle when server disconnects (Host quits)
 	_log(" Server disconnected - terminating session")
 	
-	# Don't call _on_player_left_session to avoid duplicate UI
-	if NetworkManager:
-		NetworkManager.disconnect_multiplayer()
-	
-	var tree = get_tree()
-	if tree and is_inside_tree():
-		tree.change_scene_to_file("res://scenes/ui/MultiplayerLobby.tscn")
+	# Don't call _on_player_left_session to avoid duplicate UI.
+	# Use GameManager to fully close peer + reset state so the
+	# lobby shows mode-selection, not a stuck waiting panel.
+	if GameManager:
+		GameManager.return_to_multiplayer_lobby()
+	elif is_inside_tree():
+		get_tree().change_scene_to_file("res://scenes/ui/MultiplayerLobby.tscn")
 
 # 
 # MAIN LOOP
 # 
 
 func _process(_delta: float) -> void:
-	# Update timer display with countdown colors
-	if not game_active or not timer_label:
-		return
-	
-	var elapsed = (Time.get_ticks_msec() - game_started_time) / 1000.0
-	
-	# Endless mode - show elapsed time
-	if game_duration >= 999999.0:
-		var minutes = int(elapsed / 60)
-		var seconds = int(elapsed) % 60
-		timer_label.text = "%02d:%02d" % [minutes, seconds]
-		timer_label.add_theme_color_override("font_color", Color.WHITE)
-	else:
-		# Timed mode - show countdown
-		var time_left = game_duration - elapsed
-		
-		if time_left > 0:
-			timer_label.text = "%.1f" % time_left
-			
-			# Color coding and animation
-			if time_left <= 10.0:
-				timer_label.add_theme_color_override("font_color", Color(1, 0.3, 0.3))  # Red
-				# Pulse animation
-				var pulse = (sin(elapsed * 10.0) + 1.0) * 0.1 + 1.0
-				timer_label.scale = Vector2(pulse, pulse)
-				# Ensure pivot is set for scaling from center
-				if timer_label.pivot_offset == Vector2.ZERO:
-					timer_label.pivot_offset = timer_label.size / 2
-			elif time_left <= 20.0:
-				timer_label.add_theme_color_override("font_color", Color(1, 1, 0.3))  # Yellow
-				timer_label.scale = Vector2.ONE
+	# Timer LABEL is handled by _update_timer_display() (1-second tick) —
+	# writing the label here would cause decimal flicker. Do not touch it.
+	#
+	# The progress BAR is updated every frame for a smooth slide effect.
+	if game_active and _timer_progress_bar and game_duration < 999999.0:
+		var elapsed := (Time.get_ticks_msec() - game_started_time) / 1000.0
+		var remaining: float = max(0.0, game_duration - elapsed - _time_penalty_total)
+		_timer_progress_bar.value = remaining
+		# Keep bar colour in sync with danger thresholds
+		var fill_style = _timer_progress_bar.get_theme_stylebox("fill")
+		if fill_style is StyleBoxFlat:
+			if remaining <= 5.0:
+				fill_style.bg_color = Color(1.0, 0.3, 0.3)
+			elif remaining <= 10.0:
+				fill_style.bg_color = Color(1.0, 0.9, 0.3)
 			else:
-				timer_label.add_theme_color_override("font_color", Color.WHITE)
-				timer_label.scale = Vector2.ONE
-		else:
-			timer_label.text = "0.0"
-			timer_label.add_theme_color_override("font_color", Color(1, 0.3, 0.3))
-			end_game(false)
+				fill_style.bg_color = Color(0.3, 0.8, 1.0)
 
 # 
 # NETWORK CALLBACKS
@@ -1136,7 +1175,10 @@ func get_controls_text() -> String:
 
 func _log(message: String) -> void:
 	# Internal logging
-	print("[%s P%d] %s" % [game_name, my_player_num, message])
+	var full := "[%s P%d] %s" % [game_name, my_player_num, message]
+	print(full)
+	if SessionLogger:
+		SessionLogger.log_entry(game_name if game_name != "" else "MPGame", message)
 
 # 
 # OVERRIDE THESE IN CHILD CLASSES
@@ -1306,6 +1348,19 @@ func _show_round_summary(
 	if not overlay:
 		return
 	
+	# Determine which rows are "mine" vs "partner" based on player number.
+	var my_score := p1_score if my_player_num == 1 else p2_score
+	var my_success := p1_success if my_player_num == 1 else p2_success
+	var partner_score := p2_score if my_player_num == 1 else p1_score
+	var partner_success := p2_success if my_player_num == 1 else p1_success
+
+	# Fetch cumulative session totals from NetworkManager
+	var session_scores: Dictionary = {}
+	if NetworkManager and NetworkManager.has_method("get_mp_session_scores"):
+		session_scores = NetworkManager.get_mp_session_scores()
+	var session_my_total: int = session_scores.get("p%d_total" % my_player_num, 0)
+	var session_team_total: int = session_scores.get("team_total", p1_score + p2_score)
+
 	# Clear and rebuild with full results
 	for child in overlay.get_children():
 		child.queue_free()
@@ -1320,7 +1375,7 @@ func _show_round_summary(
 	overlay.add_child(center)
 	
 	var vbox = VBoxContainer.new()
-	vbox.add_theme_constant_override("separation", 20)
+	vbox.add_theme_constant_override("separation", 14)
 	center.add_child(vbox)
 	
 	var title = Label.new()
@@ -1329,51 +1384,84 @@ func _show_round_summary(
 	title.add_theme_font_size_override("font_size", 56)
 	title.add_theme_color_override("font_color", Color(0.4, 1.0, 0.4))
 	vbox.add_child(title)
-	
-	# Player 1 results
-	var p1_label = Label.new()
-	p1_label.text = "Player 1: %s - %d points" % [
-		" WIN" if p1_success else " FAIL",
-		p1_score
+
+	# ── YOUR score (highlighted) ──────────────────────────────────────
+	var my_panel = PanelContainer.new()
+	var my_style = StyleBoxFlat.new()
+	my_style.bg_color = Color(0.1, 0.3, 0.1, 0.8)
+	my_style.border_color = Color(0.4, 1.0, 0.4)
+	my_style.border_width_left = 3
+	my_style.border_width_right = 3
+	my_style.border_width_top = 3
+	my_style.border_width_bottom = 3
+	my_style.corner_radius_top_left = 8
+	my_style.corner_radius_top_right = 8
+	my_style.corner_radius_bottom_left = 8
+	my_style.corner_radius_bottom_right = 8
+	my_panel.add_theme_stylebox_override("panel", my_style)
+	vbox.add_child(my_panel)
+
+	var my_vbox = VBoxContainer.new()
+	my_vbox.add_theme_constant_override("separation", 4)
+	my_panel.add_child(my_vbox)
+
+	var my_header = Label.new()
+	my_header.text = "YOUR RESULT  (Player %d)" % my_player_num
+	my_header.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	my_header.add_theme_font_size_override("font_size", 18)
+	my_header.add_theme_color_override("font_color", Color(0.8, 1.0, 0.8))
+	my_vbox.add_child(my_header)
+
+	var my_result = Label.new()
+	my_result.text = "%s   This Round: %d pts   Session Total: %d pts" % [
+		"✅ WIN" if my_success else "❌ FAIL",
+		my_score,
+		session_my_total
 	]
-	p1_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	p1_label.add_theme_font_size_override("font_size", 32)
-	p1_label.add_theme_color_override(
+	my_result.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	my_result.add_theme_font_size_override("font_size", 28)
+	my_result.add_theme_color_override(
 		"font_color",
-		Color(0.4, 1.0, 0.4) if p1_success else Color(1.0, 0.4, 0.4)
+		Color(0.4, 1.0, 0.4) if my_success else Color(1.0, 0.4, 0.4)
 	)
-	vbox.add_child(p1_label)
-	
-	# Player 2 results
-	var p2_label = Label.new()
-	p2_label.text = "Player 2: %s - %d points" % [
-		" WIN" if p2_success else " FAIL",
-		p2_score
+	my_vbox.add_child(my_result)
+
+	# ── PARTNER score ─────────────────────────────────────────────────
+	var partner_num := 2 if my_player_num == 1 else 1
+	var partner_label = Label.new()
+	partner_label.text = "Partner (Player %d): %s — %d pts" % [
+		partner_num,
+		"✅ WIN" if partner_success else "❌ FAIL",
+		partner_score
 	]
-	p2_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	p2_label.add_theme_font_size_override("font_size", 32)
-	p2_label.add_theme_color_override(
+	partner_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	partner_label.add_theme_font_size_override("font_size", 28)
+	partner_label.add_theme_color_override(
 		"font_color",
-		Color(0.4, 1.0, 0.4) if p2_success else Color(1.0, 0.4, 0.4)
+		Color(0.4, 1.0, 0.4) if partner_success else Color(1.0, 0.4, 0.4)
 	)
-	vbox.add_child(p2_label)
-	
-	# Team totals
+	vbox.add_child(partner_label)
+
+	# ── Team totals ───────────────────────────────────────────────────
+	var sep = HSeparator.new()
+	vbox.add_child(sep)
+
 	var total_label = Label.new()
-	total_label.text = "Team Score: %d\nLives:  x%d\nRounds: %d" % [
+	total_label.text = "Team Score This Round: %d   |   Session Team Total: %d\nLives:  x%d   |   Rounds: %d" % [
 		p1_score + p2_score,
+		session_team_total,
 		NetworkManager.team_lives,
 		NetworkManager.rounds_survived
 	]
 	total_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	total_label.add_theme_font_size_override("font_size", 28)
+	total_label.add_theme_font_size_override("font_size", 24)
 	total_label.add_theme_color_override("font_color", Color.YELLOW)
 	vbox.add_child(total_label)
 	
 	# Life deduction notice
 	if not p1_success or not p2_success:
 		var life_notice = Label.new()
-		life_notice.text = " Life Lost!"
+		life_notice.text = "💔 Life Lost!"
 		life_notice.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		life_notice.add_theme_font_size_override("font_size", 36)
 		life_notice.add_theme_color_override("font_color", Color(1.0, 0.3, 0.3))
@@ -1383,6 +1471,6 @@ func _show_round_summary(
 	var next_label = Label.new()
 	next_label.text = "Loading next round..."
 	next_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	next_label.add_theme_font_size_override("font_size", 24)
+	next_label.add_theme_font_size_override("font_size", 22)
 	next_label.add_theme_color_override("font_color", Color(1, 1, 1, 0.6))
 	vbox.add_child(next_label)

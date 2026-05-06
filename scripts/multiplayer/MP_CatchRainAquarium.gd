@@ -23,7 +23,7 @@ func _on_multiplayer_ready() -> void:
 	_create_bucket()
 	
 	spawn_timer = Timer.new()
-	spawn_timer.wait_time = 1.2
+	spawn_timer.wait_time = 0.9   # was 1.2 — more rain = P2 can keep aquarium full
 	spawn_timer.timeout.connect(_spawn_raindrop)
 	add_child(spawn_timer)
 	

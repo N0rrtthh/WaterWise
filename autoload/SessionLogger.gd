@@ -87,7 +87,18 @@ var sp_games_count: int = 0
 var mp_rounds_count: int = 0
 var sp_total_score: int = 0
 var mp_total_score: int = 0
+var mp_p1_total_score: int = 0  # Cumulative P1 score across all MP rounds this session
+var mp_p2_total_score: int = 0  # Cumulative P2 score across all MP rounds this session
 var total_droplets_earned: int = 0
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# GAME LOG (in-game print/debug messages ring buffer)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+## Ring buffer of in-game log messages captured during the session.
+## Each entry: {elapsed_sec, source, message}
+var game_log: Array = []
+const MAX_LOG_ENTRIES: int = 800  # Keep last 800 messages to avoid memory bloat
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # INTERNALS
@@ -96,6 +107,17 @@ var total_droplets_earned: int = 0
 const SNAPSHOT_INTERVAL: float = 5.0
 var _snapshot_timer: float = 0.0
 var _last_exported_path: String = ""
+
+## Record a single in-game log message (called from _log() helpers in autoloads).
+## source: short tag e.g. "NetworkManager", "MPGame", "AutoPlay".
+func log_entry(source: String, message: String) -> void:
+	if game_log.size() >= MAX_LOG_ENTRIES:
+		game_log.pop_front()  # Drop oldest to keep ring bounded
+	game_log.append({
+		"elapsed_sec": _elapsed(),
+		"source": source,
+		"message": message
+	})
 
 ## Helper: snap a float to N decimal places.
 ## Godot has no global snapf() — use float.snapped(step) instead.
@@ -289,6 +311,8 @@ func _on_mp_round_completed(
 	mp_rounds.append(record)
 	mp_rounds_count += 1
 	mp_total_score += p1_score + p2_score
+	mp_p1_total_score += p1_score
+	mp_p2_total_score += p2_score
 
 	print("📋 MP round #%d | P1:%d P2:%d | Team:%s | Gap:%.3f" % [
 		mp_rounds_count, p1_score, p2_score, str(p1_success and p2_success), skill_gap
@@ -421,6 +445,31 @@ func get_throttle_events() -> Array:
 		return PerformanceProfiler.throttle_events
 	return []
 
+## Returns an Array of Dictionaries suitable for displaying the MP leaderboard.
+## Each entry: {round_num, p1_score, p2_score, team_score, team_success, timestamp}
+## Plus a trailing "totals" entry.
+func get_mp_leaderboard() -> Array:
+	var rows: Array = []
+	for r in mp_rounds:
+		rows.append({
+			"round_num": r.get("round_num", 0),
+			"p1_score": r.get("p1", {}).get("score", 0),
+			"p2_score": r.get("p2", {}).get("score", 0),
+			"team_score": r.get("team_score", 0),
+			"team_success": r.get("team_success", false),
+			"timestamp": r.get("timestamp", "")
+		})
+	# Append session totals as a sentinel row (round_num == -1)
+	rows.append({
+		"round_num": -1,
+		"p1_score": mp_p1_total_score,
+		"p2_score": mp_p2_total_score,
+		"team_score": mp_p1_total_score + mp_p2_total_score,
+		"team_success": true,
+		"timestamp": ""
+	})
+	return rows
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # EXPORT
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -541,6 +590,9 @@ func export_session() -> String:
 		"sp_avg_reaction_time_s": _calc_sp_avg_reaction_time(),
 		"mp_rounds_played": mp_rounds_count,
 		"mp_total_score": mp_total_score,
+		"mp_p1_total_score": mp_p1_total_score,
+		"mp_p2_total_score": mp_p2_total_score,
+		"mp_leaderboard": get_mp_leaderboard(),
 		"mp_team_wins": _count_mp_wins(),
 		"mp_win_rate_pct": _calc_mp_win_rate(),
 		"total_droplets_earned": _get_session_droplets_earned(),
@@ -564,7 +616,8 @@ func export_session() -> String:
 		"sp_game_records": sp_games,
 		"mp_round_records": mp_rounds,
 		"scenes_visited": scenes_visited,
-		"performance_snapshots": perf_snapshots
+		"performance_snapshots": perf_snapshots,
+		"game_log": game_log
 	}
 
 	# ── Write to file ─────────────────────────────────────────────────
@@ -590,6 +643,11 @@ func export_session() -> String:
 
 func get_last_exported_path() -> String:
 	return _last_exported_path
+
+## Returns the directory where session log files are written.
+## FileExporter calls this to know where to read logs back from for export.
+func get_export_dir() -> String:
+	return "user://session_logs/"
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # HELPERS

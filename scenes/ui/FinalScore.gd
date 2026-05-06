@@ -13,6 +13,7 @@ extends Control
 @onready var continue_btn = $CenterContainer/VBoxContainer/ContinueButton
 
 var _droplet: Node2D = null
+var _play_again_btn: Button = null
 
 
 func _loc(key: String, fallback: String) -> String:
@@ -64,6 +65,11 @@ func _ready() -> void:
 
 	continue_btn.pressed.connect(_on_continue)
 	continue_btn.pivot_offset = continue_btn.size * 0.5
+
+	# Multiplayer: add “Play Again” button so players can replay without
+	# going back to the lobby. Also handles AutoPlay auto-restart.
+	if GameManager and GameManager.current_game_mode == GameManager.GameMode.MULTIPLAYER_COOP:
+		_add_mp_play_again_button()
 
 	if AudioManager:
 		AudioManager.play_music("results", 0.5)
@@ -422,6 +428,67 @@ func _get_sp_top_scores(limit: int) -> Array:
 	if SaveManager and SaveManager.has_method("get_sp_session_scores"):
 		return SaveManager.get_sp_session_scores(limit)
 	return []
+
+
+func _add_mp_play_again_button() -> void:
+	var vbox = $CenterContainer/VBoxContainer
+
+	# Build the button
+	_play_again_btn = Button.new()
+	_play_again_btn.text = _loc("play_again", "🔄 PLAY AGAIN")
+	_play_again_btn.modulate.a = 0.0
+	_play_again_btn.custom_minimum_size = Vector2(220, 56)
+
+	var style = StyleBoxFlat.new()
+	style.bg_color = Color(0.13, 0.62, 0.35)
+	style.corner_radius_top_left = 10
+	style.corner_radius_top_right = 10
+	style.corner_radius_bottom_left = 10
+	style.corner_radius_bottom_right = 10
+	style.content_margin_left = 16
+	style.content_margin_right = 16
+	_play_again_btn.add_theme_stylebox_override("normal", style)
+
+	var hover_style = style.duplicate()
+	hover_style.bg_color = Color(0.18, 0.76, 0.44)
+	_play_again_btn.add_theme_stylebox_override("hover", hover_style)
+
+	_play_again_btn.add_theme_font_size_override("font_size", 22)
+	_play_again_btn.add_theme_color_override("font_color", Color.WHITE)
+	_play_again_btn.pressed.connect(_on_play_again_mp)
+	vbox.add_child(_play_again_btn)
+
+	# Fade in alongside the continue button (after entrance animation)
+	var btw = create_tween()
+	btw.tween_interval(2.2)
+	btw.tween_property(_play_again_btn, "modulate:a", 1.0, 0.4)
+
+	# AutoPlay: if MP auto-play is still running, automatically restart
+	# after a short display window so results are visible before skipping.
+	if AutoPlayManager and AutoPlayManager.is_mp_auto_play_enabled():
+		var remaining := AutoPlayManager.get_mp_remaining_time()
+		# remaining < 0 = unlimited; > 0 = seconds left
+		var should_auto_restart := remaining < 0.0 or remaining > 5.0
+		if should_auto_restart:
+			var auto_tw = create_tween()
+			auto_tw.tween_interval(4.0)  # Show results for 4 s then restart
+			auto_tw.tween_callback(_on_play_again_mp)
+
+
+func _on_play_again_mp() -> void:
+	# Disable to prevent double-press
+	if _play_again_btn:
+		if _play_again_btn.disabled:
+			return
+		_play_again_btn.disabled = true
+		_play_again_btn.text = _loc("loading", "⏳ Restarting...")
+
+	if AudioManager:
+		AudioManager.play_click()
+
+	if GameManager:
+		# Any peer can call this — GameManager guards against double-execution
+		GameManager.rpc("_play_again_multiplayer_rpc")
 
 
 func _on_continue() -> void:

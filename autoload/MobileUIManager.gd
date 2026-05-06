@@ -257,12 +257,16 @@ func _calculate_safe_area() -> void:
 	# Get base margins from SafeAreaInfo
 	var base_margins = safe_area_info.to_dictionary()
 	
-	# Apply 20-pixel minimum margin from safe area boundaries (Requirement 5.6)
+	# Apply 20-pixel extra margin ONLY on sides that have an actual hardware
+	# cutout (notch/camera cutout). Sides with 0 base margin have no cutout and
+	# must NOT receive the extra padding — that would make safe_area_margins
+	# asymmetric on phones whose Android nav bar sits on one side in landscape,
+	# which shifts the CenterContainer off-center.
 	safe_area_margins = {
-		"top": base_margins["top"] + mobile_safe_area_margin,
-		"bottom": base_margins["bottom"] + mobile_safe_area_margin,
-		"left": base_margins["left"] + mobile_safe_area_margin,
-		"right": base_margins["right"] + mobile_safe_area_margin
+		"top":    base_margins["top"]    + (mobile_safe_area_margin if base_margins["top"]    > 0 else 0.0),
+		"bottom": base_margins["bottom"] + (mobile_safe_area_margin if base_margins["bottom"] > 0 else 0.0),
+		"left":   base_margins["left"]   + (mobile_safe_area_margin if base_margins["left"]   > 0 else 0.0),
+		"right":  base_margins["right"]  + (mobile_safe_area_margin if base_margins["right"]  > 0 else 0.0),
 	}
 	
 	# Emit signal with updated margins

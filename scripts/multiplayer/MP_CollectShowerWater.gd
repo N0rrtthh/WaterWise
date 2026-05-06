@@ -3,8 +3,8 @@ extends "res://scripts/multiplayer/MultiplayerMiniGameBase.gd"
 ## Bundle 2: Shower Water Collection
 ## P1 collects shower water in buckets
 
-const BUCKET_CAPACITY: int = 3
-const MAX_OVERFLOW: int = 5
+const BUCKET_CAPACITY: int = 2   # was 3 — fills faster so P2 gets water sooner
+const MAX_OVERFLOW: int = 8      # was 5 — more forgiving
 
 var water_collected: int = 0
 var overflows: int = 0
@@ -25,7 +25,7 @@ func _on_multiplayer_ready() -> void:
 	
 	_create_buckets()
 	spawn_timer = Timer.new()
-	spawn_timer.wait_time = 1.5
+	spawn_timer.wait_time = 1.0   # was 1.5 — more drops = more water for P2
 	spawn_timer.timeout.connect(_spawn_water_drop)
 	add_child(spawn_timer)
 	

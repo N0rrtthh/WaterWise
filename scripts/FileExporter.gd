@@ -34,10 +34,16 @@ static func _get_session_log_dir() -> String:
 	var log_dir := "user://session_logs/"
 	var session_logger = _get_session_logger()
 	if session_logger:
+		var resolved: Variant = null
 		if session_logger.has_method("get_export_dir"):
-			log_dir = str(session_logger.call("get_export_dir"))
+			resolved = session_logger.call("get_export_dir")
 		else:
-			log_dir = str(session_logger.get("export_dir"))
+			resolved = session_logger.get("export_dir")
+		# Only override the default if the resolved path is a valid virtual path.
+		# session_logger.get() returns null when the property doesn't exist,
+		# and str(null) = "<null>" which would make DirAccess.open() silently fail.
+		if resolved != null and str(resolved).begins_with("user://"):
+			log_dir = str(resolved)
 	return _normalize_dir(log_dir)
 
 ## Export save file to Downloads folder

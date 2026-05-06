@@ -3,7 +3,7 @@ extends "res://scripts/multiplayer/MultiplayerMiniGameBase.gd"
 ## Bundle 5: Wash Car with Dish Water
 ## P2 washes car sections using P1's dish water
 
-const MAX_DIRTY_TIME: float = 25.0
+const MAX_DIRTY_TIME: float = 40.0   # was 25.0 — more time to wash before losing life
 
 var available_water: int = 0
 var sections_washed: int = 0
@@ -28,6 +28,10 @@ func _on_multiplayer_ready() -> void:
 
 func _on_game_start() -> void:
 	_make_section_dirty()
+	# Give P2 starter water so they can wash immediately
+	available_water = 3
+	_update_water_display()
+	_log("💧 Starting with %d dish water" % available_water)
 	if AutoPlayManager and AutoPlayManager.is_mp_auto_play_enabled():
 		AutoPlayManager.register_multiplayer_game(self, my_role)
 

@@ -434,14 +434,23 @@ func _apply_mobile_ui_scaling() -> void:
 	if subtitle_label:
 		MobileUIManager.apply_mobile_scaling(subtitle_label)
 	
-	# Apply safe area margins to root UI container
+	# Apply safe area margins to root UI container.
+	# IMPORTANT: On a fullscreen game with immersive_mode, the nav bar is
+	# hidden/overlaid so we must NOT inset the CenterContainer based on the
+	# nav-bar safe-area margin — that would shift the center LEFT (when Android
+	# places the nav bar on the right in landscape) and break the layout.
+	# Only inset for actual hardware display cutouts (notch top margin).
 	var ui_root = get_node_or_null("UI") as Control
 	if ui_root:
 		var safe := MobileUIManager.get_safe_area_margins()
-		ui_root.offset_left = float(safe.get("left", 0.0))
-		ui_root.offset_top = float(safe.get("top", 0.0))
-		ui_root.offset_right = -float(safe.get("right", 0.0))
-		ui_root.offset_bottom = -float(safe.get("bottom", 0.0))
+		# Use hardware-cutout top margin only; everything else stays at 0 so the
+		# CenterContainer always has a symmetric bounding box and its child
+		# content is pixel-perfect center on any landscape screen.
+		var cutout_top := maxf(0.0, float(safe.get("top", 0.0)) - MobileUIManager.mobile_safe_area_margin)
+		ui_root.offset_left   = 0.0
+		ui_root.offset_right  = 0.0
+		ui_root.offset_bottom = 0.0
+		ui_root.offset_top    = cutout_top
 	
 	# Enable haptic feedback for buttons
 	if TouchInputManager:
