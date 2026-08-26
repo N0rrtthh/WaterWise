@@ -336,7 +336,9 @@ func _process(delta: float) -> void:
 	if not game_active or is_paused:
 		return
 	
-	# Update bucket visuals
+	# Update bucket visuals. Geometry is cheap and continuous, so it stays
+	# per-frame; the labels are gated on their displayed value because writing
+	# `.text` allocates a String and forces a Label re-layout every frame.
 	for bucket in buckets:
 		var fill_rect = bucket["visual"]
 		var target_height = bucket["fill_level"] * 96.0
@@ -345,18 +347,25 @@ func _process(delta: float) -> void:
 		
 		if bucket.has("label"):
 			var status = bucket["status"]
-			if status == "filling":
-				bucket["label"].text = "Filling\n%d%%" % (bucket["fill_level"] * 100)
-			elif status == "emptying":
-				bucket["label"].text = "Emptying\n%d%%" % (bucket["fill_level"] * 100)
-			elif status == "full":
-				bucket["label"].text = "FULL!"
-			else:
-				bucket["label"].text = "Empty"
+			var pct := int(bucket["fill_level"] * 100)
+			# Compare the two components that drive the text directly — building a
+			# combined key String here would itself allocate every frame, which is
+			# the cost we are removing.
+			if bucket.get("label_pct", -1) != pct or bucket.get("label_status", "") != status:
+				bucket["label_pct"] = pct
+				bucket["label_status"] = status
+				match status:
+					"filling":
+						bucket["label"].text = "Filling\n%d%%" % pct
+					"emptying":
+						bucket["label"].text = "Emptying\n%d%%" % pct
+					"full":
+						bucket["label"].text = "FULL!"
+					_:
+						bucket["label"].text = "Empty"
 	
 	game_timer -= delta
-	if timer_label:
-		timer_label.text = "⏱️ " + str(int(max(0, game_timer)))
+	update_timer_label(timer_label, game_timer, "⏱️ ", false)
 	
 	if game_timer <= 0 and game_active:
 		game_active = false

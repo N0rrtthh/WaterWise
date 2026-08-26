@@ -113,6 +113,11 @@ func _setup_audio_player() -> void:
 	audio_player.bus = "SFX"
 	add_child(audio_player)
 
+## Generated cue tones, keyed "frequency_duration". The cue set is fixed
+## (audio_cues), so this dictionary reaches a small steady size and never grows
+## during play — no per-cue PackedByteArray churn in the game loop.
+var _tone_cache: Dictionary = {}
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # COLOR FUNCTIONS
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -226,7 +231,16 @@ func play_audio_cue(cue_type: String) -> void:
 	_play_tone(cue.freq, cue.duration)
 
 func _play_tone(frequency: float, duration: float) -> void:
-	# Generate and play a simple tone
+	## Play a cue tone. Tones are cached by (frequency, duration) — the cue set is
+	## a fixed dictionary, so after the first play of each cue this allocates
+	## nothing. Previously every cue rebuilt a 44.1 kHz PackedByteArray
+	## (~88 KB for a 1 s tone) and left the old AudioStreamWAV for the GC.
+	var cache_key := "%.1f_%.3f" % [frequency, duration]
+	if _tone_cache.has(cache_key):
+		audio_player.stream = _tone_cache[cache_key]
+		audio_player.play()
+		return
+	
 	var sample_rate := 44100.0
 	var num_samples := int(sample_rate * duration)
 	
@@ -249,8 +263,17 @@ func _play_tone(frequency: float, duration: float) -> void:
 		data[i * 2 + 1] = (sample_int >> 8) & 0xFF
 	
 	audio.data = data
+	_tone_cache[cache_key] = audio
 	audio_player.stream = audio
 	audio_player.play()
+
+func _exit_tree() -> void:
+	## Drop generated tones before ObjectDB teardown so shutdown stays clean —
+	## a live AudioStreamPlaybackWAV otherwise shows up as a leaked instance.
+	if is_instance_valid(audio_player):
+		audio_player.stop()
+		audio_player.stream = null
+	_tone_cache.clear()
 
 func play_success_cue() -> void:
 	play_audio_cue("success")

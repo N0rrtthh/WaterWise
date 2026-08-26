@@ -46,6 +46,12 @@ var chaos_effects_active: Array = []
 ## Audio Timer
 var _last_tick_second: int = -1
 
+## Timer-UI change detection — the label shows tenths and the fill has 3 colour
+## bands, so we only touch the UI when one of these actually changes. Keeps
+## String allocation and theme lookups out of the per-frame path.
+var _last_timer_tenths: int = -1
+var _last_timer_band: int = -1
+
 ## Internal timer reference (so we can stop it in end_game)
 var _game_timer: Timer
 
@@ -405,6 +411,8 @@ func start_game() -> void:
 	if not timer_starts_paused:
 		game_start_time = Time.get_ticks_msec()
 		timer_running = true
+		_last_timer_tenths = -1
+		_last_timer_band = -1
 		_start_timer()
 	
 	# Override this in child classes for specific game logic
@@ -414,6 +422,8 @@ func start_game() -> void:
 func start_timer_now() -> void:
 	game_start_time = Time.get_ticks_msec()
 	timer_running = true
+	_last_timer_tenths = -1
+	_last_timer_band = -1
 	_start_timer()
 	
 	# Show timer if it was hidden during setup
@@ -1463,41 +1473,59 @@ func _process(_delta):
 	# Skip timer logic if timer hasn't started yet (for games with setup phases)
 	if not timer_running: return
 	
-	# Update Timer - ALWAYS update even if no timer_bar reference
+	# ── Hot path: arithmetic only, no allocation, no UI writes ──────────────
 	var elapsed = (Time.get_ticks_msec() - game_start_time) / 1000.0
 	var time_left = max(0.0, game_duration - elapsed)
 	
 	# Note: mistake penalty is tracked in _time_penalty_total and subtracted here.
 	var effective_time_left = max(0.0, time_left - _time_penalty_total)
 	
+	# ── UI is decoupled from the hot path ───────────────────────────────────
+	# The label only shows one decimal, so refreshing faster than 10 Hz redraws
+	# identical text. Writing `timer_label.text` every frame allocated a new
+	# String 60×/s and re-laid-out the Label; `add_theme_color_override` also
+	# re-resolved the theme every frame. Both now fire only on real change.
 	if timer_bar:
-		timer_bar.value = effective_time_left
-		
-		# Update timer label
-		if timer_label:
-			timer_label.text = "%.1fs" % effective_time_left
-		
-		# Change color based on time left ratio
-		var time_ratio = effective_time_left / game_duration
-		var fill_style = timer_bar.get_theme_stylebox("fill") as StyleBoxFlat
-		if fill_style:
+		var tenths := int(effective_time_left * 10.0)
+		if tenths != _last_timer_tenths:
+			_last_timer_tenths = tenths
+			timer_bar.value = effective_time_left
+			if timer_label:
+				timer_label.text = "%.1fs" % effective_time_left
+			
+			# Colour band: 0 = green, 1 = yellow, 2 = red. Recolour on transition
+			# only, so the StyleBox and theme override are touched ~2× per round.
+			var time_ratio = effective_time_left / game_duration
+			var band := 0
 			if time_ratio < 0.3:
-				fill_style.bg_color = Color(0.9, 0.2, 0.2)  # Red
-				if timer_label:
-					timer_label.add_theme_color_override("font_color", Color(1, 0.3, 0.3))
-				# Tick urgency sound every second when time is low
-				var sec = int(effective_time_left)
-				if sec != _last_tick_second and sec <= 5 and sec > 0 and AudioManager:
-					_last_tick_second = sec
-					AudioManager.play_timer_tick()
+				band = 2
 			elif time_ratio < 0.6:
-				fill_style.bg_color = Color(0.9, 0.8, 0.2)  # Yellow
-				if timer_label:
-					timer_label.add_theme_color_override("font_color", Color(1, 1, 0.3))
-			else:
-				fill_style.bg_color = Color(0.4, 0.9, 0.4)  # Green
-				if timer_label:
-					timer_label.add_theme_color_override("font_color", Color.WHITE)
+				band = 1
+			
+			if band != _last_timer_band:
+				_last_timer_band = band
+				var fill_style = timer_bar.get_theme_stylebox("fill") as StyleBoxFlat
+				if fill_style:
+					match band:
+						2:
+							fill_style.bg_color = Color(0.9, 0.2, 0.2)  # Red
+							if timer_label:
+								timer_label.add_theme_color_override("font_color", Color(1, 0.3, 0.3))
+						1:
+							fill_style.bg_color = Color(0.9, 0.8, 0.2)  # Yellow
+							if timer_label:
+								timer_label.add_theme_color_override("font_color", Color(1, 1, 0.3))
+						_:
+							fill_style.bg_color = Color(0.4, 0.9, 0.4)  # Green
+							if timer_label:
+								timer_label.add_theme_color_override("font_color", Color.WHITE)
+	
+	# Tick urgency sound once per whole second in the final 5 s. Kept outside the
+	# UI block so it fires even when this game has no timer_bar.
+	var sec := int(effective_time_left)
+	if sec != _last_tick_second and sec <= 5 and sec > 0 and AudioManager:
+		_last_tick_second = sec
+		AudioManager.play_timer_tick()
 	
 	if effective_time_left <= 0:
 		_on_timeout()

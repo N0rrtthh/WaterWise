@@ -771,16 +771,14 @@ func _process(delta: float) -> void:
 	if _is_host():
 		game_timer = max(game_timer - delta, 0.0)
 	
-	# Update timer display for all players
-	if timer_label:
-		timer_label.text = " " + str(int(max(0, game_timer)))
-		
-		# ✨ VISUAL FEEDBACK: Timer warning when low
-		if game_timer <= 10.0 and game_timer > 0.0:
-			var time_int = int(game_timer)
-			# Flash every second
-			if time_int != int(game_timer + delta):
-				animate_timer_warning()
+	# Update timer display for all players — writes only on a second change.
+	var second_changed := update_timer_label(timer_label, game_timer, " ", false)
+	
+	# ✨ VISUAL FEEDBACK: Timer warning when low, flashed once per second.
+	# Previously derived from `int(game_timer) != int(game_timer + delta)`, which
+	# depended on frame pacing; the label's own change signal is exact.
+	if second_changed and game_timer <= 10.0 and game_timer > 0.0:
+		animate_timer_warning()
 	
 	# Check if time ran out (host drives win/lose)
 	if _is_host() and game_timer <= 0 and game_active:

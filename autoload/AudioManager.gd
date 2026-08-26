@@ -176,6 +176,23 @@ func stop_music(fade_duration: float = 1.0) -> void:
 	tween.tween_callback(music_player.stop)
 	current_music = ""
 
+func _exit_tree() -> void:
+	## Release procedurally generated audio before the engine tears down the
+	## ObjectDB, so shutdown stays clean and real leaks are not masked by ours.
+	## Note: under `--headless` the Dummy audio driver still reports 2 leaked
+	## instances (AudioStreamWAV + AudioStreamPlaybackWAV) regardless of this
+	## cleanup — verified engine-side, since a windowed run of the same build
+	## reports 0. Do not chase that pair; check leak counts windowed.
+	if is_instance_valid(music_player):
+		music_player.stop()
+		music_player.stream = null
+	for p in sfx_players:
+		if is_instance_valid(p):
+			p.stop()
+			p.stream = null
+	_music_cache.clear()
+	_sfx_cache.clear()
+
 func _generate_ambient_music(music_id: String) -> AudioStreamWAV:
 	## Cache-checking wrapper — returns a cached stream immediately on all
 	## subsequent calls. First call for a given id generates and caches.

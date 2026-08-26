@@ -252,7 +252,7 @@ func _process(delta: float) -> void:
 	
 	if _is_host():
 		game_timer = max(game_timer - delta, 0.0)
-	timer_label.text = "⏱️ %d" % int(ceil(game_timer))
+	update_timer_label(timer_label, game_timer, "⏱️ ")
 
 	if _is_host() and game_timer <= 0:
 		game_active = false

@@ -1,6 +1,33 @@
 class_name MultiplayerMiniGameEffects
 extends Node2D
 
+## Last whole second written to the timer label. All MP minigames display the
+## timer at 1 s resolution, so writing `timer_label.text` every frame allocated a
+## String and re-laid-out the Label 60×/s to render identical pixels. Subclasses
+## call `update_timer_label()` instead, which writes only on a real change.
+var _last_timer_display_second: int = -1
+
+## Write the countdown to a Label only when the displayed whole-second value
+## changes. `use_ceil` picks the rounding each game already used — ceil counts
+## down 60→1, floor counts 59→0 — so display behaviour is unchanged.
+## Returns true when a write happened, so callers can hook one-per-second logic.
+func update_timer_label(
+	label: Label, seconds_left: float, prefix: String = "", use_ceil: bool = true
+) -> bool:
+	if not label:
+		return false
+	var clamped: float = max(0.0, seconds_left)
+	var whole: int = int(ceil(clamped)) if use_ceil else int(clamped)
+	if whole == _last_timer_display_second:
+		return false
+	_last_timer_display_second = whole
+	label.text = prefix + str(whole)
+	return true
+
+## Call when a round (re)starts so the next frame always repaints the label.
+func reset_timer_label_cache() -> void:
+	_last_timer_display_second = -1
+
 func play_success_effect() -> void:
 	_flash_screen(Color(0.3, 1.0, 0.3, 0.3))
 	if AudioManager:
