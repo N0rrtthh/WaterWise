@@ -305,8 +305,7 @@ func _process(delta: float) -> void:
 	# Update timer (host keeps source of truth)
 	if _is_host():
 		game_timer = max(game_timer - delta, 0.0)
-	if timer_label:
-		timer_label.text = "⏱️ %d" % int(ceil(game_timer))
+	update_timer_label(timer_label, game_timer, "⏱️ ")
 	
 	# Check time limit
 	if _is_host() and game_timer <= 0:
@@ -383,7 +382,9 @@ func _create_water_drop_at(spawn_x: float, spawn_id: int) -> void:
 	
 	drop.position = Vector2(spawn_x, -50)
 	drop.name = "WaterDrop_" + str(spawn_id)
-	drop.fall_speed = current_settings["mode1_drop_speed"]
+	# MPMovingObject exposes movement through setup(direction, speed) — assigning
+	# a `fall_speed` property silently failed, so drops never moved.
+	drop.setup(Vector2.DOWN, float(current_settings["mode1_drop_speed"]))
 	
 	if drop.has_signal("caught"):
 		drop.caught.connect(_on_water_caught.bind(drop))
@@ -421,8 +422,8 @@ func _create_dirt_particle_at(spawn_y: float, spawn_id: int) -> void:
 	
 	dirt.position = Vector2(-50, spawn_y)
 	dirt.name = "Dirt_" + str(spawn_id)
-	dirt.horizontal_speed = current_settings["mode2_dirt_speed"]
-	dirt.fall_speed = 0.0
+	# Dirt travels horizontally: direction RIGHT, no vertical component.
+	dirt.setup(Vector2.RIGHT, float(current_settings["mode2_dirt_speed"]))
 	
 	if dirt.has_signal("destroyed"):
 		dirt.destroyed.connect(_on_dirt_removed.bind(dirt))

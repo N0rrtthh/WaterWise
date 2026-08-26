@@ -90,6 +90,14 @@ var battery_pct_min: int = 101
 var battery_pct_max: int = 0
 var battery_pct_samples: Array[int] = []
 
+## Battery sysfs sampling is gated to 1-second intervals.
+## Reading sysfs every frame costs up to 6 FileAccess.open() syscalls per
+## frame (360/sec at 60fps) — a measurable stall on Cortex-A53 eMMC storage.
+## Battery percentage physically cannot change faster than ~1%/minute, so
+## per-frame polling gathers zero extra signal for real I/O cost.
+var battery_sample_timer: float = 0.0
+const BATTERY_SAMPLE_INTERVAL: float = 1.0
+
 ## ── THERMAL PROFILING (Paper: Instrumental Profiling) ──
 ## T_cpu: CPU temperature logged at 1-second intervals
 var cpu_temp_c: float = 0.0
@@ -134,6 +142,17 @@ var overlay_label: Label = null
 var snapshot_interval: float = 1.0  # seconds
 var snapshot_timer: float = 0.0
 var snapshots: Array[Dictionary] = []
+
+## ── BOUNDED HISTORY CAPS (memory safety on <3GB RAM devices) ──
+## Every telemetry array below is sampled once per second. Left uncapped, a
+## 30-minute thesis stress session grows them to 1800 entries each; a long
+## classroom session (2h+) would push heap usage past the 200MB budget and
+## trigger the very thermal/GC behaviour the profiler is meant to measure.
+## 1800 samples = exactly the 30-minute stress-test window from the paper,
+## so no thesis data is lost — only unbounded growth beyond it is discarded.
+const MAX_HISTORY_SAMPLES: int = 1800
+## Event arrays are sparse (only on state changes), so a smaller cap suffices.
+const MAX_EVENT_ENTRIES: int = 500
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # INITIALIZATION
@@ -272,23 +291,34 @@ func _process(delta: float) -> void:
 	# ── BATTERY ESTIMATION ──
 	# On Android: read actual battery level from sysfs for real ΔE
 	# On Desktop: battery data unavailable — report 0.0 (clearly labeled)
+	# NOTE: sysfs is polled at BATTERY_SAMPLE_INTERVAL (1s), NOT per frame.
+	# Per-frame polling issued up to 6 file-open syscalls every frame, which
+	# stalls the render thread on low-end eMMC storage for no added precision.
 	if OS.get_name() == "Android":
-		# Read real battery percentage from sysfs
-		var batt_pct = _read_android_battery_percent()
-		if batt_pct >= 0:
-			battery_pct_current = batt_pct
-			if _battery_start_pct < 0:
-				_battery_start_pct = batt_pct  # Record starting level
-				battery_source = "android_sysfs"
-			if battery_pct_start < 0:
-				battery_pct_start = batt_pct
-			battery_pct_min = min(battery_pct_min, batt_pct)
-			battery_pct_max = max(battery_pct_max, batt_pct)
-			battery_pct_samples.append(batt_pct)
-		if _battery_start_pct >= 0 and batt_pct >= 0:
-			# Convert % drop to mAh using configured battery capacity
-			var pct_drop = _battery_start_pct - batt_pct
-			estimated_battery_mah = (float(pct_drop) / 100.0) * _battery_capacity_mah
+		battery_sample_timer += delta
+		if battery_sample_timer >= BATTERY_SAMPLE_INTERVAL:
+			battery_sample_timer = 0.0
+			# Read real battery percentage from sysfs
+			var batt_pct = _read_android_battery_percent()
+			if batt_pct >= 0:
+				battery_pct_current = batt_pct
+				if _battery_start_pct < 0:
+					_battery_start_pct = batt_pct  # Record starting level
+					battery_source = "android_sysfs"
+				if battery_pct_start < 0:
+					battery_pct_start = batt_pct
+				battery_pct_min = min(battery_pct_min, batt_pct)
+				battery_pct_max = max(battery_pct_max, batt_pct)
+				# Bounded ring-style history: keep the most recent samples only
+				# so a 30-minute stress session cannot grow this array without
+				# limit (1800 entries @ 1s = 30 min of coverage).
+				battery_pct_samples.append(batt_pct)
+				if battery_pct_samples.size() > MAX_HISTORY_SAMPLES:
+					battery_pct_samples.pop_front()
+			if _battery_start_pct >= 0 and batt_pct >= 0:
+				# Convert % drop to mAh using configured battery capacity
+				var pct_drop = _battery_start_pct - batt_pct
+				estimated_battery_mah = (float(pct_drop) / 100.0) * _battery_capacity_mah
 	else:
 		# Desktop: No real battery data available
 		# Do NOT fabricate values — report 0.0 and label as unavailable
@@ -447,9 +477,11 @@ func _take_snapshot() -> void:
 		"battery_drain_per_min": battery_drain_per_min,
 	}
 	snapshots.append(snap)
+	if snapshots.size() > MAX_HISTORY_SAMPLES:
+		snapshots.pop_front()
 	# Populate memory_history for trend / leak-detection analysis
 	memory_history.append(memory_current_mb)
-	if memory_history.size() > 1800:  # cap at 30 min of 1s snapshots
+	if memory_history.size() > MAX_HISTORY_SAMPLES:  # cap at 30 min of 1s snapshots
 		memory_history.pop_front()
 	battery_readings.append({
 		"timestamp": snap["timestamp"],
@@ -459,6 +491,8 @@ func _take_snapshot() -> void:
 		"battery_drain_per_min": battery_drain_per_min,
 		"source": battery_source,
 	})
+	if battery_readings.size() > MAX_HISTORY_SAMPLES:
+		battery_readings.pop_front()
 	profiling_snapshot.emit(snap)
 
 ## Get full session data for thesis evaluation
@@ -694,6 +728,8 @@ func _sample_cpu_temperature() -> void:
 			_thermal_source_logged = true
 	
 	cpu_temp_history.append(cpu_temp_c)
+	if cpu_temp_history.size() > MAX_HISTORY_SAMPLES:
+		cpu_temp_history.pop_front()
 	if cpu_temp_c > cpu_temp_peak:
 		cpu_temp_peak = cpu_temp_c
 
@@ -758,6 +794,10 @@ func _sample_clock_speed() -> void:
 				+ "(behavioral proxy, not actual CPU frequency)"
 			)
 		})
+		# throttle_count remains the authoritative total; the array is only
+		# the detailed tail kept for the thesis appendix.
+		if throttle_events.size() > MAX_EVENT_ENTRIES:
+			throttle_events.pop_front()
 		print(
 			"🔥 THROTTLE #%d: S_clk=%.0f%%" % [
 				throttle_count,
@@ -943,6 +983,8 @@ func log_event(event_type: String, data: Dictionary = {}) -> void:
 	}
 	entry.merge(data)
 	_session_events.append(entry)
+	if _session_events.size() > MAX_EVENT_ENTRIES:
+		_session_events.pop_front()
 
 func export_session_log_to_file() -> String:
 	var dir_path := "user://perf_logs"

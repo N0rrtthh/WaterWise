@@ -526,8 +526,7 @@ func _process(delta: float) -> void:
 		return
 	
 	game_timer -= delta
-	if timer_label:
-		timer_label.text = " " + str(int(max(0, game_timer)))
+	update_timer_label(timer_label, game_timer, " ", false)
 	
 	if game_timer <= 0 and game_active:
 		game_active = false

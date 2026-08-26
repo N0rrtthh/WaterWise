@@ -48,8 +48,21 @@ var network_latency: int = 0  # Round-trip time for sync (ms)
 var local_peer_id: int = 0
 
 ## Merge history for research logging
+## Bounded: multiplayer sessions increment on every scoring event, so an
+## uncapped log would grow linearly with play time on a <3GB RAM device.
+## The tail is what matters for CRDT correctness auditing in the thesis;
+## the authoritative totals are tracked by the counters below.
 var merge_history: Array[Dictionary] = []
 var increment_history: Array[Dictionary] = []
+
+## Lifetime totals — these stay exact even after history is trimmed, so
+## research reports never under-count operations.
+var total_increments: int = 0
+var total_merges: int = 0
+
+## Cap chosen to cover a full multiplayer round with margin while keeping
+## the arrays' worst-case footprint negligible (~100KB).
+const MAX_HISTORY_ENTRIES: int = 500
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # INITIALIZATION
@@ -73,6 +86,8 @@ func initialize(peer_ids: Array) -> void:
 	last_sync_timestamp = Time.get_ticks_msec()
 	merge_history.clear()
 	increment_history.clear()
+	total_increments = 0
+	total_merges = 0
 	
 	print("📊 GCounter initialized: %s" % str(counter))
 
@@ -83,6 +98,8 @@ func reset() -> void:
 	last_sync_timestamp = Time.get_ticks_msec()
 	merge_history.clear()
 	increment_history.clear()
+	total_increments = 0
+	total_merges = 0
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # CORE OPERATIONS (As defined in the paper)
@@ -125,6 +142,9 @@ func increment(peer_id: int, amount: int = 1) -> void:
 		"amount": amount,
 		"new_value": counter[peer_id]
 	})
+	total_increments += 1
+	if increment_history.size() > MAX_HISTORY_ENTRIES:
+		increment_history.pop_front()
 	
 	counter_incremented.emit(peer_id, counter[peer_id])
 	global_score_changed.emit(query())
@@ -214,6 +234,9 @@ func merge(remote_counter: Dictionary) -> void:
 		"post_merge": counter.duplicate(),
 		"latency_ms": network_latency
 	})
+	total_merges += 1
+	if merge_history.size() > MAX_HISTORY_ENTRIES:
+		merge_history.pop_front()
 	
 	counter_merged.emit(pre_merge_state, remote_counter)
 	synchronization_changed.emit(true)
@@ -312,8 +335,16 @@ func export_session_data() -> Dictionary:
 	return {
 		"final_counter": counter.duplicate(),
 		"global_score": query(),
-		"total_increments": increment_history.size(),
-		"total_merges": merge_history.size(),
+		# Use the lifetime counters, not array sizes — the history arrays are
+		# capped at MAX_HISTORY_ENTRIES, so .size() would silently under-report
+		# operation totals in long sessions and corrupt the thesis figures.
+		"total_increments": total_increments,
+		"total_merges": total_merges,
+		"history_capped": (
+			increment_history.size() >= MAX_HISTORY_ENTRIES
+			or merge_history.size() >= MAX_HISTORY_ENTRIES
+		),
+		"history_entries_retained": increment_history.size(),
 		"merge_history": merge_history.duplicate(),
 		"increment_history": increment_history.duplicate(),
 		"properties_verified": verify_all_properties()

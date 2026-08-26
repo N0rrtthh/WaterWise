@@ -3,3 +3,39 @@
 /android/
 *.apk
 
+# Local build output (APKs, export logs) — regenerable, never committed
+_build/
+*.aab
+export*.log
+
+# Python virtual environment (gen_icons.py tooling)
+.venv/
+
+# --- AI agent tooling (installed via npx skills add - not game code) ---
+# Canonical skill store + per-agent mirrors (junctions/copies)
+.agents/
+.claude/
+.kiro/
+!.kiro/specs/
+agent/
+data/skills/
+skills-lock.json
+
+# Obsidian knowledge vault (project documentation, not game content)
+GOdot.md/
+
+# Research session logs generated at runtime by the SessionLogger autoload
+session_*.json
+
+# Scratch notes and temp extraction artifacts (thesis PDFs, script dumps).
+# Real project docs live in the GOdot.md vault, which is ignored above.
+/*.md
+!README.md
+_pdf_extract*.txt
+_*.ps1
+*.tmp
+*.bak
+
+# OS junk
+.DS_Store
+Thumbs.db
