@@ -2774,6 +2774,13 @@ func _load_translations() -> void:
 			"en": "LVL %d",
 			"tl": "ANTAS %d"
 		},
+		# Tries left in an attempt-budget round (MiniGameBase.use_attempt_budget).
+		# "Tira" is the ordinary Filipino playground word for a turn/shot you have
+		# left, which is exactly the quantity this counts.
+		"hud_tries_short": {
+			"en": "TRIES %d",
+			"tl": "TIRA %d"
+		},
 		# ── Shared minigame shell: pause sheet, session end, round summary
 		"shell_current_score": {
 			"en": "Current Score: %d",
@@ -2839,6 +2846,10 @@ func _load_translations() -> void:
 		"settings_beat_viewer": {
 			"en": "🎬 Beat Viewer (animation check)",
 			"tl": "🎬 Beat Viewer (tsek ng animation)"
+		},
+		"settings_game_lab": {
+			"en": "🧪 Game Lab (try any minigame)",
+			"tl": "🧪 Game Lab (subukan ang kahit anong minigame)"
 		},
 		"settings_erase_data": {
 			"en": "🗑️ Erase All Data",

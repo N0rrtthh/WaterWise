@@ -12,6 +12,10 @@ var target_paths: int = 4
 var path_tolerance: float = 40.0
 
 func _apply_difficulty_settings() -> void:
+	# Queues this tier's chaos_effects; without it the algorithm asks for them
+	# and this game silently drops them. The per-tier game_duration below is
+	# deliberate and overrides the base's time_limit write. See MiniGameBase.
+	super._apply_difficulty_settings()
 	# Get progressive difficulty settings
 	var settings = AdaptiveDifficulty.get_difficulty_settings() if AdaptiveDifficulty else {}
 	var progressive_level = settings.get("progressive_level", 0)
@@ -38,6 +42,21 @@ func _apply_difficulty_settings() -> void:
 		if settings.has("time_limit"):
 			game_duration = max(game_duration, settings.get("time_limit", game_duration))
 		print("🔥 Progressive Lvl %d: %d paths, %.1f tolerance" % [progressive_level, target_paths, path_tolerance])
+
+	# Medium and Hard end on wrong traces, not on the clock.
+	#
+	# Tracing is an accuracy task: the dotted line is right there, so the player
+	# always knows what to do and a short clock only tests how steady their hand
+	# stays while hurrying. Hard tightened path_tolerance to 25 units AND cut the
+	# round to 18 s for 3 paths, which is 6 s per accurate trace.
+	#
+	# Easy deliberately keeps the clock and its mistake penalty — a bad trace
+	# shortens it — because that is the tier where the player should learn that
+	# mistakes cost something.
+	#
+	# The budget scales with the quota so a progressive board is not harsher than
+	# the base one: two spare traces on Medium, one on Hard.
+	use_attempt_budget(0, target_paths + 2, target_paths + 1)
 
 func _ready():
 	# Localized: the title stayed English above the Filipino objective FIX 58

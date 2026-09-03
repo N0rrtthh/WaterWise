@@ -74,12 +74,61 @@ var _detached: bool = false
 var game: Node = null
 var _round_start_ms: int = 0
 
-## Pause interval bookkeeping the harness owns. _pause_total_ms is the ground
-## truth the production clock is compared against, and it is MEASURED from the two
-## tree.paused transitions this process observed - not taken from the sleep length
-## requested, which would hide any latency in the RPC round trip.
-var _pause_begin_ms: int = 0
-var _pause_total_ms: int = 0
+## Pause interval bookkeeping the harness owns. This is the ground truth the
+## production clock is compared against, and it is MEASURED from the two pause
+## transitions this process observed - not taken from the sleep length requested,
+## which would hide any latency in the RPC round trip.
+##
+## Two things about it were wrong, and both cost failures against a correct game.
+##
+## It has to run ALL THE TIME, not only inside _do_pause(). _do_pause() used to start
+## the interval once it had itself seen tree.paused, so a pause that arrived before
+## the client got there was discounted by the production clock and not by this one.
+## That is not hypothetical: the host drives the pause on its own timeline, and the
+## failing client log has NetworkManager's pause line printing while the client was
+## still inside CASE 1. Cost: CASE 1 read 0.59s of drift, CASE 2 read 0.71s stolen
+## and its bar check the same, and the 2.5s hold was reported as 2.05s.
+##
+## And it has to be a node, not a poll. Reading tree.paused from _process() on the
+## ALWAYS twin is a frame late at both ends and reported the same 2.5s pause as
+## 0.00s outright, because _until() returns in the same frame as the flip it waits
+## for - before any _process had seen it. NOTIFICATION_PAUSED / NOTIFICATION_UNPAUSED
+## arrive at the instant of the flip, with no frame quantisation anywhere: measured
+## 2.51s against the game's own 2.51s on both peers.
+##
+## Using the same engine notification production uses does not make the comparison
+## circular. The sentinel is a node this harness owns and accounts for in its own
+## script; the assertions compare it against the game's arithmetic. Removing the
+## game's discount (paused_ms := 0 in elapsed_play_seconds) fails 5 checks per peer
+## - +2.63s stolen, the label 1.53s low, and CASE 3's round already over - which is
+## the negative control for exactly that worry.
+class PauseSentinel extends Node:
+	var begin_ms: int = 0
+	var total_ms: int = 0
+
+	func _notification(what: int) -> void:
+		if what == NOTIFICATION_PAUSED:
+			if begin_ms == 0:
+				begin_ms = Time.get_ticks_msec()
+		elif what == NOTIFICATION_UNPAUSED:
+			if begin_ms > 0:
+				total_ms += Time.get_ticks_msec() - begin_ms
+				begin_ms = 0
+
+	## Frozen milliseconds so far, including a freeze still in progress.
+	func frozen_ms() -> int:
+		var t: int = total_ms
+		if begin_ms > 0:
+			t += Time.get_ticks_msec() - begin_ms
+		return t
+
+	## Zero for a new round, keeping a freeze that is in progress right now.
+	func reset() -> void:
+		total_ms = 0
+		if begin_ms > 0:
+			begin_ms = Time.get_ticks_msec()
+
+var _ledger: PauseSentinel = null
 
 
 func _tree() -> SceneTree:
@@ -102,6 +151,12 @@ func _ready() -> void:
 		# scene's own _ready() runs, and a direct add_child() there fails outright.
 		_tree().root.add_child.call_deferred(twin)
 		return
+	# PAUSABLE explicitly: PROCESS_MODE_INHERIT under an ALWAYS parent is ALWAYS, and a
+	# sentinel that never pauses never gets the notifications it exists for.
+	_ledger = PauseSentinel.new()
+	_ledger.name = "PauseLedger"
+	_ledger.process_mode = Node.PROCESS_MODE_PAUSABLE
+	add_child(_ledger)
 	_boot()
 
 
@@ -240,20 +295,35 @@ func _fresh_round(duration: float) -> void:
 	# The progress bar's max_value keeps the 30.0 the HUD was built with, which is
 	# above every duration used here, so bar.value is never clamped.
 	game.set("game_duration", duration)
-	_pause_total_ms = 0
-	_pause_begin_ms = 0
+	# Both ledgers restart together: start_game() zeroes the game's _paused_ms_total,
+	# so this one has to zero too or every later comparison carries the previous
+	# round's freeze. A pause in progress across a round boundary would be lost by a
+	# blind zero, hence the re-stamp rather than 0.
+	_ledger.reset()
+	# The anchor is the instant the round is BUILT, so it is taken after start_game()
+	# returns - and production's own game_started_time now lands in the same place
+	# (MultiplayerMiniGameBase re-stamps it at the end of the build). Before that fix the
+	# game charged the player from the TOP of start_game(), i.e. before two Timers, the
+	# subclass spawn fan-out and the gameplay music stream, so this harness read a
+	# constant positive drift in CASE 1 - where there is no pause at all to be wrong
+	# about - of 0.12s on a warm process and 0.45s on the same machine after six other
+	# pair runs, which failed three checks on a build whose PAUSE handling was correct.
+	# Anchoring before the call instead would have hidden the game's behaviour inside the
+	# harness's arithmetic, so both numbers are printed on every run and neither is
+	# assumed: build cost, and how far production's stamp sits from this anchor.
+	var t0: int = Time.get_ticks_msec()
 	game.start_game()
 	_round_start_ms = Time.get_ticks_msec()
+	print("  [%s] start_game(): built in %dms, production stamp %+dms vs this anchor"
+		% [role, _round_start_ms - t0,
+			int(game.get("game_started_time")) - _round_start_ms])
 	await _frames(2)
 
 
 ## Seconds this round has ACTUALLY been played, by the harness's own reckoning:
 ## real time since start_game(), minus the pause intervals this process observed.
 func _true_play_s() -> float:
-	var paused_ms := _pause_total_ms
-	if _pause_begin_ms > 0:
-		paused_ms += Time.get_ticks_msec() - _pause_begin_ms
-	return float(Time.get_ticks_msec() - _round_start_ms - paused_ms) / 1000.0
+	return float(Time.get_ticks_msec() - _round_start_ms - _ledger.frozen_ms()) / 1000.0
 
 
 ## The remaining time PRODUCTION computes, through the accessor the four
@@ -316,10 +386,15 @@ func _do_pause(hold: float) -> Dictionary:
 	# Both sides wait for the flag rather than assuming it: on the host
 	# _execute_pause arrives via call_local, on the client over the wire, and the
 	# client's arrival time is one of the things being measured.
+	# The ledger is already running (see _process); this only has to know where the
+	# pause it is about to time sits in it. Sampling the total BEFORE the wait, rather
+	# than stamping a start time after it, is what makes the measurement whole when the
+	# pause landed before this call: _process credited the real start, so the delta
+	# below spans the whole freeze instead of only the part this function watched.
+	var total_before: int = _ledger.total_ms
 	out["paused_seen"] = await _until(func(): return _tree().paused, 6.0)
 	if not out["paused_seen"]:
 		return out
-	_pause_begin_ms = Time.get_ticks_msec()
 	if role == "host":
 		await _secs(hold)
 		NetworkManager.request_resume()
@@ -328,9 +403,9 @@ func _do_pause(hold: float) -> Dictionary:
 	# here, which is why the timeout is generous and the result is asserted.
 	out["resumed_seen"] = await _until(func(): return not _tree().paused, hold + 8.0)
 	if out["resumed_seen"]:
-		_pause_total_ms += Time.get_ticks_msec() - _pause_begin_ms
-		out["measured_s"] = float(Time.get_ticks_msec() - _pause_begin_ms) / 1000.0
-		_pause_begin_ms = 0
+		# _process closed the interval on the frame the tree came back; read it off the
+		# ledger rather than re-deriving it, so there is exactly one clock here.
+		out["measured_s"] = float(_ledger.total_ms - total_before) / 1000.0
 	# Two frames so _process() has run at least once on the unpaused tree and the
 	# progress bar carries a post-resume value rather than its pre-pause one.
 	await _frames(2)
@@ -396,8 +471,9 @@ func _run_timeline() -> void:
 	var expect2: float = 20.0 - play2
 	var stolen2: float = expect2 - rem2
 	_check("pause did not consume round time", absf(stolen2) <= 0.30,
-		"paused %.2fs; played %.2fs; production remaining %.2fs, expected %.2fs → %+.2fs stolen"
-			% [float(p2["measured_s"]), play2, rem2, expect2, stolen2])
+		"paused %.2fs (game says %.2fs); played %.2fs; production remaining %.2fs, expected %.2fs → %+.2fs stolen"
+			% [float(p2["measured_s"]), float(int(game.get("_paused_ms_total"))) / 1000.0,
+				play2, rem2, expect2, stolen2])
 	# The label is written by _update_timer_display() on ui_timer's 1 Hz tick, and
 	# ui_timer is PAUSABLE - so immediately after a resume the label still holds its
 	# PRE-PAUSE value. The first run of this harness read it there and the check

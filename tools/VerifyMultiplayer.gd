@@ -29,7 +29,9 @@ extends Node
 ##   5. A peer CANNOT write another peer's G-Counter slot
 ##   6. Re-sending an identical merge changes nothing (idempotence, over the wire)
 ##   7. A peer CANNOT file a completion report under another peer's id
-##   8. A mid-round disconnect does not leave the host waiting forever
+##   8. A mid-round disconnect freezes the round in a BOUNDED reconnect hold
+##      rather than either emptying it or waiting forever (the expiry that then
+##      resolves it is tools/VerifyInRoundReconnect.tscn PHASE 2)
 ##   9. Concurrent increments on both peers converge (thesis CRDT Events 3–4)
 ##  10. A client's life request is applied once, by the host, not locally
 ##  11. Either player may pause; only the host resumes, via a round-trip
@@ -565,7 +567,8 @@ func _run_host() -> void:
 	# had been resolved again. Each side anchors its timeline on its own connection event
 	# and the two processes boot 23 autoloads seconds apart, so by t≈25 the accumulated
 	# skew exceeded that 0.5 s margin. Two changes make the phase ordering-independent:
-	# the margin is now 2.5 s, and the assertions run off the player_disconnected signal
+	# the margin is now 2.0 s (host arms at 31.0, client leaves at 33.0, each on its own
+	# clock), and the assertions run off the player_disconnected signal
 	# instead of the clock, so they observe the handler's result whenever it happens.
 	var armed := [false]
 	tree.create_timer(31.0).timeout.connect(func() -> void:
@@ -578,26 +581,51 @@ func _run_host() -> void:
 		print("  [host] armed: waiting on partner with 1/2 completions")
 	)
 
-	# ── on player_disconnected  the round must be resolved, not left hanging ──
-	# Pre-fix the host only set game_in_progress = false and stayed in the minigame:
-	# the results overlay advances solely on both_players_completed, which needs a
-	# second completion entry that could no longer arrive.
+	# ── on player_disconnected  the round is HELD, not thrown away ──
+	# Two behaviours have lived here, and this block asserts the one that ships.
+	#
+	# Pre-fix the host only set game_in_progress = false and stayed in the minigame: the
+	# results overlay advances solely on both_players_completed, which needs a second
+	# completion entry that could no longer arrive, so the host waited forever. The fix for
+	# that resolved the round immediately - and that is what this block used to assert.
+	#
+	# Immediate resolution is no longer the contract. _begin_reconnect_hold() freezes a live
+	# round for RECONNECT_HOLD_SECONDS first, because a client whose wifi blips for two
+	# seconds should not lose the round; only when the hold expires unrejoined does
+	# _resolve_lost_peer() clear the completion, close the round and leave for the lobby.
+	# So asserting an empty round_completion_status 0.6s after the drop was asserting the
+	# absence of the hold: three failures against a game that is doing the right thing.
+	#
+	# What is measured here is the hold itself, and it has teeth - delete the hold and every
+	# line below fails. The other half, the expiry that resolves the round, is
+	# tools/VerifyInRoundReconnect.tscn PHASE 2, which times it off the hold's own signals
+	# instead of a poll, and does not need this 35s timeline extended past a scene change
+	# that would free this harness.
 	nm.player_disconnected.connect(func(_peer_id: int) -> void:
 		if not armed[0]:
-			# Skew large enough to invert a 2.5 s margin would mean the two processes
+			# Skew large enough to invert the 2.0 s margin would mean the two processes
 			# drifted by seconds; say so plainly rather than reporting four bogus
 			# behavioural failures, which is what the fixed-timer version did.
 			print("  [host] SKEW: partner left before the arm — disconnect phase not exercised")
 			return
-		# The handler does its work across a deferred scene change; let it settle.
+		# The hold opens inside the same frame as the drop, across a deferred call; settle.
 		await tree.create_timer(0.6).timeout
-		check.call("partner leaving mid-round cleared the stale completion",
-			nm.round_completion_status.is_empty(),
+		check.call("a partner leaving mid-round opens the reconnect hold",
+			nm.is_reconnect_hold_active(),
+			"hold=%s" % str(nm.is_reconnect_hold_active()))
+		check.call("the held round keeps the completion it already has",
+			nm.round_completion_status.has(HOST_PEER_ID),
 			"status=%s" % str(nm.round_completion_status))
-		check.call("partner leaving mid-round closed the round",
-			not nm.round_in_progress)
-		check.call("partner leaving mid-round ended the game",
-			not nm.game_in_progress)
+		check.call("the held round stays open, so a returning peer has one to return to",
+			nm.round_in_progress and nm.game_in_progress,
+			"round=%s game=%s" % [str(nm.round_in_progress), str(nm.game_in_progress)])
+		# Bounded, not indefinite - the whole point of the pre-fix defect was a wait with no
+		# end. The expiry's effect is VerifyInRoundReconnect's; that it is COMING is here.
+		check.call("the hold is bounded by a running timer, not an indefinite wait",
+			NetworkManager.RECONNECT_HOLD_SECONDS > 0.0
+				and nm._reconnect_hold_timer.time_left > 0.0,
+			"%.1fs cap, %.1fs left" % [NetworkManager.RECONNECT_HOLD_SECONDS,
+				nm._reconnect_hold_timer.time_left])
 		check.call("player table dropped the departed peer",
 			nm.players.size() == 1, "size=%d" % nm.players.size())
 	, CONNECT_ONE_SHOT)
@@ -898,7 +926,7 @@ func _run_client() -> void:
 			"singleton delta=%d vs GameManager slot=%d (both must be 5)" % [gc_now - gc_base[0], slot])
 	)
 
-	# ── t=33.0  leave mid-round so the host has to resolve the open round ──
+	# ── t=33.0  leave mid-round so the host has an open round to hold ──
 	# quit() after finish() has already printed this side's tally at t=33.5 would be
 	# too late, so the disconnect rides on its own timer just before it.
 	tree.create_timer(33.0).timeout.connect(func() -> void:

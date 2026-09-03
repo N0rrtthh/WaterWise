@@ -190,6 +190,137 @@ var minigames_played_this_session: int = 0
 var local_player_num: int = 0
 var _session_finalized: bool = false
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# SANDBOX (Game Lab)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# A round played from the Game Lab must leave NO trace: not in the save file,
+# not in the session JSON, not in either adaptive algorithm's window, not in the
+# session score or lives. It exists to answer "does this mechanic feel right",
+# and an answer that costs the player a life or shifts their difficulty tier is
+# not free to ask.
+#
+# The flag is checked at the SINKS, not at the call sites. Every writer refuses
+# a sandbox round itself, so a future caller cannot forget to opt out - which is
+# the whole reason this is not implemented as "log it, then filter it later".
+# Sinks that consult it:
+#   GameManager.complete_minigame()               - SP round record + all forwarding
+#   GameManager._apply_multiplayer_round_result() - MP round record
+#   GameManager._store_multiplayer_performance()  - coop pairing buffer
+#   GameManager.start_next_minigame()             - returns to the Lab, not the session
+#   SaveManager.save_now()                        - the only path to disk
+#   SaveManager.add_droplets()                    - in-memory, read live by the shop
+#   SaveManager.record_game_result()              - in-memory high scores + streak
+#   SessionLogger.record_sp_game/scene_visit/_on_mp_round_completed
+#   AdaptiveDifficulty.add_performance()          - the thesis rolling window
+#   CoopAdaptation.add_game_result()              - the coop rolling window
+#   MiniGameBase.end_game() droplet award, MiniGameBase._deduct_life()
+#
+# Guarding save_now() alone would not have been enough: the in-memory stores it
+# writes FROM are mutated before the save is asked for (NetworkManager awards a
+# co-op round's droplets straight through SaveManager.add_droplets()), so an
+# inflated count would ride out on the next real save after leaving the Lab. Hence
+# the two in-memory guards above, plus a backstop for any writer nobody guarded:
+#   SaveManager.sandbox_snapshot()  - taken on the way in, after the flush
+#   SaveManager.sandbox_restore()   - puts every store back on the way out
+# Verified by tools/VerifyGameLab.tscn (43 checks), which also proves the gate can
+# fail by removing one guard.
+var sandbox_mode: bool = false
+
+## Where a sandbox round returns to when it ends.
+var sandbox_return_scene: String = "res://scenes/ui/GameLab.tscn"
+
+## The last sandbox round's outcome, for the Lab to display. Overwritten each
+## round and never persisted.
+var sandbox_last_result: Dictionary = {}
+
+## The player's real difficulty tier, parked while the Lab overrides it.
+var _sandbox_saved_difficulty: String = ""
+
+## The session's real life count, parked while the Lab borrows the HUD.
+##
+## The Lab is reachable from Settings, which is reachable mid-session, so the
+## number of hearts the sandbox round shows cannot be the live one: entering the
+## Lab on the last life would put a "1 heart" HUD on a round that cannot cost a
+## life anyway. _deduct_life() already refuses in sandbox, so this only decides
+## what the HUD draws - it is restored verbatim on the way out.
+var _sandbox_saved_lives: int = -1
+const SANDBOX_LIVES: int = 3
+
+## GameManager's own copy of the droplet count, parked alongside the rest. It is a
+## mirror of SaveManager's value that is only re-synced at load and session start,
+## so it can legitimately be out of step with the store before the Lab is opened -
+## restoring it verbatim leaves that alone instead of quietly "correcting" it.
+var _sandbox_saved_droplets: int = -1
+
+## True while a Game Lab round is being played. Read this rather than the raw
+## flag so the intent is legible at the sinks.
+func is_sandbox() -> bool:
+	return sandbox_mode
+
+
+## Enter sandbox mode. Called by the Game Lab when it opens, not per round, so a
+## round that ends and returns to the Lab is still inside the sandbox.
+##
+## `tier` overrides the difficulty for the duration. The real tier is parked and
+## restored by exit_sandbox(), because AdaptiveDifficulty.current_difficulty is
+## the tier the player's NEXT real round would have been played at - the Lab is
+## allowed to borrow it, not to change it.
+func enter_sandbox(tier: String = "") -> void:
+	if not sandbox_mode:
+		# Flush anything the player earned before opening the Lab: save_now() will
+		# refuse every write from here until exit_sandbox(), and a pending
+		# debounced save would otherwise be dropped on quit.
+		if SaveManager and SaveManager.has_method("save_now"):
+			SaveManager.save_now()
+		# ...then photograph what was just written. save_now() refuses every write
+		# from here on, but the stores it writes FROM are still live objects that a
+		# round mutates before asking for the save (SaveManager.add_droplets is the
+		# clearest case). The snapshot is put back by exit_sandbox().
+		if SaveManager and SaveManager.has_method("sandbox_snapshot"):
+			SaveManager.sandbox_snapshot()
+		if AdaptiveDifficulty:
+			_sandbox_saved_difficulty = str(AdaptiveDifficulty.current_difficulty)
+		_sandbox_saved_lives = session_lives
+		session_lives = SANDBOX_LIVES
+		_sandbox_saved_droplets = water_droplets
+		sandbox_last_result = {}
+	sandbox_mode = true
+	set_sandbox_tier(tier)
+	print("🧪 Sandbox ON (tier %s, real tier parked as %s)" % [
+		tier if tier != "" else "unchanged", _sandbox_saved_difficulty
+	])
+
+
+## Change the sandbox's tier without leaving the sandbox.
+func set_sandbox_tier(tier: String) -> void:
+	if not sandbox_mode or tier == "":
+		return
+	if AdaptiveDifficulty and tier in AdaptiveDifficulty.DIFFICULTY_SETTINGS:
+		AdaptiveDifficulty.current_difficulty = tier
+
+
+## Leave sandbox mode and hand the player's own tier back.
+func exit_sandbox() -> void:
+	if not sandbox_mode:
+		return
+	sandbox_mode = false
+	if SaveManager and SaveManager.has_method("sandbox_restore"):
+		SaveManager.sandbox_restore()
+	if AdaptiveDifficulty and _sandbox_saved_difficulty != "":
+		AdaptiveDifficulty.current_difficulty = _sandbox_saved_difficulty
+	if _sandbox_saved_lives >= 0:
+		session_lives = _sandbox_saved_lives
+	if _sandbox_saved_droplets >= 0:
+		water_droplets = _sandbox_saved_droplets
+	print("🧪 Sandbox OFF (tier restored to %s, lives restored to %d)" % [
+		_sandbox_saved_difficulty, session_lives
+	])
+	_sandbox_saved_difficulty = ""
+	_sandbox_saved_lives = -1
+	_sandbox_saved_droplets = -1
+	sandbox_last_result = {}
+
+
 # Story chapter cadence: intro once, then every 5 completed minigames.
 var _story_shown_at: Array[int] = []
 var _story_transition_active: bool = false
@@ -685,6 +816,10 @@ func _store_multiplayer_performance(
 	game_name: String, accuracy: float,
 	reaction_time: int, mistakes: int
 ) -> void:
+	# Game Lab: keeping this would pair a sandbox round with a real one and feed
+	# the coop algorithm a team result that never happened.
+	if sandbox_mode:
+		return
 	# Store local player's performance and check if both reported
 	var my_id = multiplayer.get_unique_id()
 	mp_game_name = game_name
@@ -1010,6 +1145,28 @@ func advance_multiplayer_round() -> void:
 	rpc("_load_next_multiplayer_minigame", game_name, _decide_player_modes())
 
 
+## Host-only: start one multiplayer round of a NAMED game.
+##
+## The Game Lab needs to try a SPECIFIC co-op mechanic, not whatever the shuffle
+## reaches next. This is deliberately the same RPC advance_multiplayer_round()
+## broadcasts, with the same host-decides-then-broadcasts rule - the only thing
+## that changes is where the game name comes from. Nothing here simulates a second
+## player: without a real connected peer it refuses and returns false.
+func start_multiplayer_round_named(game_name: String) -> bool:
+	if not is_host:
+		push_warning("start_multiplayer_round_named: only the host may start a round")
+		return false
+	if not is_multiplayer_session_ready():
+		push_warning("start_multiplayer_round_named: needs %d connected peers" % MAX_PLAYERS)
+		return false
+	if not game_name in multiplayer_minigames:
+		push_warning("start_multiplayer_round_named: unknown MP game '%s'" % game_name)
+		return false
+	current_game_mode = GameMode.MULTIPLAYER_COOP
+	rpc("_load_next_multiplayer_minigame", game_name, _decide_player_modes())
+	return true
+
+
 func get_my_player_mode() -> int:
 	# Get my assigned mode (1 or 2)
 	var my_id = multiplayer.get_unique_id()
@@ -1045,6 +1202,11 @@ func _apply_multiplayer_round_result(
 	best_combo: int
 ) -> void:
 	if not session_active:
+		return
+
+	# Game Lab: an MP round played to try the mechanic out is not a round of the
+	# team's session. No score, no lives, no leaderboard, no JSON record.
+	if sandbox_mode:
 		return
 
 	var resolved_game_name := game_name
@@ -1263,6 +1425,16 @@ func start_next_minigame() -> void:
 	if _story_transition_active:
 		return
 
+	# Game Lab: a finished sandbox round goes back to the Lab, not into the
+	# session's queue. Guarded here rather than in MiniGameBase so every path that
+	# advances a round - outro, replay, MP host advance - lands in the same place.
+	if sandbox_mode:
+		var lab: String = sandbox_return_scene
+		if lab.is_empty() or not ResourceLoader.exists(lab):
+			lab = "res://scenes/ui/Settings.tscn"
+		get_tree().change_scene_to_file(lab)
+		return
+
 	if current_game_mode == GameMode.MULTIPLAYER_COOP:
 		if is_host:
 			advance_multiplayer_round()
@@ -1476,6 +1648,24 @@ func complete_minigame(
 	var gid: String = game_id.strip_edges()
 	if gid.is_empty():
 		gid = game_name
+
+	# Game Lab: report the outcome, record nothing. Everything below this point is
+	# a write - save file, session score, the thesis rolling window, the session
+	# JSON - and a sandbox round is not allowed to make any of them.
+	if sandbox_mode:
+		sandbox_last_result = {
+			"game_name": game_name,
+			"game_id": gid,
+			"accuracy": accuracy,
+			"reaction_time": reaction_time,
+			"mistakes": mistakes,
+			"score": round_score_override,
+			"best_combo": best_combo,
+			"was_successful": was_successful,
+			"difficulty": get_current_difficulty()
+		}
+		minigame_completed.emit(gid, sandbox_last_result)
+		return
 	if not gid in completed_minigames:
 		completed_minigames.append(gid)
 	

@@ -69,6 +69,14 @@ func _open(scene_path: String, ready_probe: String) -> bool:
 	if packed == null:
 		return false
 	game = packed.instantiate()
+	# What NetworkManager does for a real round load, condensed: the host records the G-Counter
+	# total the round starts from (_load_game_scene / _load_next_round carry it to both peers).
+	# Instantiating the scene here skips that path, and without the baseline every game after
+	# the first one in this process opens holding the previous games' points - which is exactly
+	# how this harness once reported "the drive watered the full quota" on 1 plant of 8, because
+	# MP_WaterPlants' 80-point team quota was already met by the 90 points banked before it.
+	if NetworkManager and "round_score_baseline" in NetworkManager:
+		NetworkManager.round_score_baseline = NetworkManager.get_total_score()
 	get_tree().root.add_child(game)
 	var waited: float = 0.0
 	while waited < 8.0:

@@ -112,10 +112,17 @@ func _ready() -> void:
 ## hub, advance the story screen and finally navigate away from the round it was measuring
 ## ("Cannot call method 'get' on a previously freed instance"), and blamed its own fixture.
 ## A real play session started on that machine would have been hijacked the same way.
+##
+## The `persist` flag is a promise a harness has to remember to keep, and one that forgot
+## (tools/VerifyGameIdentity, which then hit its own timeout and never restored anything)
+## left auto_play_enabled=true on disk for the rest of a 72-harness suite: 38 later runs
+## booted with the bot playing underneath them, and seven of them reported failures that
+## were really the autoplayer navigating away from the thing being measured. So the promise
+## is now enforced instead of trusted - see _may_persist().
 func set_auto_play_enabled(enabled: bool, persist: bool = true) -> void:
 	auto_play_enabled = enabled
 	
-	if SaveManager and persist:
+	if SaveManager and persist and _may_persist():
 		SaveManager.set_setting("auto_play_enabled", enabled)
 	
 	if enabled:
@@ -140,10 +147,18 @@ func set_auto_play_enabled(enabled: bool, persist: bool = true) -> void:
 		print("🤖 Auto-play DISABLED (Played for %s)" % _format_duration(auto_play_elapsed))
 		state_changed.emit(false)
 
+## Only a real windowed session may write the player's auto-play preferences. A headless
+## process is never a player - it is a harness, an export or a CI job - so nothing it does
+## to the autoplayer belongs in waterwise_settings.json. The in-memory flags still change,
+## which is all a harness actually needs, and this is the reason a killed headless run can
+## no longer hand the next process (or the next real play session) a hijacked game.
+func _may_persist() -> bool:
+	return DisplayServer.get_name() != "headless"
+
 func set_auto_play_duration(minutes: float) -> void:
 	auto_play_duration = minutes * 60.0  # Convert to seconds
 	
-	if SaveManager:
+	if SaveManager and _may_persist():
 		SaveManager.set_setting("auto_play_duration", auto_play_duration)
 	
 	var duration_str = (

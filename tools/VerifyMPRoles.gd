@@ -1,5 +1,18 @@
 extends Node
 
+## ONE ENGINE ERROR IS EXPECTED FROM THIS HARNESS, and it is not a game defect:
+##
+##   ERROR: Attempt to call RPC with unknown peer ID: 2.
+##      [0] start_multiplayer_game_pair (res://autoload/NetworkManager.gd:1091)
+##      [1] _run (res://tools/VerifyMPRoles.gd) - i.e. this file
+##
+## The backtrace names the cause: this harness populates NetworkManager.players with a
+## peer 2 that no second process is behind, because what it measures is the role table
+## the host BUILDS, not the delivery of it. rpc_id(2, ...) therefore has nowhere to go.
+## Delivery is covered by tools/VerifyRoundAdvance.tscn, which runs two real peers.
+## Left visible rather than routed around, so that a NEW error here is still worth
+## reading.
+
 ## ═══════════════════════════════════════════════════════════════════
 ## VERIFY: THE CO-OP ROLE NAMES
 ## ═══════════════════════════════════════════════════════════════════

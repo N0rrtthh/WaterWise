@@ -64,6 +64,15 @@ func _apply_difficulty_settings() -> void:
 		_:
 			snap_radius = 90.0
 
+	# Medium and Hard end on wrong placements, not on the clock.
+	#
+	# The stack order (cloth -> charcoal -> sand -> gravel) is knowledge, and Hard
+	# turns visual_guidance off, so at that tier the player is recalling it rather
+	# than reading it. 3 filters x 4 layers is 12 drags inside ~17 s once the guide
+	# is gone: about 1.4 s each to remember, pick up and snap. There is an undo
+	# button, which only makes sense if thinking is what the game rewards.
+	use_attempt_budget(0, 5, 4)
+
 func _ready():
 	# Localized: the title stayed English above the Filipino objective FIX 58
 	# authored. _loc() keeps the English literal as the fallback for the case

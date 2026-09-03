@@ -111,6 +111,14 @@ const LABEL_SCAN_SKIP: Array[String] = [
 	"res://autoload/PerformanceProfiler.gd",
 	"res://autoload/AlgorithmOverlay.gd",
 	"res://scenes/ui/BeatViewer.gd",
+	# Same gate as BeatViewer above, and the same evidence: Settings.gd:863 sets the
+	# Game Lab button disabled = not dev_mode_enabled and _apply_dev_mode_visibility()
+	# re-applies that at :1028, so the screen cannot be opened without dev mode - the
+	# button's own caption lives in Settings.gd, which this scan does NOT exempt and
+	# did not flag: it goes through _loc("settings_game_lab", ...). The screen behind
+	# it is a sandbox that records nothing - no droplets, no lives, no session log -
+	# and its labels say so in developer English on purpose.
+	"res://scenes/ui/GameLab.gd",
 	"res://scenes/ui/DebugMultiplayer.gd",
 	"res://scripts/cutscenes/AnimatedCutscenePlayerDemo.gd",
 	# Legacy prototype co-op family: reachable only through DebugMultiplayer.gd, and

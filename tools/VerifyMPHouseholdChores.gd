@@ -219,8 +219,17 @@ func _flush_toilets() -> void:
 	game.set("game_active", true)
 	var total: int = (game.toilets as Array).size()
 
-	# Dirty every toilet. With 6 toilets and an allowance of 5 the tally reaches the
-	# allowance once, zeroes itself, and the 6th dirtying fills the board.
+	# A LIFE ONLY GOES WHERE WATER COULD HAVE GONE, AND BOTH HALVES OF THAT ARE CHECKED
+	#
+	# Flushing spends a unit of shower water only P1 can send, so while this player holds
+	# none, a filthy bathroom is P1's pace and the game deliberately withholds the penalty
+	# (MP_FlushToilets.gd:169-187). This block used to assert the charge alone, against a
+	# board it never gave any water to - a claim the shipped game refuses on purpose, and it
+	# read as a defect. Asserting the withholding alone would be just as weak: it passes
+	# against a game that never charges at all. So the same full board is measured twice, dry
+	# then wet, and only the pair of results says the rule is actually implemented.
+	game.set("available_water", 0)
+	var dry_before: int = _misses()
 	for i in total:
 		game._mark_toilet_dirty()
 	_check("MP_FlushToilets: dirtying every toilet does leave every toilet dirty",
@@ -229,22 +238,41 @@ func _flush_toilets() -> void:
 		int(game.unflushed_count) == _dirty_toilets(),
 		"overlay says %d, board has %d dirty" % [int(game.unflushed_count), _dirty_toilets()])
 
-	# Three more dirty ticks against a board past the allowance the entire time.
-	var before: int = _misses()
+	# Three more dirty ticks against a full board with an empty bucket: the bathroom stays
+	# honestly filthy and it costs nothing, because there was never a flush to miss.
 	for i in 3:
 		game._mark_toilet_dirty()
-	_check("MP_FlushToilets: a fully dirty bathroom keeps costing the team lives",
-		_misses() > before,
-		"%d lives charged over 3 ticks with %d of %d dirty"
-			% [_misses() - before, _dirty_toilets(), total])
+	_check("MP_FlushToilets: a full board with no water to flush with charges no lives",
+		_misses() == dry_before and _dirty_toilets() == total,
+		"%d lives charged over 3 dry ticks, %d of %d still dirty"
+			% [_misses() - dry_before, _dirty_toilets(), total])
 
-	# The pressure also has to be escapable: flushing must clear the fail state.
+	# Same board, water in hand. Now the allowance applies: the mess costs exactly one life,
+	# and the board is cleared with it so the same overflow cannot be charged for twice.
+	game.set("available_water", 2)
+	var wet_before: int = _misses()
+	game._mark_toilet_dirty()
+	_check("MP_FlushToilets: the same full board does cost a life once there is water",
+		_misses() == wet_before + 1,
+		"%d lives charged with 2 water in hand" % [_misses() - wet_before])
+	_check("MP_FlushToilets: charging for the overflow clears it, so it cannot be charged twice",
+		_dirty_toilets() == 0,
+		"%d of %d still dirty after the penalty" % [_dirty_toilets(), total])
+
+	# The pressure also has to be escapable: flushing must clear the fail state. The board is
+	# clean after that penalty, so it is dirtied back up to the worst state the allowance
+	# still tolerates first - flushing an already-clean bathroom would pass this check
+	# without _try_flush() doing anything at all.
 	game.set("available_water", total * 2)
+	for i in maxi(1, allowance - 1):
+		game._mark_toilet_dirty()
+	var to_flush: int = _dirty_toilets()
 	for t in game.toilets:
 		game._try_flush(t)
 	_check("MP_FlushToilets: flushing the board clears the fail state",
-		_dirty_toilets() == 0 and int(game.unflushed_count) == 0,
-		"dirty=%d, overlay says %d" % [_dirty_toilets(), int(game.unflushed_count)])
+		to_flush > 0 and _dirty_toilets() == 0 and int(game.unflushed_count) == 0,
+		"flushed %d of the %d it was dirtied to, dirty=%d, overlay says %d"
+			% [to_flush, maxi(1, allowance - 1), _dirty_toilets(), int(game.unflushed_count)])
 	var clean_misses: int = _misses()
 	game._mark_toilet_dirty()
 	_check("MP_FlushToilets: one dirty toilet on an otherwise clean board costs nothing",
@@ -283,16 +311,43 @@ func _wash_car() -> void:
 	_check("MP_WashCar: the round opens with something to wash",
 		_dirty_sections() == 1, "%d of %d sections dirty" % [_dirty_sections(), sections])
 
-	# Backdate the dirty clock past the allowance: this is the player who ran out of partner
-	# water and could not wash the section in time.
+	# NEGLECT ONLY ACCRUES WHILE THERE IS WATER TO WASH WITH - the same rule as
+	# MP_FlushToilets above, and the same reason for measuring it twice. _try_wash() refuses
+	# without water, so seconds spent with an empty bucket are P1's delivery pace rather than
+	# a mistake to charge one of three shared lives for.
+	#
+	# The clock is an accumulator on the section (meta "dirty_elapsed") that _process advances
+	# only while available_water > 0 (MP_WashCar.gd:174-186). It used to be a wall-clock stamp
+	# in meta "dirty_time", which is why this block's old backdating of that stamp measured
+	# nothing at all: it wrote a key the game had stopped reading and then asserted a penalty,
+	# so the fix looked like a defect. Parking the accumulator just under the allowance is
+	# also what keeps both halves to about a second of real time instead of MAX_DIRTY_TIME.
+	var brink: float = float(secs) - 0.05
+	game.set("available_water", 0)
 	for s in game.car_sections:
 		if bool(s.get_meta("dirty", false)):
-			s.set_meta("dirty_time", Time.get_ticks_msec() - (secs * 1000) - 1000)
+			s.set_meta("dirty_elapsed", brink)
+	var dry_before: int = _misses()
+	await get_tree().create_timer(1.0).timeout
+	var dry_elapsed: float = _max_dirty_elapsed()
+	_check("MP_WashCar: a section nobody could wash charges nothing, and its clock does not run",
+		_misses() == dry_before and absf(dry_elapsed - brink) < 0.001,
+		"misses %d to %d, dirty_elapsed %.3f against a %.3f park over 1.0s of neglect"
+			% [dry_before, _misses(), dry_elapsed, brink])
+
+	# Same section, same clock reading, water in hand. Now the allowance applies. Bounded on
+	# wall time rather than a frame count: headless spins the main loop far faster than 60Hz,
+	# so a fixed number of frames can carry less accumulated time than the 0.05s above.
+	game.set("available_water", 5)
 	var before: int = _misses()
-	await get_tree().process_frame
-	await get_tree().process_frame
+	var waited_ms: int = 0
+	var t0: int = Time.get_ticks_msec()
+	while _misses() == before and waited_ms < 3000:
+		await get_tree().process_frame
+		waited_ms = Time.get_ticks_msec() - t0
 	_check("MP_WashCar: a section left dirty past the allowance charges a life",
-		_misses() > before, "misses %d to %d" % [before, _misses()])
+		_misses() > before,
+		"misses %d to %d after %dms with water in hand" % [before, _misses(), waited_ms])
 
 	# 2.6s clears the 2.0s delay the wash path uses to schedule the next dirty section.
 	await get_tree().create_timer(2.6).timeout
@@ -324,6 +379,17 @@ func _wash_car() -> void:
 	_check("MP_WashCar: the deferred re-dirty does not touch a round that already ended",
 		_dirty_sections() == 0, "%d sections dirtied after game over" % _dirty_sections())
 	await _close()
+
+
+## The furthest-along neglect clock on the board, read off the board rather than through a
+## kept section reference so the check still reports a number if the penalty branch cleared
+## the section from under it.
+func _max_dirty_elapsed() -> float:
+	var top: float = -1.0
+	for s in game.car_sections:
+		if bool(s.get_meta("dirty", false)):
+			top = maxf(top, float(s.get_meta("dirty_elapsed", 0.0)))
+	return top
 
 
 func _dirty_sections() -> int:

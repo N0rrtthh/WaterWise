@@ -56,6 +56,10 @@ const SPECK_RADIUS_MAX: float = 9.0
 var _glass_scale: float = 1.0
 
 func _apply_difficulty_settings() -> void:
+	# Queues this tier's chaos_effects; without it the algorithm asks for them
+	# and this game silently drops them. The per-tier game_duration below is
+	# deliberate and overrides the base's time_limit write. See MiniGameBase.
+	super._apply_difficulty_settings()
 	match current_difficulty:
 		"Easy":
 			target_correct = 4
@@ -75,6 +79,18 @@ func _apply_difficulty_settings() -> void:
 			num_specks_min = 2
 			num_specks_max = 6  # Subtle specks
 			game_duration = 12.0
+
+	# Medium and Hard end on wrong judgements, not on the clock.
+	#
+	# Judging a glass is perception, and Hard deliberately makes the evidence
+	# faint — 2 to 6 specks at SPECK_RADIUS_MIN, which the constant above measures
+	# as ~6 device px on the lowest profile the paper targets. Twelve seconds for
+	# six of those judgements is two seconds each, which measures how quickly a
+	# player is willing to guess rather than how well they can see.
+	#
+	# Wrong glasses do not count toward target_correct, so the budget is a real
+	# accuracy requirement: 5 correct before 5 wrong on Medium, 6 before 4 on Hard.
+	use_attempt_budget(0, 5, 4)
 
 func _ready():
 	# Localized: the title stayed English above the Filipino objective FIX 58

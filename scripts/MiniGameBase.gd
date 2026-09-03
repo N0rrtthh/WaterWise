@@ -110,6 +110,33 @@ var _game_timer: Timer
 var mistake_time_penalty: float = 3.0
 var _time_penalty_total: float = 0.0
 
+## ── FAIL MODE: what actually ends a round that is going badly ───────────────
+##
+## "clock"    the timer decides. Mistakes shorten it (_apply_sp_time_penalty).
+##            The original behaviour, and still the default.
+## "attempts" a budget of wrong answers decides. The clock keeps running as an
+##            anti-hang ceiling but no longer fails the round.
+##
+## Why this exists: the tier tables give the HARDER tiers LESS time (Easy 20 /
+## Medium 15 / Hard 10 in AdaptiveDifficulty.DIFFICULTY_SETTINGS), and
+## get_difficulty_settings() divides that again by the progressive ramp, down to
+## a 3 s floor. For a reflex game that is exactly the point. For a think-first
+## game — trace this path accurately, remember where the pair was — it made the
+## round unwinnable rather than hard: the player knew the answer and lost to the
+## clock while producing it. Those games call use_attempt_budget() so their
+## Medium/Hard rounds end on wrong tries instead of on seconds.
+##
+## Set only through use_attempt_budget(); read freely.
+var fail_mode: String = "clock"
+## Wrong actions allowed this round, and how many remain. 0/0 in clock mode.
+var attempts_max: int = 0
+var attempts_left: int = 0
+## The tier's authored round length, before the attempts ceiling overwrote
+## game_duration. Kept because the win payout's speed bonus is calibrated
+## against the authored length, not against an anti-hang ceiling.
+var _nominal_duration: float = 0.0
+
+
 ## Chaos effect timer references (stopped on game end to prevent leaks)
 var _chaos_timers: Array[Timer] = []
 
@@ -128,6 +155,7 @@ var controls_reversed: bool = false
 
 ## UI References
 var timer_label: Label
+var attempts_label: Label
 var score_label: Label
 var combo_label: Label
 var mistakes_label: Label
@@ -566,6 +594,104 @@ func _activate_pending_chaos_effects() -> void:
 	for effect in effects:
 		_activate_chaos_effect(effect)
 
+## Round-length multiplier applied when a tier switches to the attempt budget,
+## and the floor under it. The clock stops being the opponent, but it must still
+## exist: a phone left on the minigame screen would otherwise hold an unfinished
+## round forever, with the gameplay music and the pause state still live.
+const ATTEMPT_CEILING_SCALE: float = 4.0
+const ATTEMPT_CEILING_MIN_SEC: float = 45.0
+## Seconds of ceiling left at which the hidden clock reappears, so running out of
+## it is never a surprise.
+const ATTEMPT_CEILING_WARN_SEC: float = 10.0
+
+
+## Make this tier end on wrong tries instead of on the clock.
+##
+## Call at the END of a subclass's _apply_difficulty_settings(), after the tier
+## table has set game_duration — this reads that value to size the ceiling.
+##
+## Pass 0 for a tier that should stay clock-based. Easy normally does: it is
+## where a player learns that mistakes cost something, and a forgiving 20 s clock
+## with a 12% mistake penalty is not the tier anyone loses unfairly.
+##
+## Refused in survival mode, where surviving the clock IS the win — replacing the
+## clock there would delete the win condition, not soften a loss.
+func use_attempt_budget(easy: int, medium: int, hard: int) -> void:
+	if game_mode == "survival":
+		push_warning(
+			"%s: use_attempt_budget() ignored — survival rounds are won BY the clock"
+			% game_name
+		)
+		return
+	var budget: int = 0
+	match current_difficulty:
+		"Easy":   budget = easy
+		"Medium": budget = medium
+		"Hard":   budget = hard
+		_:        budget = medium
+	if budget <= 0:
+		fail_mode = "clock"
+		attempts_max = 0
+		attempts_left = 0
+		return
+	fail_mode = "attempts"
+	attempts_max = budget
+	attempts_left = budget
+	_nominal_duration = game_duration
+	game_duration = maxf(ATTEMPT_CEILING_MIN_SEC, game_duration * ATTEMPT_CEILING_SCALE)
+	# _setup_ui() has not run yet (see the ordering note in _ready()), so the bar and
+	# the labels do not exist to hide from here. show_timer IS the lever: _setup_ui()
+	# and start_timer_now() both honour it.
+	show_timer = false
+	print("🎯 %s | %s: %d tries, no clock pressure (ceiling %.0fs)" % [
+		game_name, current_difficulty, budget, game_duration
+	])
+
+
+## The tier's authored round length in seconds — game_duration in clock mode, the
+## pre-ceiling value in attempts mode.
+func nominal_round_seconds() -> float:
+	if fail_mode == "attempts" and _nominal_duration > 0.0:
+		return _nominal_duration
+	return game_duration
+
+
+## Spend one try. Returns true when that was the last one.
+func _consume_attempt() -> bool:
+	attempts_left = maxi(0, attempts_left - 1)
+	_refresh_attempts_hud()
+	return attempts_left <= 0
+
+
+## Paint the tries readout. No-op before _setup_ui() has built it.
+func _refresh_attempts_hud() -> void:
+	if attempts_label == null or not is_instance_valid(attempts_label):
+		return
+	if fail_mode != "attempts":
+		attempts_label.visible = false
+		return
+	attempts_label.visible = true
+	attempts_label.text = _loc("hud_tries_short", "TRIES %d") % attempts_left
+	attempts_label.add_theme_color_override(
+		"font_color", HUD_RED if attempts_left <= 1 else HUD_INK
+	)
+
+
+## Point the HUD at whichever thing is actually deciding this round.
+##
+## Called at the end of the HUD build. In attempts mode the big seconds number is
+## meaningless — it counts down an anti-hang ceiling — so it is hidden and the
+## tries readout takes its slot. _process() reveals it again inside the warn
+## window.
+func _apply_fail_mode_hud() -> void:
+	var attempts := fail_mode == "attempts"
+	if timer_label:
+		timer_label.visible = not attempts
+	if timer_bar:
+		timer_bar.visible = show_timer and not attempts
+	_refresh_attempts_hud()
+
+
 func _penalty_for_difficulty(diff: String) -> float:
 	## Seconds deducted per mistake, as a FRACTION of the round length.
 	##
@@ -610,6 +736,13 @@ func _apply_sp_time_penalty() -> void:
 	if game_mode == "survival":
 		return
 
+	# ── Attempt-based rounds must NOT be clock-penalised ───────────────────
+	# The mistake already cost a try in record_action(). Charging seconds as well
+	# would double-bill it, and the clock in this mode is only an anti-hang
+	# ceiling — draining it is not the feedback the player should be reading.
+	if fail_mode == "attempts":
+		return
+
 	_time_penalty_total += mistake_time_penalty
 	print("💔 [%s] Mistake! -%ds (total: %.0fs)" % [game_name, int(mistake_time_penalty), _time_penalty_total])
 	if timer_bar:
@@ -640,6 +773,11 @@ func start_game() -> void:
 	# Baseline for the first action latency of the round.
 	_last_action_ms = 0
 	action_latencies_ms.clear()
+	# Refill the try budget, so a shell that replays a round in place (rather than
+	# reloading the scene and re-running _apply_difficulty_settings) starts fresh.
+	if attempts_max > 0:
+		attempts_left = attempts_max
+		_refresh_attempts_hud()
 	game_started.emit()
 	
 	# Play game start sound and gameplay music
@@ -739,13 +877,20 @@ func end_game(success: bool = true) -> void:
 	# Always send performance data to algorithm (success or fail)
 	if GameManager:
 		var droplets_earned = 0
-		if success:
+		# Game Lab rounds pay nothing: droplets are spendable currency, so a
+		# sandbox win would be a real reward for a round that never happened.
+		if success and not GameManager.sandbox_mode:
 			# Tuned-down economy (playtest rework): a win pays at most 7
 			# droplets instead of the old 20, so shop prices (100-500) keep
 			# meaning something for dozens of rounds. Losses pay nothing.
 			droplets_earned = 3 # Base reward
 			if accuracy > 0.9: droplets_earned += 2 # Perfect bonus
-			if reaction_time < game_duration * 1000: droplets_earned += 2 # Speed bonus
+			# nominal_round_seconds(), not game_duration: an attempts-mode round
+			# replaces game_duration with a 4x anti-hang ceiling, which would have
+			# handed out the speed bonus unconditionally. The bonus is calibrated
+			# against the tier's authored length, so that is what it compares to.
+			if reaction_time < nominal_round_seconds() * 1000.0:
+				droplets_earned += 2 # Speed bonus
 
 			if SaveManager and SaveManager.has_method("add_droplets"):
 				SaveManager.add_droplets(droplets_earned)
@@ -933,9 +1078,27 @@ func record_action(is_correct: bool) -> void:
 		# which a Control inside a container does not own — the container
 		# overwrites it on the next layout pass, so the "shake" read as jitter.
 		# Both are gone; the flash now lives in exactly one place.
-		_apply_sp_time_penalty()
+		# Clock rounds pay in seconds, attempt rounds pay in tries. Exactly one of
+		# these does anything: _apply_sp_time_penalty() returns early in attempts
+		# mode, and _consume_attempt() is only reached in it.
+		var out_of_attempts := false
+		if fail_mode == "attempts":
+			out_of_attempts = _consume_attempt()
+		else:
+			_apply_sp_time_penalty()
 
+		# Subclass feedback first: it flashes and resets the board, and several games
+		# end the round from here themselves. Ending above this line would cut the
+		# feedback for the very mistake that lost the round.
 		_on_mistake()
+
+		# The budget is spent. _on_mistake() may already have ended the round (or
+		# quit the scene), hence the game_active re-check rather than trusting the
+		# state we saw before calling it.
+		if out_of_attempts and game_active:
+			print("🎯 [%s] Out of tries (%d used)" % [game_name, attempts_max])
+			game_failed.emit()
+			end_game(false)
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # TIMER MANAGEMENT
@@ -971,6 +1134,14 @@ func _on_timer_timeout() -> void:
 		# Quota mode: timer runs out = FAIL (didn't meet target)
 		if game_mode == "survival":
 			end_game(true)
+		elif fail_mode == "attempts":
+			# Not a clock loss: this is use_attempt_budget()'s anti-hang ceiling,
+			# which only a round nobody is playing can reach. Logged distinctly so
+			# a soak can tell it apart from a real timeout.
+			print("🎯 [%s] Anti-hang ceiling reached, %d tries still unspent" % [
+				game_name, attempts_left
+			])
+			end_game(false)
 		else:
 			end_game(false)
 ## Seconds this round has actually been PLAYED, with time spent paused removed.
@@ -1210,6 +1381,11 @@ func _spawn_mud_splatters() -> void:
 func _create_mud_splatter() -> void:
 	var splatter = ColorRect.new()
 	splatter.color = Color(0.3, 0.2, 0.1, 0.7)
+	# A ColorRect is a Control, and a Control's default mouse_filter is STOP, so an
+	# 80px splatter dropped on top of the board swallowed every tap underneath it
+	# for the six seconds it lived. Chaos is meant to distract, not to disable the
+	# game - _create_visual_obstruction() below already got this right.
+	splatter.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	splatter.size = Vector2(randf_range(30, 80), randf_range(30, 80))
 	splatter.position = Vector2(
 		randf_range(0, get_viewport_rect().size.x),
@@ -1235,6 +1411,10 @@ func _spawn_buzzing_fly() -> void:
 	var fly = Label.new()
 	fly.text = "🐛"
 	fly.add_theme_font_size_override("font_size", 40)
+	# Same as the splatters: a Label is a Control, and this one is deliberately drawn
+	# over everything (z_index 10) and moved onto a new part of the board every half
+	# second. Left on STOP it was a roving dead zone.
+	fly.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	fly.z_index = 10
 	fly.position = Vector2(
 		randf_range(50, get_viewport_rect().size.x - 50),
@@ -1300,6 +1480,9 @@ func _retitle_for_language(_new_language: String = "") -> void:
 		return
 	game_name = Localization.get_text(key)
 	_hud_name_label.text = game_name.to_upper()
+	# "TRIES 3" is a localized string too — repaint it, or it keeps the old
+	# language until the next mistake happens to rewrite it.
+	_refresh_attempts_hud()
 
 
 func _setup_ui() -> void:
@@ -1396,6 +1579,16 @@ func _setup_ui() -> void:
 	_apply_hud_label_contrast(timer_label)
 	top_row.add_child(timer_label)
 
+	# -- Tries: takes the seconds slot in attempts mode (see _apply_fail_mode_hud) --
+	# Built unconditionally so a subclass can switch fail modes without the label
+	# having to be created lazily from inside the hot path.
+	attempts_label = Label.new()
+	attempts_label.add_theme_font_size_override("font_size", 26)
+	attempts_label.add_theme_color_override("font_color", HUD_INK)
+	attempts_label.visible = false
+	_apply_hud_label_contrast(attempts_label)
+	top_row.add_child(attempts_label)
+
 	# -- Score --
 	score_label = Label.new()
 	score_label.add_theme_font_size_override("font_size", 22)
@@ -1446,6 +1639,10 @@ func _setup_ui() -> void:
 			prog_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			_apply_hud_label_contrast(prog_label)
 			hud_layer.add_child(prog_label)
+
+	# Point the HUD at whatever is actually deciding this round. Last, because it
+	# reads timer_bar / timer_label / attempts_label, all built above.
+	_apply_fail_mode_hud()
 
 	# Create Pause Menu (Hidden)
 	_create_pause_menu()
@@ -2108,6 +2305,15 @@ func _process(_delta):
 	
 	# Note: mistake penalty is tracked in _time_penalty_total and subtracted here.
 	var effective_time_left = max(0.0, time_left - _time_penalty_total)
+
+	# Attempts mode hides the clock, because the clock is only an anti-hang
+	# ceiling. Reveal it for the last few seconds so hitting it is never a
+	# surprise; the tries readout keeps its place beside it.
+	if fail_mode == "attempts" and effective_time_left <= ATTEMPT_CEILING_WARN_SEC:
+		if timer_label and not timer_label.visible:
+			timer_label.visible = true
+		if timer_bar and not timer_bar.visible:
+			timer_bar.visible = true
 	
 	# ── UI is decoupled from the hot path ───────────────────────────────────
 	# The bar moves at 10 Hz (smooth enough to read as continuous), the number
@@ -2169,11 +2375,26 @@ func _on_timeout():
 	if game_mode == "survival":
 		end_game(true)
 	else:
+		# In attempts mode this is the anti-hang ceiling, not a fair loss — see
+		# _on_timer_timeout(). Both paths exist because the Timer node and this
+		# per-frame check are independent; whichever fires first ends the round and
+		# end_game()'s _round_ended guard absorbs the other.
+		if fail_mode == "attempts":
+			print("🎯 [%s] Anti-hang ceiling reached, %d tries still unspent" % [
+				game_name, attempts_left
+			])
 		# Quota mode: timer running out = FAIL (didn't meet target)
 		game_failed.emit()
 		end_game(false)
 
 func _deduct_life():
+	# Game Lab: losing a sandbox round costs nothing. The point of the Lab is to
+	# find out whether a mechanic is fair; charging a life to ask makes the
+	# player pay for the experiment.
+	if GameManager and GameManager.sandbox_mode:
+		print("🧪 [%s] Sandbox round lost — no life deducted" % game_name)
+		return
+
 	lives -= 1
 	
 	# Save lives to GameManager

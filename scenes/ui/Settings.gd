@@ -854,6 +854,17 @@ func _setup_dev_mode_section() -> void:
 	if dev_stats_button:
 		dev_mode_check.set_meta("beat_viewer_button", beat_viewer_button)
 
+	var game_lab_button := Button.new()
+	game_lab_button.text = _loc("settings_game_lab", "🧪 Game Lab (try any minigame)")
+	game_lab_button.custom_minimum_size = Vector2(0, 60)
+	game_lab_button.add_theme_font_size_override("font_size", 20)
+	# Dev-gated like the other tools below it. Unlike the Beat Viewer this one
+	# PLAYS rounds - it just refuses to record them (GameManager.enter_sandbox).
+	game_lab_button.disabled = not dev_mode_enabled
+	game_lab_button.pressed.connect(_on_game_lab_pressed)
+	vbox.add_child(game_lab_button)
+	dev_mode_check.set_meta("game_lab_button", game_lab_button)
+
 	erase_data_button = Button.new()
 	erase_data_button.text = _loc("settings_erase_data", "🗑️ Erase All Data")
 	erase_data_button.custom_minimum_size = Vector2(0, 60)
@@ -1014,6 +1025,9 @@ func _apply_dev_mode_visibility(enabled: bool) -> void:
 	var bv := (dev_mode_check.get_meta("beat_viewer_button") if dev_mode_check.has_meta("beat_viewer_button") else null) as Button
 	if bv:
 		bv.disabled = not enabled
+	var gl := (dev_mode_check.get_meta("game_lab_button") if dev_mode_check.has_meta("game_lab_button") else null) as Button
+	if gl:
+		gl.disabled = not enabled
 	if erase_data_button:
 		erase_data_button.disabled = not enabled
 	if export_data_button:
@@ -1023,6 +1037,12 @@ func _on_beat_viewer_pressed() -> void:
 	if AudioManager:
 		AudioManager.play_click()
 	get_tree().change_scene_to_file("res://scenes/ui/BeatViewer.tscn")
+
+
+func _on_game_lab_pressed() -> void:
+	if AudioManager:
+		AudioManager.play_click()
+	get_tree().change_scene_to_file("res://scenes/ui/GameLab.tscn")
 
 
 func _on_dev_stats_pressed() -> void:

@@ -397,6 +397,12 @@ func add_performance(
 	accuracy: float, reaction_time: int,
 	mistakes: int, game_name: String = ""
 ) -> void:
+	# Game Lab: a round played to try a mechanic out is not evidence about the
+	# player, and the rolling window is the thesis's measurement instrument. Letting
+	# a sandbox round in would move the tier the next REAL round is played at.
+	if GameManager and GameManager.sandbox_mode:
+		return
+
 	var start_time = Time.get_ticks_msec()
 
 	# Instrument for ISO 25010 latency measurement
