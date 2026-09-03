@@ -89,7 +89,11 @@ func _ready() -> void:
 	if watcher.apm:
 		if watcher.apm.has_method("set_auto_play_duration"):
 			watcher.apm.set_auto_play_duration(RUN_SECONDS / 60.0 + 1.0)
-		watcher.apm.set_auto_play_enabled(true)
+		# persist=false: this harness drives the shipped bot, it does not change what the
+		# player asked for. It used to take the default, and because this run can outlive
+		# its own timeout the restore below never fired - leaving auto-play switched on in
+		# the real settings file for every process that booted after it.
+		watcher.apm.set_auto_play_enabled(true, false)
 
 	_pin(gm)
 	gm.start_session(0)  # GameMode.SINGLE_PLAYER
@@ -147,7 +151,7 @@ class IdWatcher extends Node:
 		# AutoPlayManager persists its flag into the save, so it goes back off before
 		# quit or the next real session has the AI holding the controls.
 		if apm and apm.has_method("set_auto_play_enabled"):
-			apm.set_auto_play_enabled(false)
+			apm.set_auto_play_enabled(false, false)
 		print("\n=== VERIFY GAME IDENTITY ===")
 		print("[IDENTITY] %d start(s), %d completion(s)" % [_started.size(), _pairs.size()])
 		_check("[1] enough rounds actually completed to judge", _pairs.size() >= MIN_ROUNDS,

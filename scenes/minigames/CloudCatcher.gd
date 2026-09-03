@@ -69,6 +69,10 @@ const CLOUD_CONDENSE_SEC: float = 0.4
 var screen_size: Vector2
 
 func _apply_difficulty_settings() -> void:
+	# Queues this tier's chaos_effects; without it the algorithm asks for them
+	# and this game silently drops them. The per-tier game_duration below is
+	# deliberate and overrides the base's time_limit write. See MiniGameBase.
+	super._apply_difficulty_settings()
 	var settings = AdaptiveDifficulty.get_difficulty_settings() if AdaptiveDifficulty else {}
 	var progressive_level = settings.get("progressive_level", 0)
 
@@ -92,7 +96,19 @@ func _apply_difficulty_settings() -> void:
 			# should be gated by aim and speed, not by whether a cloud exists to aim at.
 			cloud_spawn_interval = 0.85
 			target_plants = 8
-			game_duration = 10.0
+			# 10.0 was a coin flip, and this is the measurement that says so
+			# (tools/VerifyCloudCatcherClearable, whose bots are frame-perfect or better
+			# than human): at 10.0 the quota cost 9.1s of tapping for the optimal bot and
+			# 9.5s for the one that SHIPS - margins of 1.10x and 1.05x - and they won only
+			# 6 of 8 and 2 of 4 Hard rounds. Medium is the control, and its margin is the
+			# band being aimed at rather than a guarantee: 11.6-12.9s of tapping in a 15s
+			# clock measured across runs (1.16-1.29x), winning 6 of 8 and 3 of 4. At 12.0
+			# Hard measures 9.7s and 8.1s against the 12s clock (1.24x and 1.48x) and wins
+			# 7 of 8 and 4 of 4, while the optimal bot still needs 10.4s of the 12 to do it
+			# - the round is not handed over, it just has room for one mis-aimed tap. Cloud
+			# density, plant spacing and the 8-plant quota are untouched: Hard still demands
+			# a plant every 1.5s against Medium's 2.5s.
+			game_duration = 12.0
 
 	if progressive_level > 0:
 		target_plants += progressive_level

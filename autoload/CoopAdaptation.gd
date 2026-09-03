@@ -147,6 +147,12 @@ func add_game_result(
 	p2_performance: Dictionary,
 	team_success: bool
 ) -> void:
+	# Game Lab: same reason as AdaptiveDifficulty.add_performance() - the coop
+	# window decides what tier each player is handed next, and a sandbox round is
+	# not a fact about either player.
+	if GameManager and GameManager.sandbox_mode:
+		return
+
 	# Add cooperative game result and update adaptive difficulty
 	#
 	# Parameters:

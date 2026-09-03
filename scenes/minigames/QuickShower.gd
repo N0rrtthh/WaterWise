@@ -39,6 +39,10 @@ const TILE_H: float = 80.0
 var gauge_direction: int = 1
 
 func _apply_difficulty_settings() -> void:
+	# Queues this tier's chaos_effects; without it the algorithm asks for them
+	# and this game silently drops them. The per-tier game_duration below is
+	# deliberate and overrides the base's time_limit write. See MiniGameBase.
+	super._apply_difficulty_settings()
 	match current_difficulty:
 		"Easy":
 			target_showers = 3

@@ -17,6 +17,10 @@ var is_holding: bool = false
 var _touch_holding: bool = false  # Track finger-hold for mobile
 
 func _apply_difficulty_settings() -> void:
+	# Queues this tier's chaos_effects; without it the algorithm asks for them
+	# and this game silently drops them. The per-tier game_duration below is
+	# deliberate and overrides the base's time_limit write. See MiniGameBase.
+	super._apply_difficulty_settings()
 	# Get progressive difficulty settings
 	var settings = AdaptiveDifficulty.get_difficulty_settings() if AdaptiveDifficulty else {}
 	var progressive_level = settings.get("progressive_level", 0)

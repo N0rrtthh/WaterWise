@@ -12,6 +12,10 @@ var scrub_power: float = 15.0
 var last_scrub_pos: Vector2 = Vector2.ZERO
 
 func _apply_difficulty_settings() -> void:
+	# Queues this tier's chaos_effects; without it the algorithm asks for them
+	# and this game silently drops them. The per-tier game_duration below is
+	# deliberate and overrides the base's time_limit write. See MiniGameBase.
+	super._apply_difficulty_settings()
 	match current_difficulty:
 		"Easy":
 			target_dishes = 2

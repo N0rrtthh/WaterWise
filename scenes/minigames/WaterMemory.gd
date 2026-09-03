@@ -32,6 +32,10 @@ var cards: Array = []
 var screen_size: Vector2
 
 func _apply_difficulty_settings() -> void:
+	# Queues this tier's chaos_effects; without it the algorithm asks for them
+	# and this game silently drops them. The per-tier game_duration below is
+	# deliberate and overrides the base's time_limit write. See MiniGameBase.
+	super._apply_difficulty_settings()
 	var settings = AdaptiveDifficulty.get_difficulty_settings() if AdaptiveDifficulty else {}
 	var progressive_level = settings.get("progressive_level", 0)
 
@@ -66,6 +70,20 @@ func _apply_difficulty_settings() -> void:
 	# the round mathematically completable.
 	if progressive_level > 0:
 		game_duration = maxf(_min_completable_duration(), game_duration - progressive_level * 1.5)
+
+	# Medium and Hard end on mismatches, not on the clock.
+	#
+	# Concentration is a recall task, and mismatches are part of CORRECT play:
+	# optimal play with perfect memory still needs roughly 0.6 mismatches per pair
+	# (Velleman & Warrington's ~1.61n moves for n pairs), because cards you have
+	# never seen have to be turned over to be learned. So the honest question is
+	# how many mismatches a player needs, not how fast they can move a finger —
+	# and _min_completable_duration() above exists precisely because the clock kept
+	# making that question unanswerable.
+	#
+	# Budget scales with the board: 6 pairs -> 9 tries, 8 pairs -> 10. That is
+	# about 2.4x and 2.0x the perfect-memory requirement, so Hard stays tighter.
+	use_attempt_budget(0, total_pairs + 3, total_pairs + 2)
 
 ## Lower bound on the timer, derived from the board size rather than a constant.
 ##

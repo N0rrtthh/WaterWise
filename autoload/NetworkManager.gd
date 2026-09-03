@@ -977,12 +977,18 @@ func start_multiplayer_game(scene_path: String) -> void:
 	game_in_progress = true
 	
 	# Load scene on all clients (including host with call_local)
-	rpc("_load_game_scene", scene_path)
+	rpc("_load_game_scene", scene_path, get_total_score())
 	_log("🎮 Loading game scene on all players: " + scene_path)
 
 @rpc("authority", "call_local", "reliable")
-func _load_game_scene(scene_path: String) -> void:
+func _load_game_scene(scene_path: String, round_baseline: int = -1) -> void:
 	# Load game scene on this peer
+	# The first round needs a baseline as much as the later ones do: a session that starts in
+	# the same process as a finished one (return to lobby, play again) inherits that session's
+	# G-Counter, which cannot be cleared away - see round_score_baseline. -1 means "no baseline
+	# supplied", which is how a harness that calls this directly keeps the one it set.
+	if round_baseline >= 0:
+		round_score_baseline = round_baseline
 	_log("📥 Loading game scene: " + scene_path)
 	
 	var packed_scene = load(scene_path)
@@ -1072,13 +1078,17 @@ func start_multiplayer_game_pair(p1_scene: String, p2_scene: String, level_set: 
 	_log("   Player 1 (Host) → %s" % p1_scene)
 	_log("   Player 2 (Client) → %s" % p2_scene)
 	
+	# One baseline for both halves of the pair, read once here so the host and the client
+	# measure this round's quota from the same total (see round_score_baseline).
+	var round_baseline: int = get_total_score()
+	
 	# Host loads P1 scene
-	_load_game_scene(p1_scene)
+	_load_game_scene(p1_scene, round_baseline)
 	
 	# Tell client to load P2 scene
 	for peer_id in players.keys():
 		if peer_id != multiplayer.get_unique_id():  # Not the host
-			rpc_id(peer_id, "_load_game_scene", p2_scene)
+			rpc_id(peer_id, "_load_game_scene", p2_scene, round_baseline)
 
 @rpc("authority", "reliable")
 func _receive_game_start(scenario_id: String, roles: Dictionary) -> void:
@@ -1094,11 +1104,37 @@ func _receive_game_start(scenario_id: String, roles: Dictionary) -> void:
 # G-COUNTER IMPLEMENTATION
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+## The G-Counter total at the moment the current round started.
+##
+## A G-Counter only ever grows - that is what makes it a CRDT - so a round's quota cannot be
+## measured against its raw total: round 2 opens already holding round 1's points and wins on
+## the first tap. The counter used to be reset between rounds instead, and that is worse than
+## it looks. Reset is not one of the counter's operations, so the next merge (an element-wise
+## max, by definition) restored the old values from the peer that had not reset: the host
+## cleared its dictionary, the client's first sync put the numbers straight back, and the two
+## peers disagreed about the score in between. Measured in tools/VerifyMPWashWater: a
+## WaterPlants round whose team quota was 80 announced "Quota met! (90/80 team)" after one
+## plant, on 10 points actually scored.
+##
+## So nothing is reset per round. The host records the total as the round starts and ships that
+## integer to both peers inside the same call_local body that loads the round, which is what
+## makes them agree on it - each peer deciding locally would let them differ by whatever was
+## still in flight. Per-round score is total - baseline: still integers only, still monotone,
+## still a G-Counter.
+var round_score_baseline: int = 0
+
+## The score THIS round has earned as a team - what a win_quota is measured against.
+func get_round_score() -> int:
+	return max(0, get_total_score() - round_score_baseline)
+
+## For a genuinely new session only (a fresh lobby), never between rounds - see
+## round_score_baseline for why a per-round reset cannot survive the next merge.
 func reset_g_counter() -> void:
 	# Reset G-Counter for new game session
 	g_counter.clear()
 	var my_id = multiplayer.get_unique_id()
 	g_counter[my_id] = 0
+	round_score_baseline = 0
 	_log("🔄 G-Counter reset")
 
 func increment_local(amount: int) -> void:
@@ -1117,8 +1153,9 @@ func increment_local(amount: int) -> void:
 	# Broadcast merge to all peers
 	rpc("_merge_counter", my_id, g_counter[my_id])
 	
-	# Emit signal for UI update
-	team_score_updated.emit(get_total_score())
+	# Emit signal for UI update. The round score, not the session total: it is the number the
+	# win quota is measured against, so it is the number the players have to be able to watch.
+	team_score_updated.emit(get_round_score())
 
 @rpc("any_peer", "reliable")
 func _merge_counter(peer_id: int, value: int) -> void:
@@ -1142,7 +1179,7 @@ func _merge_counter(peer_id: int, value: int) -> void:
 	
 	if g_counter[peer_id] > old_value:
 		_log("📡 Merged counter[%d]: %d → %d" % [peer_id, old_value, g_counter[peer_id]])
-		team_score_updated.emit(get_total_score())
+		team_score_updated.emit(get_round_score())
 
 func get_total_score() -> int:
 	# Calculate global score = sum of all peer counters
@@ -2168,15 +2205,18 @@ func _transition_to_next_round() -> void:
 	# call_local, so the same assignment runs on the host and on the client from one place. The
 	# host-only version this replaces left the client on the connect-time placeholder all session.
 	
-	# Reset G-Counter for next round
-	reset_g_counter()
-	
-	# Broadcast round transition
+	# The G-Counter is NOT reset here any more (see round_score_baseline). What the next round
+	# needs is the total it starts from, and the host is the one that decides it: the value
+	# below travels with the round-load broadcast, so both peers measure the same quota against
+	# the same baseline.
 	rpc("_load_next_round", level_set, get_total_score(), team_lives, rounds_survived)
 
 @rpc("authority", "call_local", "reliable")
-func _load_next_round(level_set: Dictionary, _total_score: int, lives: int, rounds: int) -> void:
+func _load_next_round(level_set: Dictionary, round_baseline: int, lives: int, rounds: int) -> void:
 	# Load next round for all players
+	# The host's total as this round begins. Both peers run this body, so both start the round
+	# measuring from the same number; this parameter used to be received and thrown away.
+	round_score_baseline = round_baseline
 	# Clear stale round completion and ready state BEFORE changing scenes
 	_reset_round_status()
 	# Both peers run this body, so this is where the round's roles land — the host's own copy

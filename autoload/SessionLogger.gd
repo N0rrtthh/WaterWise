@@ -185,6 +185,9 @@ func _notification(what: int) -> void:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func record_scene_visit(scene_name: String) -> void:
+	# Game Lab visits are not part of the player's route through the game.
+	if GameManager and GameManager.sandbox_mode:
+		return
 	scenes_visited.append({
 		"scene": scene_name,
 		"elapsed_sec": _elapsed(),
@@ -232,6 +235,12 @@ func record_sp_game(
 	difficulty: String,
 	droplets_earned: int
 ) -> void:
+	# Game Lab rounds never enter the exported log. A sandbox round has no place in
+	# sp_game_records: it would be counted in the accuracy and sigma the defence
+	# export is computed from.
+	if GameManager and GameManager.sandbox_mode:
+		return
+
 	var phi: float = _get_current_phi()
 	var wma: float = _get_current_wma()
 	var cp: float = _get_current_cp()
@@ -313,6 +322,10 @@ func _on_mp_round_completed(
 	p1_success: bool, p2_success: bool,
 	p1_score: int, p2_score: int
 ) -> void:
+	# Game Lab rounds never enter the exported log - see record_sp_game().
+	if GameManager and GameManager.sandbox_mode:
+		return
+
 	var p1_diff: String = "Unknown"
 	var p2_diff: String = "Unknown"
 	var p1_phi: float = 0.0

@@ -139,7 +139,12 @@ func _load_next_round() -> void:
 	if not NetworkManager.is_server():
 		return
 	
-	# Reset G-Counter for next round
+	# STALE, and only harmless because nothing instantiates this node (see the banner).
+	# NetworkManager stopped resetting the G-Counter between rounds: a reset is not one
+	# of a G-Counter's operations, so the next element-wise-max merge restored the old
+	# values from the peer that had not reset and the peers disagreed about the score.
+	# Per-round score is now total - NetworkManager.round_score_baseline. If this
+	# subsystem is ever revived, the line below must go with it, not come back.
 	NetworkManager.reset_g_counter()
 	
 	# Validate LevelSets availability

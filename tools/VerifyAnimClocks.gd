@@ -30,6 +30,9 @@ const ORPHAN_MARK: String = "## ORPHAN:"
 const CUTSCENE_DIR: String = "res://scripts/cutscenes"
 const BEAT_PATH: String = "res://scenes/ui/cutscenes/beats/DropletDashLoseOutro.tscn"
 const PAUSE_SEC: float = 0.5
+## The source the mosquito-tilt prediction in [5] is read out of, so the harness cannot
+## hold a tuning the game has moved on from.
+const COVER_THE_DRUM: String = "res://scenes/minigames/CoverTheDrum.gd"
 ## One frame of slack. Headless runs nowhere near 60 fps, so this is generous on
 ## purpose: even at 8 fps a single post-resume frame is 0.125s, and the defect it
 ## has to reject is a 0.5s jump.
@@ -100,6 +103,35 @@ func _files_rec(dir_path: String) -> PackedStringArray:
 		f = d.get_next()
 	d.list_dir_end()
 	return out
+
+## Frequency and amplitude of a `sin(clock * F) * A` line in a game's own source, as
+## (F, A), or (-1, -1) when the line is gone. Predicting an animation with numbers typed
+## into the harness is how [5] came to fail against a correct game: the tilt was retuned
+## for photosensitivity and only one of the two copies of "30.0" moved.
+func _sin_tuning(path: String, needle: String) -> Vector2:
+	var fh := FileAccess.open(path, FileAccess.READ)
+	if fh == null:
+		return Vector2(-1.0, -1.0)
+	while not fh.eof_reached():
+		var line: String = fh.get_line()
+		var at: int = line.find(needle)
+		if at < 0:
+			continue
+		var rest: String = line.substr(at + needle.length())
+		var close: int = rest.find(")")
+		if close < 0:
+			continue
+		var freq: String = rest.substr(0, close).strip_edges()
+		var tail: String = rest.substr(close + 1)
+		var star: int = tail.find("*")
+		if star < 0 or not freq.is_valid_float():
+			continue
+		var amp: String = tail.substr(star + 1).strip_edges().split(" ")[0]
+		if not amp.is_valid_float():
+			continue
+		return Vector2(freq.to_float(), amp.to_float())
+	return Vector2(-1.0, -1.0)
+
 
 func _live(path: String) -> Node:
 	var inst: Node = (load(path) as PackedScene).instantiate()
@@ -209,19 +241,36 @@ func _run() -> void:
 				get_tree().paused = true
 				await _wait_real(PAUSE_SEC)
 				get_tree().paused = false
+				# The tuning is read out of the game, not copied into this harness. It was
+				# retuned during this audit from 30.0 rad/s (4.8 Hz, and unlike the wiggle
+				# beside it not de-phased per mosquito, so the whole swarm flickered in
+				# lockstep inside the photosensitive band) down to 12.0 rad/s, and the copy
+				# here still predicted sin(_anim_t*30)*0.2. A correct game therefore
+				# disagreed with the harness by up to 0.043 rad and this check reported a
+				# defect that did not exist. Parsing the line the game actually draws with
+				# means the next retune moves the prediction with it.
+				var tune: Vector2 = _sin_tuning(COVER_THE_DRUM,
+					"mosq.rotation = sin(_anim_t * ")
+				var reduced: bool = (AccessibilityManager != null and AccessibilityManager.reduced_motion)
 				var worst: float = 0.0
 				var samples: int = 0
 				for _s in range(5):
 					await get_tree().process_frame
 					if not is_instance_valid(mosq):
 						break
-					var predicted: float = sin(float(g.get("_anim_t")) * 30.0) * 0.2
-					worst = maxf(worst, absf(mosq.rotation - predicted))
+					# Read with no await in between, so the pair is the one the game's own
+					# _process wrote: it advances _anim_t and sets rotation in the same call.
+					var t_now: float = float(g.get("_anim_t"))
+					var drawn: float = mosq.rotation
+					var predicted: float = 0.0 if reduced else sin(t_now * tune.x) * tune.y
+					worst = maxf(worst, absf(drawn - predicted))
 					samples += 1
 				_check("[5] mosquito tilt is drawn off the round-local clock",
-					samples > 0 and worst < 0.02,
-					"worst disagreement with sin(_anim_t*30)*0.2 over %d frame(s) after a %.1fs pause: %.4f rad"
-					% [samples, PAUSE_SEC, worst])
+					samples > 0 and tune.x > 0.0 and worst < 0.02,
+					"worst disagreement with %s over %d frame(s) after a %.1fs pause: %.4f rad"
+					% ["reduced_motion 0.0" if reduced
+						else "sin(_anim_t*%.1f)*%.2f as the game draws it" % [tune.x, tune.y],
+						samples, PAUSE_SEC, worst])
 		g.queue_free()
 		await _frames(10)
 

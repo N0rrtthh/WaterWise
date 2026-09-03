@@ -1,5 +1,18 @@
 extends Node
 
+## ONE ENGINE ERROR IS EXPECTED FROM THIS HARNESS, and it is not a game defect:
+##
+##   ERROR: RPC '_register_player' on yourself is not allowed by selected mode.
+##      [0] _on_connected_to_server (res://autoload/NetworkManager.gd:500)
+##      [1] _run (res://tools/VerifyGracePeriodLifecycle.gd) - i.e. this file
+##
+## The backtrace names the cause: this harness calls _on_connected_to_server() itself,
+## inside the ONE process that is also the server, to stand in for a client finishing a
+## reconnect. Production reaches that function only from the connected_to_server signal
+## on a real client, where the rpc() has an actual server to reach. The two-process path
+## is covered by tools/VerifyMultiplayerReconnect.tscn. Left visible rather than routed
+## around, so that a NEW error in this harness is still worth reading.
+
 ## Reconnect grace-period lifecycle: does the 30 s timer belong to the session that
 ## started it?
 ##

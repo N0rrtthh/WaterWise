@@ -438,7 +438,10 @@ func _setup_multiplayer_ui() -> void:
 	var score_container = HBoxContainer.new()
 	var score_label = Label.new()
 	score_label.name = "ScoreLabel"
-	score_label.text = " %d" % NetworkManager.get_total_score()
+	# The round's team score, matching what _on_team_score_updated writes here later and what
+	# the quota is measured against (NetworkManager.round_score_baseline).
+	score_label.text = " %d" % (NetworkManager.get_round_score()
+		if NetworkManager.has_method("get_round_score") else NetworkManager.get_total_score())
 	if font_title: score_label.add_theme_font_override("font", font_title)
 	score_label.add_theme_font_size_override("font_size", 32)
 	score_label.add_theme_color_override("font_outline_color", Color.BLACK)
@@ -968,6 +971,10 @@ func start_game() -> void:
 	if waiting_overlay:
 		waiting_overlay.visible = false
 	game_active = true
+	# Provisional stamp, re-taken at the bottom of this function once the round is
+	# actually built. It is set here as well so that nothing reached during the build
+	# can read a previous round's stamp (or 0 on the first round, which reads as an
+	# elapsed time of hours and would end the round on the spot).
 	game_started_time = Time.get_ticks_msec()
 	# Cleared with the start time they are relative to. start_game() is guarded
 	# against a second entry above, but a scene reused across rounds would carry a
@@ -1006,6 +1013,17 @@ func start_game() -> void:
 	_log(" Game started! Duration: %.0fs | Inputs enabled" % game_duration)
 	_log(" Player %d (%s) - Ready to play!" % [my_player_num, my_role])
 	_on_game_start()
+	# The round clock starts when the round STARTS, not when this function was
+	# entered. Between the two sit the gameplay music stream, two Timers and the
+	# subclass's whole spawn fan-out in _on_game_start(): measured at 0.12s on a warm
+	# desktop process and 0.45s on the same machine under load, all of it charged to
+	# the player's countdown before a single object was on screen - and a legacy
+	# Android device is the case this matters for, not the desktop. Single player has
+	# never had this bug: MiniGameBase stamps game_start_time after its own fan-out.
+	# Safe as a second write because game_started_time has exactly one reader,
+	# elapsed_play_seconds(), and re-stamping only ever moves the clock later, so no
+	# elapsed value can go backwards mid-round.
+	game_started_time = Time.get_ticks_msec()
 
 ## Seconds this round has actually been PLAYED, with time spent paused removed.
 ##
@@ -1259,6 +1277,13 @@ func team_score() -> int:
 	## was still recorded as a LOSS by both peers at time-up, feeding a false failure
 	## into CoopAdaptation. Reading the shared total also makes the two peers agree:
 	## with local_score they could reach opposite verdicts from the same round.
+	##
+	## It is the ROUND's team total, not the session's. The G-Counter is monotone by
+	## construction, so the session total walks into round 2 already past an 80-point quota;
+	## NetworkManager.get_round_score() subtracts the baseline the host set when the round
+	## loaded. get_total_score() is still the right call for the final-score screen.
+	if NetworkManager and NetworkManager.has_method("get_round_score"):
+		return NetworkManager.get_round_score()
 	if NetworkManager and NetworkManager.has_method("get_total_score"):
 		return NetworkManager.get_total_score()
 	return local_score

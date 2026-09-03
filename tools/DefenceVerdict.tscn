@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://cwwdefverd01"]
+
+[ext_resource type="Script" path="res://tools/DefenceVerdict.gd" id="1_defverd"]
+
+[node name="DefenceVerdict" type="Node"]
+script = ExtResource("1_defverd")

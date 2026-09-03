@@ -13,6 +13,10 @@ var drops_missed: int = 0
 var max_misses: int = 5
 
 func _apply_difficulty_settings() -> void:
+	# Queues this tier's chaos_effects; without it the algorithm asks for them
+	# and this game silently drops them. The per-tier game_duration below is
+	# deliberate and overrides the base's time_limit write. See MiniGameBase.
+	super._apply_difficulty_settings()
 	match current_difficulty:
 		"Easy":
 			pot_speed = 120.0

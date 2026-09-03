@@ -142,6 +142,15 @@ func _apply_difficulty_settings() -> void:
 	tolerance = maxf(tolerance, _minimum_tolerance())
 	game_duration = maxf(game_duration, _flawless_run_seconds() / QUOTA_BUDGET_FRACTION)
 
+	# Medium and Hard end on bad releases, not on the clock.
+	#
+	# This is a precision-hold task, and hurrying is actively counterproductive:
+	# the level has to be watched to be released on. Hard asks for 4 tanks at 5%
+	# tolerance inside a round that _flawless_run_seconds() has to floor upward
+	# just to make physically possible — the clock was already the binding
+	# constraint rather than the hand. Ending on releases measures the hand.
+	use_attempt_budget(0, target_tanks + 1, target_tanks)
+
 func _ready():
 	# Localized: the title stayed English above the Filipino objective FIX 58
 	# authored. _loc() keeps the English literal as the fallback for the case

@@ -234,6 +234,16 @@ func _flush_save() -> void:
 ## Write immediately, bypassing coalescing. Use when the process may not survive
 ## to the end of the debounce window.
 func save_now() -> void:
+	# Game Lab: the sandbox may not reach the disk. This is the single chokepoint
+	# for every write - droplets, high scores, unlocks, play time, settings - so
+	# refusing here is what makes "it will not reflect on the main game" true
+	# rather than merely intended.
+	if GameManager and GameManager.sandbox_mode:
+		_save_pending = false
+		if _save_timer:
+			_save_timer.stop()
+		return
+
 	_save_pending = false
 	if _save_timer:
 		_save_timer.stop()
@@ -262,6 +272,56 @@ func save_now() -> void:
 
 	# Save settings separately
 	_save_settings()
+
+## ── Game Lab: in-memory rollback ──────────────────────────────────────────
+##
+## Blocking save_now() stops a sandbox round reaching the disk, but not the
+## in-memory stores it writes on the way there: SaveManager.add_droplets()
+## raises player_data.water_droplets and only THEN asks for a save. Refusing the
+## save leaves the inflated count sitting in memory, and the next REAL save -
+## after the player leaves the Lab - would write it out. Measured on the co-op
+## path: NetworkManager._check_both_completed() awards MP droplets directly
+## through add_droplets(), with no round record in between to guard.
+##
+## So the Lab snapshots every persisted store on the way in and puts it back on
+## the way out. That covers droplets, high scores, per-game stats, unlocks,
+## achievements and play time in one place, instead of a guard per writer that a
+## future writer could be added without.
+var _sandbox_snapshot: Dictionary = {}
+
+func sandbox_snapshot() -> void:
+	_sandbox_snapshot = {
+		"player": player_data.duplicate(true),
+		"high_scores": high_scores.duplicate(true),
+		"sp_session_scores": sp_session_scores.duplicate(true),
+		"unlocked": unlocked_content.duplicate(true),
+		"achievements": achievements.duplicate(true),
+		"play_time_carry": _play_time_carry,
+		"session_games_played": session_games_played,
+		"win_streak": win_streak
+	}
+
+func sandbox_restore() -> void:
+	if _sandbox_snapshot.is_empty():
+		return
+	player_data = (_sandbox_snapshot["player"] as Dictionary).duplicate(true)
+	high_scores = (_sandbox_snapshot["high_scores"] as Dictionary).duplicate(true)
+	sp_session_scores = (_sandbox_snapshot["sp_session_scores"] as Array).duplicate(true)
+	unlocked_content = (_sandbox_snapshot["unlocked"] as Dictionary).duplicate(true)
+	achievements = (_sandbox_snapshot["achievements"] as Dictionary).duplicate(true)
+	_play_time_carry = float(_sandbox_snapshot["play_time_carry"])
+	session_games_played = int(_sandbox_snapshot["session_games_played"])
+	win_streak = int(_sandbox_snapshot["win_streak"])
+	_sandbox_snapshot = {}
+	# GameManager's own water_droplets mirror is parked and restored by
+	# GameManager.exit_sandbox(). Deriving it from player_data here would also
+	# "fix" a divergence that existed before the Lab was opened, which is a live
+	# change the Lab has no business making.
+	# Drop the Lab's wall-clock from the play-time ledger. _update_play_time() only
+	# runs inside save_now(), which the sandbox refuses, so session_start_time was
+	# left at the moment the Lab opened - the first real save after leaving would
+	# otherwise bill every minute spent testing as time played.
+	session_start_time = Time.get_unix_time_from_system()
 
 func load_all_data() -> void:
 	# Load game data
@@ -486,6 +546,15 @@ func _update_play_time() -> void:
 
 func record_game_result(game_id: String, score: int, accuracy: float, time_seconds: float) -> bool:
 	# Record game result and return true if it's a new high score.
+	#
+	# Game Lab: refused outright rather than left to sandbox_restore(). The
+	# rollback is the backstop for writers nobody guarded; a writer we KNOW a round
+	# reaches is guarded here so the high-score table and games_played counter are
+	# never even briefly wrong on screen (the shop and the leaderboard read them
+	# live, from inside the same sandbox session).
+	if GameManager and GameManager.sandbox_mode:
+		return false
+
 	var is_new_record := false
 	
 	if not high_scores.has(game_id):
@@ -564,6 +633,10 @@ func get_high_score(game_id: String = "catch_rain") -> Dictionary:
 
 func add_droplets(amount: int) -> void:
 	if amount <= 0:
+		return
+	# Game Lab: same reason as record_game_result(). Droplets are spendable, and
+	# the shop is reachable while the sandbox is still open.
+	if GameManager and GameManager.sandbox_mode:
 		return
 	player_data.water_droplets += amount
 	if GameManager:
