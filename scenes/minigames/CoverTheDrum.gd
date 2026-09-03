@@ -9,6 +9,13 @@ var max_allowed_in: int = 5  # Fail if this many get in
 var spawn_interval_min: float = 0.8
 var spawn_interval_max: float = 1.5
 
+## Seconds of LIVE round, for the idle animations below. They used to read
+## Time.get_ticks_msec(), which keeps advancing while the tree is paused — and
+## MobileUIManager pauses the tree when the app loses focus — so pulling down a
+## notification and coming back snapped every wiggling sprite to an unrelated phase.
+## This clock only advances while game_active, so there is nothing to snap to.
+var _anim_t: float = 0.0
+
 func _apply_difficulty_settings() -> void:
 	# Apply difficulty-based scaling
 	match current_difficulty:
@@ -32,8 +39,15 @@ func _apply_difficulty_settings() -> void:
 			game_duration = 15.0
 
 func _ready():
-	game_name = "Cover The Drum"
-	game_instruction_text = "TAP drums to cover them!\nDon't let mosquitoes in! 🦟"
+	# Localized: the title stayed English above the Filipino objective FIX 58
+	# authored. _loc() keeps the English literal as the fallback for the case
+	# where the table is not up yet (tools/SceneLoadCheck instantiates that way).
+	game_name = _loc("cover_the_drum", "Cover The Drum")
+	# Was hardcoded English, so this banner stayed English for a Filipino player while
+	# the title beside it translated. drum_instruction already carried both languages.
+	game_instruction_text = _loc(
+		"drum_instruction", "TAP drums to cover them!\nDon't let mosquitoes in! 🦟"
+	)
 	game_duration = 25.0
 	game_mode = "survival"  # Win if timer runs out with quota unfilled
 	show_quota = false  # No blocked counter
@@ -89,7 +103,7 @@ func _ready():
 	# Mosquitoes entered display
 	var entered_label = Label.new()
 	entered_label.name = "EnteredLabel"
-	entered_label.text = "🦟 Inside: 0 / %d" % max_allowed_in
+	entered_label.text = _loc("hud_mosquitoes_inside", "🦟 Inside: %d / %d") % [0, max_allowed_in]
 	entered_label.add_theme_font_size_override("font_size", 28)
 	entered_label.add_theme_color_override("font_color", Color(1, 0.7, 0.7))
 	entered_label.add_theme_color_override("font_outline_color", Color.BLACK)
@@ -151,7 +165,7 @@ func _create_drum(pos: Vector2):
 	
 	# Status
 	var status = Label.new()
-	status.text = "⚠️ OPEN"
+	status.text = _loc("hud_drum_open", "⚠️ OPEN")
 	status.add_theme_font_size_override("font_size", 18)
 	status.add_theme_color_override("font_color", Color(1, 0.4, 0.4))
 	status.add_theme_color_override("font_outline_color", Color.BLACK)
@@ -171,7 +185,7 @@ func _cover_drum(drum: Node2D):
 	var lid = drum.get_node("LidContainer")
 	lid.visible = true
 	drum.get_node("Water").visible = false
-	drum.get_node("Status").text = "✓ SAFE"
+	drum.get_node("Status").text = _loc("hud_drum_safe", "✓ SAFE")
 	drum.get_node("Status").add_theme_color_override("font_color", Color(0.4, 1.0, 0.4))
 	
 	var tween = create_tween()
@@ -184,7 +198,7 @@ func _uncover_drum(drum: Node2D):
 	var lid = drum.get_node("LidContainer")
 	lid.visible = false
 	drum.get_node("Water").visible = true
-	drum.get_node("Status").text = "⚠️ OPEN"
+	drum.get_node("Status").text = _loc("hud_drum_open", "⚠️ OPEN")
 	drum.get_node("Status").add_theme_color_override("font_color", Color(1, 0.4, 0.4))
 
 func _input(event):
@@ -209,6 +223,7 @@ func _input(event):
 func _process(delta):
 	super._process(delta)
 	if not game_active: return
+	_anim_t += delta
 	
 	# Update cover timers
 	for drum in drums:
@@ -226,6 +241,11 @@ func _process(delta):
 	
 	# Move mosquitoes
 	var to_remove = []
+	# The tilt below used to run at 30.0 rad/s = 4.8 Hz, and unlike the wiggle it was
+	# NOT de-phased by instance id, so every mosquito on screen flickered in lockstep
+	# just under 5 Hz — inside the 3 Hz photosensitive-seizure band the rest of the
+	# project stays clear of. 12.0 rad/s is 1.9 Hz and matches the wiggle beside it.
+	var tilt_allowed: bool = not (AccessibilityManager and AccessibilityManager.reduced_motion)
 	for mosq in mosquitoes:
 		if not is_instance_valid(mosq):
 			to_remove.append(mosq)
@@ -238,9 +258,9 @@ func _process(delta):
 			continue
 		
 		var dir = (target.position - mosq.position).normalized()
-		var wiggle = Vector2(sin(Time.get_ticks_msec() * 0.01 + mosq.get_instance_id()) * 30, 0)
+		var wiggle = Vector2(sin(_anim_t * 10.0 + float(mosq.get_instance_id())) * 30, 0)
 		mosq.position += (dir * mosquito_speed + wiggle * 0.5) * delta
-		mosq.rotation = sin(Time.get_ticks_msec() * 0.03) * 0.2
+		mosq.rotation = sin(_anim_t * 12.0) * 0.2 if tilt_allowed else 0.0
 		
 		# Reached drum
 		if mosq.position.distance_to(target.position) < 40:
@@ -267,7 +287,7 @@ func _process(delta):
 			else:
 				# GOT IN - Show red flash instead of timer penalty
 				mosquitoes_entered += 1
-				get_node("EnteredLabel").text = "🦟 Inside: %d / %d" % [mosquitoes_entered, max_allowed_in]
+				get_node("EnteredLabel").text = _loc("hud_mosquitoes_inside", "🦟 Inside: %d / %d") % [mosquitoes_entered, max_allowed_in]
 				
 				# RED FLASH EFFECT
 				_show_hit_effect()

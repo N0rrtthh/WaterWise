@@ -519,7 +519,7 @@ func _get_narrative_for_key(key: String, is_success: bool) -> Dictionary:
 			"lose": {"character": "💧", "context": "Scrub wasted water\nStill soaking!"}
 		},
 		"BucketBrigade": {
-			"win": {"character": "🪣", "context": "Relay team nailed handoff\nWater delivered! ✨"},
+			"win": {"character": "🏺", "context": "Relay team nailed handoff\nWater delivered! ✨"},
 			"lose": {"character": "💦", "context": "Relay dropped the buckets\nWater spilled!"}
 		},
 		"TimingTap": {

@@ -14,9 +14,16 @@ var screen_size: Vector2
 ## Difficulty-scaled
 var num_plants: int = 4
 var wilt_speed: float = 0.08
+
+## Seconds of LIVE round, for the idle animations below. They used to read
+## Time.get_ticks_msec(), which keeps advancing while the tree is paused — and
+## MobileUIManager pauses the tree when the app loses focus — so pulling down a
+## notification and coming back snapped every wiggling sprite to an unrelated phase.
+## This clock only advances while game_active, so there is nothing to snap to.
+var _anim_t: float = 0.0
 var overwater_penalty: bool = false
 
-const PLANT_EMOJIS := ["🌱", "🌿", "🌻", "🪴", "🌷", "🌾"]
+const PLANT_EMOJIS := ["🌱", "🌿", "🌻", "🌼", "🌷", "🌾"]
 
 func _apply_difficulty_settings() -> void:
 	match current_difficulty:
@@ -37,7 +44,10 @@ func _apply_difficulty_settings() -> void:
 			game_duration = 28.0
 
 func _ready() -> void:
-	game_name = "Water Plant"
+	# Localized: the title stayed English above the Filipino objective FIX 58
+	# authored. _loc() keeps the English literal as the fallback for the case
+	# where the table is not up yet (tools/SceneLoadCheck instantiates that way).
+	game_name = _loc("water_plant", "Water Plant")
 	game_instruction_text = Localization.get_text("water_plant_instructions") if Localization else "TAP thirsty plants to water them! 🌱\nDon't let any plant die! 💧"
 	game_duration = 25.0
 	game_mode = "survival"
@@ -59,7 +69,9 @@ func _ready() -> void:
 	var sun = Label.new()
 	sun.text = "☀️"
 	sun.add_theme_font_size_override("font_size", 72)
-	sun.position = Vector2(screen_size.x - 110, 20)
+	# Clear of the HUD strip: at (x-110, 20) this 72px glyph sat behind the timer,
+	# the score and the pause button, covering 93% and 100% of their boxes.
+	sun.position = Vector2(screen_size.x - 150, 108)
 	sun.z_index = -9
 	add_child(sun)
 
@@ -92,7 +104,7 @@ func _ready() -> void:
 	# Status label
 	var status = Label.new()
 	status.name = "StatusLabel"
-	status.text = "🌱 Keep all plants alive!"
+	status.text = _loc("hud_keep_plants_alive", "🌱 Keep all plants alive!")
 	status.add_theme_font_size_override("font_size", 24)
 	status.add_theme_color_override("font_color", Color.WHITE)
 	status.add_theme_color_override("font_outline_color", Color.BLACK)
@@ -241,7 +253,7 @@ func _show_water_effect(pos: Vector2) -> void:
 
 func _show_overwater_warning(pos: Vector2) -> void:
 	var warn = Label.new()
-	warn.text = "💦 Too much!"
+	warn.text = _loc("hud_too_much_water", "💦 Too much!")
 	warn.add_theme_font_size_override("font_size", 20)
 	warn.add_theme_color_override("font_color", Color(1, 0.6, 0.3))
 	warn.add_theme_color_override("font_outline_color", Color.BLACK)
@@ -258,6 +270,7 @@ func _process(delta: float) -> void:
 	super._process(delta)
 	if not game_active:
 		return
+	_anim_t += delta
 
 	var any_dead := false
 	var all_count := 0
@@ -303,7 +316,7 @@ func _process(delta: float) -> void:
 			bubble.visible = (h < 0.4 and h > 0.0)
 			# Pulse the bubble
 			if bubble.visible:
-				bubble.modulate.a = 0.6 + sin(Time.get_ticks_msec() * 0.006) * 0.4
+				bubble.modulate.a = 0.6 + sin(_anim_t * 6.0) * 0.4
 
 		# Track stats
 		all_count += 1
@@ -316,10 +329,10 @@ func _process(delta: float) -> void:
 	var status_lbl = get_node_or_null("StatusLabel")
 	if status_lbl:
 		if any_dead:
-			status_lbl.text = "🥀 A plant died!"
+			status_lbl.text = _loc("hud_plant_died", "🥀 A plant died!")
 			status_lbl.add_theme_color_override("font_color", Color(1, 0.4, 0.3))
 		else:
-			status_lbl.text = "🌱 %d/%d plants happy" % [healthy_count, all_count]
+			status_lbl.text = _loc("hud_plants_happy", "🌱 %d/%d plants happy") % [healthy_count, all_count]
 
 	# Lose if any plant dies
 	if any_dead:

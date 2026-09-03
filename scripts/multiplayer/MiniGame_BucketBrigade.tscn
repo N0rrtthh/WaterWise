@@ -33,7 +33,7 @@ size_flags_horizontal = 3
 [node name="ScoreLabel" type="Label" parent="UI/TopBar"]
 layout_mode = 2
 theme_override_font_sizes/font_size = 32
-text = "🪣 Score: 0"
+text = "🏺 Score: 0"
 
 [node name="Spacer2" type="Control" parent="UI/TopBar"]
 layout_mode = 2

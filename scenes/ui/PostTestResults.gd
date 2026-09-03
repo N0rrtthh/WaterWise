@@ -2,7 +2,7 @@ extends Control
 
 ## ═══════════════════════════════════════════════════════════════════
 ## POST-TEST RESULTS SCREEN
-## Displays correlation analysis and research validation
+## Displays knowledge-test results and how well they match the player's gameplay
 ## ═══════════════════════════════════════════════════════════════════
 
 @onready var score_display = $Panel/MarginContainer/VBoxContainer/ScoreDisplay
@@ -42,7 +42,7 @@ func _display_results() -> void:
 	
 	# Get results from AdaptiveDifficulty
 	var results = AdaptiveDifficulty.get_posttest_results()
-	var correlation = AdaptiveDifficulty.calculate_correlation()
+	var alignment = AdaptiveDifficulty.calculate_knowledge_alignment()
 	
 	# Display score
 	score_display.text = "%d/%d (%d%%)" % [
@@ -75,13 +75,13 @@ func _display_results() -> void:
 		behavioral_score.text = "%d%%" % int(breakdown["behavioral"])
 		behavioral_score.modulate = _get_score_color(breakdown["behavioral"])
 	
-	# Display correlation data
+	# Display gameplay-vs-knowledge agreement
 	gameplay_perf_label.text = _fmt_loc(
 		"posttest_gameplay_performance_line",
 		"%s: %d%%",
 		[
 			_loc("gameplay_performance", "Gameplay Performance"),
-			int(correlation["gameplay_performance"])
+			int(alignment["gameplay_performance"])
 		]
 	)
 	test_score_label.text = _fmt_loc(
@@ -89,33 +89,37 @@ func _display_results() -> void:
 		"%s: %d%%",
 		[
 			_loc("knowledge_score", "Knowledge Score"),
-			int(correlation["posttest_knowledge"])
+			int(alignment["posttest_knowledge"])
 		]
 	)
+	# Labelled "Match" rather than "Correlation (r)". This is one participant's two
+	# scores compared, not a coefficient over a sample — see
+	# AdaptiveDifficulty.calculate_knowledge_alignment() for why r is undefined here.
 	correlation_label.text = _fmt_loc(
-		"posttest_correlation_line",
+		"posttest_alignment_line",
 		"%s: %s",
 		[
-			_loc("correlation", "Correlation (r)"),
-			str(correlation["correlation_coefficient"]).pad_decimals(2)
+			_loc("knowledge_alignment", "Gameplay/Knowledge Match"),
+			str(alignment["alignment_index"]).pad_decimals(2)
 		]
 	)
-	
+
 	# Interpretation
 	interpretation_label.text = _fmt_loc(
 		"posttest_interpretation_line",
 		"[CHECK] %s",
-		[correlation["interpretation"]]
+		[alignment["interpretation"]]
 	)
-	
-	# Color code correlation
-	var r = correlation["correlation_coefficient"]
-	if abs(r) >= 0.7:
-		correlation_label.modulate = Color(0.3, 1.0, 0.6)  # Green - Strong
-	elif abs(r) >= 0.4:
-		correlation_label.modulate = Color(1.0, 0.9, 0.3)  # Yellow - Moderate
+
+	# Colour by signed value, matching the interpretation ladder. abs() here was the
+	# same bug as in the ladder: it painted the worst possible result green.
+	var a = alignment["alignment_index"]
+	if a >= 0.7:
+		correlation_label.modulate = Color(0.3, 1.0, 0.6)  # Green - close match
+	elif a >= 0.4:
+		correlation_label.modulate = Color(1.0, 0.9, 0.3)  # Yellow - moderate
 	else:
-		correlation_label.modulate = Color(1.0, 0.5, 0.3)  # Orange - Weak
+		correlation_label.modulate = Color(1.0, 0.5, 0.3)  # Orange - weak or disagreeing
 
 func _calculate_grade(percentage: float) -> Dictionary:
 	if percentage >= 90:

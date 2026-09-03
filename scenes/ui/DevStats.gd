@@ -619,7 +619,7 @@ func _on_export_pressed() -> void:
 
 	var sl: Node = get_node_or_null("/root/SessionLogger")
 	if sl:
-		var path: String = sl.export_session()
+		var path: String = sl.export_session(true)
 		if path.length() > 0:
 			_export_status_lbl.text = "✅ Saved: %s" % path
 			_export_status_lbl.add_theme_color_override("font_color", COL_GOOD)

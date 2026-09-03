@@ -194,6 +194,10 @@ func _build_ui() -> void:
 	var tween := create_tween()
 	tween.tween_property(self, "modulate:a", 1.0, 0.6)
 
+# ── Emoji sanitisation ──────────────────────────────────────────────────────
+# (Removed) The strip workaround is obsolete: ThemeManager installs the Noto
+# Emoji fallback font on the bundled display fonts, so emoji render directly.
+
 func _show_current_page() -> void:
 	if _current_chapter.is_empty():
 		get_next_unlocked_chapter()
@@ -226,6 +230,9 @@ func _show_current_page() -> void:
 	_is_animating = true
 	_emoji_label.text = page.get("emoji", "💧")
 	_emoji_label.modulate.a = 0.0
+	# NOTE: emoji now render via the Noto Emoji fallback font installed by
+	# ThemeManager._install_emoji_fallback() — no stripping needed.
+	_emoji_label.visible = _emoji_label.text != ""
 	_text_label.modulate.a = 0.0
 
 	var text_key := "text_en" if is_english else "text_tl"
@@ -236,10 +243,10 @@ func _show_current_page() -> void:
 
 	var hint_text := (
 		Localization.get_text("story_tap_continue")
-		if Localization else "👆 Tap to continue"
+		if Localization else "Tap to continue"
 	)
 	if _current_page >= total_pages - 1:
-		hint_text = Localization.get_text("story_tap_play") if Localization else "👆 Tap to play!"
+		hint_text = Localization.get_text("story_tap_play") if Localization else "Tap to play!"
 	_tap_hint.text = hint_text
 
 	# Animate elements in

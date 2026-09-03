@@ -379,11 +379,11 @@ func _fallback_to_legacy_cutscene(
 	# Set emoji based on cutscene type
 	match cutscene_type:
 		CutsceneTypes.CutsceneType.WIN:
-			emoji_label.text = "🎉 Success! 💧"
+			emoji_label.text = Localization.get_text("cutscene_success")
 		CutsceneTypes.CutsceneType.FAIL:
-			emoji_label.text = "💦 Try Again! 💧"
+			emoji_label.text = Localization.get_text("cutscene_try_again")
 		CutsceneTypes.CutsceneType.INTRO:
-			emoji_label.text = "💧 Ready! 💧"
+			emoji_label.text = Localization.get_text("cutscene_ready")
 	
 	# Style the label
 	emoji_label.add_theme_font_size_override("font_size", 48)

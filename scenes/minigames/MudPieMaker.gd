@@ -13,6 +13,17 @@ var mud_visual: Polygon2D
 var gauge_node: Node2D
 var fill_node: Polygon2D
 
+## Seconds of unbroken in-zone time that earn one scoring tick.
+const ZONE_SCORE_INTERVAL: float = 1.0
+var _zone_time: float = 0.0
+
+## Seconds of LIVE round, for the idle animations below. They used to read
+## Time.get_ticks_msec(), which keeps advancing while the tree is paused — and
+## MobileUIManager pauses the tree when the app loses focus — so pulling down a
+## notification and coming back snapped every wiggling sprite to an unrelated phase.
+## This clock only advances while game_active, so there is nothing to snap to.
+var _anim_t: float = 0.0
+
 func _apply_difficulty_settings() -> void:
 	match current_difficulty:
 		"Easy":
@@ -35,8 +46,16 @@ func _apply_difficulty_settings() -> void:
 			game_duration = 12.0
 
 func _ready():
-	game_name = "Mud Pie Maker"
-	game_instruction_text = "HOLD to pour water!\nKeep the gauge in GREEN zone until time runs out! 💧"
+	# Localized: the title stayed English above the Filipino objective FIX 58
+	# authored. _loc() keeps the English literal as the fallback for the case
+	# where the table is not up yet (tools/SceneLoadCheck instantiates that way).
+	game_name = _loc("mud_pie_maker", "Mud Pie Maker")
+	# Was hardcoded English. mud_instruction now describes hold-to-pour (it used to say
+	# "SLIDE", an input this game does not have), so the two finally agree.
+	game_instruction_text = _loc(
+		"mud_instruction",
+		"HOLD to pour water!\nKeep the gauge in GREEN zone until time runs out! 💧"
+	)
 	game_duration = 12.0
 	game_mode = "survival"  # Survive by staying in green zone
 	show_quota = false
@@ -75,7 +94,7 @@ func _ready():
 	# Hint
 	var hint = Label.new()
 	hint.name = "HintLabel"
-	hint.text = "👆 HOLD to pour, release to drain!"
+	hint.text = _loc("hud_hold_to_pour_hint", "👆 HOLD to pour, release to drain!")
 	hint.add_theme_font_size_override("font_size", 28)
 	hint.add_theme_color_override("font_color", Color.WHITE)
 	hint.add_theme_color_override("font_outline_color", Color.BLACK)
@@ -176,6 +195,7 @@ func _create_gauge(screen_size: Vector2):
 	var target_bottom = gauge_height/2 - (target_min / 100.0 * gauge_height)
 	var target_top = gauge_height/2 - (target_max / 100.0 * gauge_height)
 	var target_zone = Polygon2D.new()
+	target_zone.name = "TargetZone"
 	target_zone.polygon = PackedVector2Array([
 		Vector2(-gauge_width/2 + 2, target_top),
 		Vector2(gauge_width/2 - 2, target_top),
@@ -192,23 +212,26 @@ func _create_gauge(screen_size: Vector2):
 	
 	# Labels
 	var too_wet = Label.new()
-	too_wet.text = "🌊 WET"
+	too_wet.text = _loc("hud_too_wet", "🌊 WET")
 	too_wet.add_theme_font_size_override("font_size", 18)
 	too_wet.add_theme_color_override("font_color", Color.RED)
+	MiniGameAssets.outline_text(too_wet)
 	too_wet.position = Vector2(40, -gauge_height/2 - 10)
 	gauge_node.add_child(too_wet)
 	
 	var perfect = Label.new()
-	perfect.text = "✓ OK"
+	perfect.text = _loc("hud_perfect_ok", "✓ OK")
 	perfect.add_theme_font_size_override("font_size", 22)
 	perfect.add_theme_color_override("font_color", Color.GREEN)
+	MiniGameAssets.outline_text(perfect)
 	perfect.position = Vector2(40, (target_top + target_bottom) / 2 - 15)
 	gauge_node.add_child(perfect)
 	
 	var too_dry = Label.new()
-	too_dry.text = "🏜️ DRY"
+	too_dry.text = _loc("hud_too_dry", "🏜️ DRY")
 	too_dry.add_theme_font_size_override("font_size", 18)
 	too_dry.add_theme_color_override("font_color", Color.ORANGE)
+	MiniGameAssets.outline_text(too_dry)
 	too_dry.position = Vector2(40, gauge_height/2 - 25)
 	gauge_node.add_child(too_dry)
 
@@ -225,6 +248,7 @@ func _input(event):
 func _process(delta):
 	super._process(delta)
 	if not game_active or game_ended: return
+	_anim_t += delta
 	
 	var bucket = pot_node.get_node("Bucket")
 	var stream = bucket.get_node("Stream")
@@ -232,14 +256,14 @@ func _process(delta):
 	
 	if pouring:
 		water_level = min(water_level + pour_speed * delta, 100.0)
-		hint.text = "Pouring... 💧"
+		hint.text = _loc("hud_pouring", "Pouring... 💧")
 		stream.visible = true
 		bucket.rotation = 0.3
-		bucket.position.x = sin(Time.get_ticks_msec() * 0.02) * 3
+		bucket.position.x = sin(_anim_t * 20.0) * 3
 	else:
 		# DRAIN when not pouring
 		water_level = max(water_level - drain_speed * delta, 0.0)
-		hint.text = "Hold to pour!"
+		hint.text = _loc("hud_hold_to_pour", "Hold to pour!")
 		stream.visible = false
 		bucket.rotation = 0
 		bucket.position.x = 0
@@ -250,8 +274,26 @@ func _process(delta):
 	var wetness = water_level / 100.0
 	mud_visual.color = Color(0.45, 0.25, 0.1).lerp(Color(0.2, 0.12, 0.05), wetness)
 	
-	# Check if in zone
-	var _in_zone = water_level >= target_min and water_level <= target_max
+	# Time in the green zone is the whole skill of this game, and until now it paid
+	# nothing: _in_zone was computed here and thrown away (the author's underscore says
+	# as much), so a flawlessly held round scored 0, played no success cue, never moved
+	# the combo, and handed the difficulty algorithm nothing but the single
+	# record_action(false) from drowning or drying out. Survival mode still decides the
+	# WIN at the timeout -- MiniGameBase._on_timer_timeout() ends a "survival" round as
+	# a success -- so this is about the round having a score and a heartbeat, not about
+	# inventing a second win condition.
+	if water_level >= target_min and water_level <= target_max:
+		_zone_time += delta
+		if _zone_time >= ZONE_SCORE_INTERVAL:
+			_zone_time -= ZONE_SCORE_INTERVAL
+			record_action(true)
+			# One pulse of the gauge fill per tick, so the reward is visible on the thing
+			# the player is actually watching. scale is independent of the polygon that
+			# _update_gauge() rebuilds every frame, so the two do not fight.
+			JuiceEffects.bounce_scale(fill_node, 1.09, 0.18)
+	else:
+		# No partial credit carried across a slip: leaving the band resets the tick.
+		_zone_time = 0.0
 	
 	# Fail if completely dry or overflowed
 	if (water_level <= 0 or water_level >= 100) and not game_ended:
@@ -259,13 +301,13 @@ func _process(delta):
 		record_action(false)
 		
 		var fail = Label.new()
-		fail.text = "💦 Out of range!" if water_level >= 100 else "🏜️ Too dry!"
+		fail.text = _loc("hud_out_of_range", "💦 Out of range!") if water_level >= 100 else _loc("hud_too_dry_fail", "🏜️ Too dry!")
 		fail.add_theme_font_size_override("font_size", 40)
 		fail.add_theme_color_override("font_color", Color.RED)
 		fail.position = pot_node.position + Vector2(-100, -250)
 		add_child(fail)
 		
-		await get_tree().create_timer(0.5).timeout
+		await round_delay(0.5)
 		end_game(false)
 
 func _update_gauge():

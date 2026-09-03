@@ -3,19 +3,21 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://bdckppinc04gt"
-path="res://.godot/imported/hills.png-0b1c86f613a780bd81a761f6f11cabf9.ctex"
+path.s3tc="res://.godot/imported/hills.png-0b1c86f613a780bd81a761f6f11cabf9.s3tc.ctex"
+path.etc2="res://.godot/imported/hills.png-0b1c86f613a780bd81a761f6f11cabf9.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 
 [deps]
 
 source_file="res://assets/bg_layers/hills.png"
-dest_files=["res://.godot/imported/hills.png-0b1c86f613a780bd81a761f6f11cabf9.ctex"]
+dest_files=["res://.godot/imported/hills.png-0b1c86f613a780bd81a761f6f11cabf9.s3tc.ctex", "res://.godot/imported/hills.png-0b1c86f613a780bd81a761f6f11cabf9.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

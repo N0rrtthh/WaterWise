@@ -3,7 +3,21 @@ extends "res://scripts/multiplayer/MultiplayerMiniGameBase.gd"
 ## Bundle 3: Fill Aquarium with Rain
 ## P2 fills aquarium with P1's rainwater
 
-const MAX_EMPTY_TIME: float = 30.0   # was 20.0 — more time before losing life
+## HOW LONG THE TANK MAY SIT DRY WHILE THE PLAYER HOLDS RAIN
+##
+## Was 30.0 — exactly the round length — so the rule could not fire and the round always ended
+## in an unconditional win. 12.0 makes it reachable with 18 seconds left to recover, and
+## _process() only advances the clock while available_water > 0, so the fish are never lost to
+## P1 being slow with the rain. get_instructions() interpolates this number, so the overlay
+## copy follows the retune on its own.
+const MAX_EMPTY_TIME: float = 12.0
+## Points paid per load poured in, and how many loads the team target is worth. win_quota
+## is derived from these two so the overlay, the award and the target cannot drift apart.
+## The overlay used to promise a win for filling the tank to 100% — a level nothing reads
+## (a tank parked at a brimming 100% was measured still running) while the real win was
+## win_quota TEAM points, which the partner catching rain also pays into.
+const POINTS_PER_ADD: int = 10
+const ADDS_TO_WIN: int = 10
 
 var available_water: int = 0
 var aquarium_level: float = 0.0
@@ -14,14 +28,15 @@ var aquarium_label: Label
 var water_indicator_label: Label
 
 func get_instructions() -> String:
-	return "🐟 FILL AQUARIUM\n\nClick aquarium to add rainwater from your partner!\nFill to 100% to win.\nWater evaporates slowly - keep it above 5%.\n\n⚠️ Let aquarium stay empty for 20 seconds and lose 1 life!\n💧 Wait for partner to catch rain"
+	return Localization.get_text("mp_fill_aquarium_instructions") % [ADDS_TO_WIN, int(MAX_EMPTY_TIME)]
 
 func get_controls_text() -> String:
-	return "🖱️ Click aquarium\n💧 Add water\n🐟 Keep full"
+	return Localization.get_text("mp_fill_aquarium_controls")
 
 func _on_multiplayer_ready() -> void:
 	game_name = "Fill Aquarium"
-	win_quota = 100 # 10 adds * 10 points
+	title_key = "mp_title_fill_aquarium"
+	win_quota = ADDS_TO_WIN * POINTS_PER_ADD # a TEAM total — see add_score() in the base
 	
 	_create_water_indicator()
 	_create_aquarium()
@@ -37,14 +52,15 @@ func _on_game_start() -> void:
 
 func _create_water_indicator() -> void:
 	var panel = PanelContainer.new()
-	panel.position = Vector2(20, 100)
-	add_child(panel)
+	# Screen space, not world space: the Camera2D would otherwise drag this counter
+	# across the screen with the aspect ratio. See attach_hud_panel() in the base.
+	attach_hud_panel(panel)
 	
 	var vbox = VBoxContainer.new()
 	panel.add_child(vbox)
 	
 	var title = Label.new()
-	title.text = "Rainwater:"
+	title.text = Localization.get_text("mp_res_rainwater")
 	vbox.add_child(title)
 	
 	var label = Label.new()
@@ -55,7 +71,7 @@ func _create_water_indicator() -> void:
 	water_indicator_label = label
 	
 	var info = Label.new()
-	info.text = "Click aquarium to fill"
+	info.text = Localization.get_text("mp_hint_click_aquarium")
 	vbox.add_child(info)
 
 func _create_aquarium() -> void:
@@ -88,10 +104,11 @@ func _create_aquarium() -> void:
 	
 	var label = Label.new()
 	label.name = "Label"
-	label.text = "🐟 AQUARIUM\n0%"
+	label.text = Localization.get_text("mp_aquarium_label") % 0.0
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	label.position = Vector2(-80, -240)
 	label.add_theme_font_size_override("font_size", 24)
+	MiniGameAssets.outline_text(label)
 	aquarium.add_child(label)
 	aquarium_label = label
 	
@@ -115,7 +132,7 @@ func _try_fill() -> void:
 	aquarium_level = min(aquarium_max, aquarium_level + 10.0)
 	_update_aquarium()
 	
-	add_score(10)
+	add_score(POINTS_PER_ADD)
 	empty_timer = 0.0  # Reset empty timer
 	_log("💧 Added water! Level: %.1f%%" % (aquarium_level / aquarium_max * 100))
 
@@ -127,13 +144,21 @@ func _process(delta: float) -> void:
 	aquarium_level = max(0, aquarium_level - delta * 1.0)
 	_update_aquarium()
 	
-	# Check if empty too long
+	# HOW LONG THE TANK HAS BEEN DRY *WITH RAIN IN THE BUCKET*
+	#
+	# empty_timer used to accrue on plain wall time, and aquarium_level starts at 0, so the
+	# clock began running the instant the round did — before P1 could possibly have caught and
+	# sent the first rain. That charged the team a life for the partner's delivery pace, which
+	# _try_pour() gives this player no way to answer. Freezing the clock while
+	# available_water == 0 leaves it measuring the only thing it can fairly measure: water held
+	# and not poured.
 	if aquarium_level <= 5.0:
-		empty_timer += delta
-		if empty_timer >= MAX_EMPTY_TIME:
-			_log("💀 Aquarium empty too long - lose 1 life!")
-			empty_timer = 0
-			report_miss_to_host()
+		if available_water > 0:
+			empty_timer += delta
+			if empty_timer >= MAX_EMPTY_TIME:
+				_log("💀 Aquarium dry for %ds with rain in hand - lose 1 life!" % int(empty_timer))
+				empty_timer = 0
+				report_miss_to_host()
 
 func _update_aquarium() -> void:
 	if aquarium_visual:
@@ -142,7 +167,7 @@ func _update_aquarium() -> void:
 		aquarium_visual.position.y = 200 - height
 	
 	if aquarium_label:
-		aquarium_label.text = "🐟 AQUARIUM\n%.0f%%" % (aquarium_level / aquarium_max * 100)
+		aquarium_label.text = Localization.get_text("mp_aquarium_label") % (aquarium_level / aquarium_max * 100)
 
 func _on_resource_received(_from_player: int, resource_type: String, amount: int, _quality: float) -> void:
 	if resource_type == "rainwater":

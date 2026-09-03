@@ -6,10 +6,18 @@ extends "res://scripts/MiniGameBase.gd"
 ## A classic memory card game where kids flip cards to find matching
 ## pairs of water-saving items. Educational + fun!
 
+## Flip beat lengths, in seconds at normal motion speed. Total ~0.27 s: fast enough
+## that a player mid-hunt does not wait on it, slow enough to read as a flip.
+const FLIP_ANTICIPATE: float = 0.05
+const FLIP_SQUEEZE: float = 0.09
+const FLIP_RETURN: float = 0.13
+## How long a wrong pair stays face-up after the recoil before turning back over.
+const MISMATCH_HOLD: float = 0.35
+
 var card_pairs: Array = [
 	["🚰", "🚰"], ["💧", "💧"], ["🌱", "🌱"],
 	["🌊", "🌊"], ["☁️", "☁️"], ["🚿", "🚿"],
-	["🌧️", "🌧️"], ["🐟", "🐟"], ["🪴", "🪴"],
+	["🌧️", "🌧️"], ["🐟", "🐟"], ["🌼", "🌼"],
 	["⛲", "⛲"]
 ]
 
@@ -37,23 +45,41 @@ func _apply_difficulty_settings() -> void:
 			grid_cols = 4
 			grid_rows = 3
 			total_pairs = 6
-			game_duration = 25.0
+			game_duration = 32.0
 		"Hard":
 			grid_cols = 4
 			grid_rows = 4
 			total_pairs = 8
-			game_duration = 18.0
+			game_duration = 38.0
 
+	# Progressive pressure applies AFTER the base duration is settled.
+	#
+	# The old order read `time_limit` from the difficulty settings on the last
+	# line, which silently discarded the per-level subtraction above it — so
+	# progressive_level had no effect on time at all. It also gave Hard 18 s to
+	# clear 8 pairs on a 4x4 grid: 16 flips minimum with no mistakes, which is
+	# under 1.1 s per flip including the mismatch flip-back animation. That is
+	# not a difficulty curve, it is an unwinnable state.
+	#
+	# Base durations are now sized so a competent player finishes with a little
+	# room, and the squeeze comes from progressive_level with a floor that keeps
+	# the round mathematically completable.
 	if progressive_level > 0:
-		game_duration = max(10.0, game_duration - progressive_level * 1.5)
-		if progressive_level >= 3 and grid_cols * grid_rows < 16:
-			grid_cols = 4
-			grid_rows = 4
-			total_pairs = 8
-		game_duration = settings.get("time_limit", game_duration)
+		game_duration = maxf(_min_completable_duration(), game_duration - progressive_level * 1.5)
+
+## Lower bound on the timer, derived from the board size rather than a constant.
+##
+## Each pair needs two flips, each flip needs a beat to read, and a mismatch
+## costs a flip-back. 1.6 s per pair plus a 6 s buffer keeps even a maxed-out
+## progressive level solvable for a player who is paying attention.
+func _min_completable_duration() -> float:
+	return 6.0 + float(total_pairs) * 1.6
 
 func _ready():
-	game_name = "Water Memory"
+	# Localized: the title stayed English above the Filipino objective FIX 58
+	# authored. _loc() keeps the English literal as the fallback for the case
+	# where the table is not up yet (tools/SceneLoadCheck instantiates that way).
+	game_name = _loc("water_memory", "Water Memory")
 	var fallback := "MATCH pairs of water-saving tips!\n"
 	fallback += "Find all pairs before time runs out! 🧠"
 	game_instruction_text = (
@@ -88,7 +114,7 @@ func _ready():
 	# Score display
 	var score_display = Label.new()
 	score_display.name = "PairScore"
-	score_display.text = "🧠 0 / %d pairs" % total_pairs
+	score_display.text = _loc("hud_pairs_found", "🧠 %d / %d pairs") % [0, total_pairs]
 	score_display.add_theme_font_size_override("font_size", 26)
 	score_display.add_theme_color_override("font_color", Color.WHITE)
 	score_display.add_theme_color_override("font_outline_color", Color.BLACK)
@@ -155,20 +181,12 @@ func _create_card(pos: Vector2, emoji: String, card_size: float) -> Control:
 	card.set_meta("emoji", emoji)
 	card.set_meta("flipped", false)
 	card.set_meta("matched", false)
+	# scale.x on a Control grows from the top-left unless the pivot is moved, which
+	# would make the flip below slide the card instead of hinging it in place.
+	card.pivot_offset = card.size * 0.5
 
-	# Card back style
-	var style = StyleBoxFlat.new()
-	style.bg_color = Color(0.2, 0.45, 0.7)
-	style.corner_radius_top_left = 12
-	style.corner_radius_top_right = 12
-	style.corner_radius_bottom_left = 12
-	style.corner_radius_bottom_right = 12
-	style.border_width_top = 3
-	style.border_width_bottom = 3
-	style.border_width_left = 3
-	style.border_width_right = 3
-	style.border_color = Color(0.3, 0.6, 0.9)
-	card.add_theme_stylebox_override("panel", style)
+	card.add_theme_stylebox_override("panel",
+		_card_style(Color(0.2, 0.45, 0.7), Color(0.3, 0.6, 0.9)))
 
 	# Question mark (face down)
 	var back_label = Label.new()
@@ -214,48 +232,124 @@ func _on_card_pressed(card: Panel) -> void:
 		second_card = card
 		can_flip = false
 		# Check match after a short delay
-		get_tree().create_timer(0.6).timeout.connect(_check_match)
+		round_delay(0.6).connect(_check_match)
 
+## The flip, as an animation instead of an assignment.
+##
+## This used to swap back.visible/front.visible and replace the StyleBoxFlat in the
+## same frame, so a card changed face with nothing to read as a flip: no anticipation,
+## no motion, and a matched pair announced itself only by quietly turning green. In a
+## memory game the flip IS the feedback -- it is the moment the player commits and the
+## moment they learn -- so it gets the three standard beats: anticipation (a small
+## squash), the squeeze through near-zero width where the face is swapped at the hinge
+## so the swap is never seen head-on, then the return with a slight overshoot.
+##
+## Durations go through JuiceEffects.motion_time() so the reduced-motion setting
+## shortens the flip instead of this game ignoring the setting entirely. The budget in
+## _min_completable_duration() already allows 1.6 s per pair "including the mismatch
+## flip-back animation", which this fits inside.
 func _flip_card(card: Panel, face_up: bool) -> void:
 	card.set_meta("flipped", face_up)
-	var back = card.get_node_or_null("BackLabel")
-	var front = card.get_node_or_null("FrontLabel")
+
+	# A second flip landing on a card that is still mid-flip would leave two tweens
+	# fighting over scale, and the loser strands the card at hairline width.
+	# has_meta() first: get_meta(name, null) does NOT quietly return null, because a
+	# NIL default is indistinguishable from "no default given" inside Godot, so every
+	# first flip of every card printed "The object does not have any 'meta' values with
+	# the key 'flip_tween'" -- 12 of them in one 7-minute soak.
+	var prev: Variant = card.get_meta("flip_tween") if card.has_meta("flip_tween") else null
+	if is_instance_valid(prev) and prev is Tween and prev.is_valid():
+		prev.kill()
+		card.scale = Vector2.ONE
+
+	if face_up and AudioManager:
+		# The success/failure cue belongs to record_action(); this is just the flip.
+		AudioManager.play_whoosh()
+
+	var t_ant: float = JuiceEffects.motion_time(FLIP_ANTICIPATE)
+	var t_sqz: float = JuiceEffects.motion_time(FLIP_SQUEEZE)
+	var t_out: float = JuiceEffects.motion_time(FLIP_RETURN * 0.65)
+	var t_set: float = JuiceEffects.motion_time(FLIP_RETURN * 0.35)
+	var t: Tween = card.create_tween()
+	card.set_meta("flip_tween", t)
+	t.tween_property(card, "scale", Vector2(1.06, 0.93), t_ant).set_ease(Tween.EASE_OUT)
+	t.tween_property(card, "scale", Vector2(0.04, 1.05), t_sqz).set_ease(Tween.EASE_IN)
+	t.tween_callback(_apply_card_face.bind(card, face_up))
+	t.tween_property(card, "scale", Vector2(1.09, 0.95), t_out).set_ease(Tween.EASE_OUT)
+	t.tween_property(card, "scale", Vector2.ONE, t_set)
+
+
+## The face swap itself, fired at the hinge of the flip above.
+func _apply_card_face(card: Panel, face_up: bool) -> void:
+	if not is_instance_valid(card):
+		return
+	var back := card.get_node_or_null("BackLabel")
+	var front := card.get_node_or_null("FrontLabel")
 	if back:
 		back.visible = not face_up
 	if front:
 		front.visible = face_up
+	card.add_theme_stylebox_override("panel", _card_style(
+		Color(0.85, 0.92, 1.0) if face_up else Color(0.2, 0.45, 0.7),
+		Color(0.4, 0.7, 1.0) if face_up else Color(0.3, 0.6, 0.9)))
 
-	if face_up:
-		var style = StyleBoxFlat.new()
-		style.bg_color = Color(0.85, 0.92, 1.0)
-		style.corner_radius_top_left = 12
-		style.corner_radius_top_right = 12
-		style.corner_radius_bottom_left = 12
-		style.corner_radius_bottom_right = 12
-		style.border_width_top = 3
-		style.border_width_bottom = 3
-		style.border_width_left = 3
-		style.border_width_right = 3
-		style.border_color = Color(0.4, 0.7, 1.0)
-		card.add_theme_stylebox_override("panel", style)
-	else:
-		var style = StyleBoxFlat.new()
-		style.bg_color = Color(0.2, 0.45, 0.7)
-		style.corner_radius_top_left = 12
-		style.corner_radius_top_right = 12
-		style.corner_radius_bottom_left = 12
-		style.corner_radius_bottom_right = 12
-		style.border_width_top = 3
-		style.border_width_bottom = 3
-		style.border_width_left = 3
-		style.border_width_right = 3
-		style.border_color = Color(0.3, 0.6, 0.9)
-		card.add_theme_stylebox_override("panel", style)
 
-	if AudioManager:
-		AudioManager.play_collect()
+## One rounded panel style. The same twelve lines were written out four times.
+func _card_style(bg: Color, border: Color) -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = bg
+	style.corner_radius_top_left = 12
+	style.corner_radius_top_right = 12
+	style.corner_radius_bottom_left = 12
+	style.corner_radius_bottom_right = 12
+	style.border_width_top = 3
+	style.border_width_bottom = 3
+	style.border_width_left = 3
+	style.border_width_right = 3
+	style.border_color = border
+	return style
+
+
+## A matched pair pops. The green stylebox alone was a state change with no event
+## attached to it -- easy to miss on a 4x4 grid where the player is looking elsewhere.
+func _pop_card(card: Panel) -> void:
+	if not is_instance_valid(card):
+		return
+	var prev: Variant = card.get_meta("flip_tween") if card.has_meta("flip_tween") else null
+	if is_instance_valid(prev) and prev is Tween and prev.is_valid():
+		prev.kill()
+	card.scale = Vector2.ONE
+	var t: Tween = card.create_tween()
+	card.set_meta("flip_tween", t)
+	t.tween_property(card, "scale", Vector2(1.22, 1.22),
+		JuiceEffects.motion_time(0.11)).set_ease(Tween.EASE_OUT)
+	t.tween_property(card, "scale", Vector2.ONE,
+		JuiceEffects.motion_time(0.17)).set_ease(Tween.EASE_IN_OUT)
+
+
+## A wrong pair recoils, then holds before flipping back. The old code reverted both
+## cards in the same frame the mismatch was decided, which reads as the cards being
+## snatched away rather than as a miss the player made.
+func _recoil_card(card: Panel) -> void:
+	if not is_instance_valid(card):
+		return
+	var base: float = card.position.x
+	var t: Tween = card.create_tween()
+	var step: float = JuiceEffects.motion_time(0.045)
+	t.tween_property(card, "position:x", base + 9.0, step)
+	t.tween_property(card, "position:x", base - 9.0, step)
+	t.tween_property(card, "position:x", base + 5.0, step)
+	t.tween_property(card, "position:x", base, step)
 
 func _check_match() -> void:
+	# The round can end inside the 0.6s this resolve waits on -- the round timer
+	# expiring, or the player quitting. Scoring the pair and feeding record_action()
+	# into the adaptive-difficulty window after that point credits a round that is
+	# already closed and banked. Nothing needs resetting on the way out: a new round
+	# rebuilds the grid from scratch.
+	if not game_active:
+		return
+
 	if not is_instance_valid(first_card) or not is_instance_valid(second_card):
 		can_flip = true
 		first_card = null
@@ -272,35 +366,40 @@ func _check_match() -> void:
 		pairs_found += 1
 		record_action(true)
 
-		# Matched glow effect
+		# Matched: green, plus a pop, so the match registers as an event and not only as a
+		# colour the player has to notice on their own.
 		for card in [first_card, second_card]:
-			var style = StyleBoxFlat.new()
-			style.bg_color = Color(0.6, 0.95, 0.6)
-			style.corner_radius_top_left = 12
-			style.corner_radius_top_right = 12
-			style.corner_radius_bottom_left = 12
-			style.corner_radius_bottom_right = 12
-			style.border_width_top = 3
-			style.border_width_bottom = 3
-			style.border_width_left = 3
-			style.border_width_right = 3
-			style.border_color = Color(0.3, 0.9, 0.3)
-			card.add_theme_stylebox_override("panel", style)
+			card.add_theme_stylebox_override("panel",
+				_card_style(Color(0.6, 0.95, 0.6), Color(0.3, 0.9, 0.3)))
+			_pop_card(card)
 
-		# Update score
 		var display = get_node_or_null("PairScore")
 		if display:
-			display.text = "🧠 %d / %d pairs" % [pairs_found, total_pairs]
+			display.text = _loc("hud_pairs_found", "🧠 %d / %d pairs") % [pairs_found, total_pairs]
 
-		# Check win
+		first_card = null
+		second_card = null
+		can_flip = true
+
 		if pairs_found >= total_pairs:
 			end_game(true)
-	else:
-		# No match - flip back
-		record_action(false)
-		_flip_card(first_card, false)
-		_flip_card(second_card, false)
+		return
 
+	# No match. Recoil, hold the two faces up long enough to actually be read, then turn
+	# them back over. The board stays locked for that whole beat -- releasing it early
+	# lets a third tap land in a half-reverted pair.
+	record_action(false)
+	var a: Panel = first_card as Panel
+	var b: Panel = second_card as Panel
+	_recoil_card(a)
+	_recoil_card(b)
 	first_card = null
 	second_card = null
+	await round_delay(MISMATCH_HOLD)
+	if not game_active:
+		return
+	if is_instance_valid(a):
+		_flip_card(a, false)
+	if is_instance_valid(b):
+		_flip_card(b, false)
 	can_flip = true

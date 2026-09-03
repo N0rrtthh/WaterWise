@@ -60,12 +60,64 @@ var current_difficulty: String = "Easy"  # Paper: initial difficulty = Easy
 
 ## Performance Tracking (Formative Assessment)
 var performance_window: Array[Dictionary] = []  # Last 5 games (FIFO)
-var performance_history: Array[Dictionary] = []  # All games
+## Research telemetry log of completed rounds.
+##
+## Distinct from performance_window: the paper's constant-memory guarantee is a
+## claim about the n=5 rolling window, which genuinely never grows. This log
+## exists only to export a session for analysis, and it used to be uncapped —
+## on a <2GB device a long unbroken session grew it without limit, which
+## contradicts the ΔRAM = 0 figure the evaluation reports.
+##
+## Capped at MAX_PERFORMANCE_HISTORY. The tail is what session analysis needs;
+## exact operation totals live in total_games_recorded so nothing under-reports
+## once trimming starts. The adaptive algorithm never reads this array, so
+## trimming cannot affect a difficulty decision.
+var performance_history: Array[Dictionary] = []
+## Lifetime count of rounds fed to add_performance() this session.
+##
+## Stays exact after performance_history is trimmed. Every "games played" reader
+## uses this, not performance_history.size(), which would silently under-report
+## a long session once the cap is reached.
+var total_games_recorded: int = 0
+## Retention limit for the research log. ~500 rounds is roughly two hours of
+## uninterrupted play, well past any single test session, at a worst-case
+## footprint of a couple hundred KB. Matches GCounter.MAX_HISTORY_ENTRIES.
+const MAX_PERFORMANCE_HISTORY: int = 500
 var difficulty_changes: Array[Dictionary] = []  # Timeline of changes
 var games_since_adaptation: int = 0
 
+## Measured adaptation latency, in milliseconds (Paper: <100ms requirement).
+## These are REAL wall-clock measurements of the decision pass taken from
+## PerformanceProfiler, not estimates. Never substitute target_latency_ms here:
+## the value is exported into the case-study JSON as evidence, so a placeholder
+## would misreport a research result.
+var adaptation_latencies_ms: Array[float] = []
+var adaptation_latency_total_ms: float = 0.0
+var adaptation_latency_samples: int = 0
+var adaptation_latency_max_ms: float = 0.0
+
+## Retained sample cap for the latency array. Running sum/count/max above stay
+## exact regardless, so trimming never distorts the reported average.
+const MAX_LATENCY_SAMPLES: int = 200
+
 ## Progressive Difficulty (No Ceiling)
-var progressive_level: int = 0  # 0 = base difficulty, increases infinitely
+var progressive_level: int = 0  # 0 = base difficulty; bounded by MAX_PROGRESSIVE_LEVEL
+
+## Ceiling on the supplementary progression ramp.
+##
+## This layer used to be explicitly uncapped ("increases infinitely"), and every
+## value it touches is consumed directly by gameplay:
+##   speed_multiplier *= 1 + level*0.15   time_limit /= the same factor
+##   item_count += level*2                distractors += level
+## Left to grow, item_count becomes an unbounded entity count — a draw-call and
+## memory problem on a <2GB device — while time_limit collapses toward its 3s floor
+## against an ever-faster board, so rounds eventually cannot be won at all. An
+## escalation with no ceiling always terminates in a guaranteed loss.
+##
+## At the cap the applied values are: speed ×2.4, time_limit 6s, item_count 16,
+## distractors 7 (from Hard's 1.5 / 10 / 8 / 3). Reaching it takes 12 consecutive
+## Hard rounds at 80%+ accuracy, so it stays a real mastery reward.
+const MAX_PROGRESSIVE_LEVEL: int = 4
 var consecutive_successes: int = 0  # Track success streak for progression
 
 ## Raw Game Score Weights (Paper: Mathematical Formulation)
@@ -74,6 +126,18 @@ var consecutive_successes: int = 0  # Track success streak for progression
 const SCORE_WEIGHT_ACCURACY: float = 0.6   # w_a: Accuracy weight (dominant factor)
 const SCORE_WEIGHT_SPEED: float = 0.3      # w_s: Speed weight (secondary factor)
 const SCORE_WEIGHT_ERRORS: float = 0.1     # w_e: Error penalty weight (minor factor)
+
+## Consistency Penalty constants (Paper: CP = min(σ_ms / 5000, 0.2))
+## Both values are FIXED by the thesis. The normalizer must not be derived
+## from the active difficulty's time_limit: CP feeds Φ, and Φ selects the
+## difficulty, so a difficulty-dependent divisor would make identical player
+## performance produce different Φ values and break determinism.
+const CONSISTENCY_PENALTY_NORMALIZER_MS: float = 5000.0
+const CONSISTENCY_PENALTY_MAX: float = 0.2
+
+## Decision-tree thresholds on Φ (Paper: Φ<0.5 Easy, 0.5-0.85 Medium, >0.85 Hard)
+const PROFICIENCY_THRESHOLD_EASY: float = 0.5
+const PROFICIENCY_THRESHOLD_HARD: float = 0.85
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # DIFFICULTY SETTINGS (CHAOS SYSTEM)
@@ -165,10 +229,22 @@ func calculate_raw_game_score(
 		1.0 - (float(reaction_time_ms) / t_max_ms), 0.0, 1.0
 	)
 	
-	# err = Error ratio
+	# E = Error term, normalized to [0,1] so that S stays inside the paper's
+	# documented 0..1 range (a raw error count would let 10 mistakes swing S by
+	# a full 1.0 on its own, via w_e alone).
+	#
+	# The saturating ratio m/(m+5) is monotonically increasing in m and never
+	# reaches 1, which is the property that matters: more errors must never
+	# improve the score.
+	#
+	# Previously the mistakes==0 case returned (1.0 - accuracy), which inverted
+	# exactly that property — at accuracy 0.40 a flawless run scored E=0.60
+	# while a run with one mistake scored E=0.167, so committing a mistake
+	# RAISED the score. Zero errors now contributes zero error penalty, and
+	# low accuracy is already penalized by the w_a term.
 	var err: float
 	if mistakes <= 0:
-		err = clamp(1.0 - accuracy, 0.0, 1.0)
+		err = 0.0
 	else:
 		err = clamp(
 			float(mistakes) / max(float(mistakes) + 5.0, 1.0),
@@ -185,16 +261,55 @@ func calculate_raw_game_score(
 	score = clamp(score, 0.0, 1.0)
 	
 	if enable_verbose_logging:
-		print("📊 Raw Score: S=%.3f (A=%.2f, Spd=%.2f, E=%.2f)" % [
+		_log_verbose("📊 Raw Score: S=%.3f (A=%.2f, Spd=%.2f, E=%.2f)" % [
 			score, acc, speed, err
 		])
-		print("   %.1f×%.2f + %.1f×%.2f - %.1f×%.2f = %.3f" % [
+		_log_verbose("   %.1f×%.2f + %.1f×%.2f - %.1f×%.2f = %.3f" % [
 			SCORE_WEIGHT_ACCURACY, acc,
 			SCORE_WEIGHT_SPEED, speed,
 			SCORE_WEIGHT_ERRORS, err, score
 		])
 	
 	return score
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# DEFERRED VERBOSE LOGGING
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+## Research/debug output is queued and flushed after the current frame's work.
+##
+## Why this exists: print() to a redirected or piped stdout costs tens of
+## milliseconds per call. Emitting research logs from inside a measured
+## algorithm region made every round report ~145ms against a 16ms budget, so
+## the profiler warned on every single round — the log filled with warnings
+## about the cost of writing to the log. Deferring keeps the thesis-visibility
+## output intact while making the latency numbers describe the actual math.
+var _pending_logs: PackedStringArray = PackedStringArray()
+var _log_flush_queued: bool = false
+
+## Queue a line for deferred printing, independent of any gate.
+##
+## Split out from _log_verbose so the research-logging paths
+## (_log_difficulty_change, _print_algorithm_debug) can defer their I/O without
+## being silenced when enable_verbose_logging is off. Those two are gated on
+## enable_research_logging instead, and folding them into the verbose gate would
+## have dropped thesis output whenever verbose logging was disabled.
+func _queue_log(message: String) -> void:
+	_pending_logs.append(message)
+	if not _log_flush_queued:
+		_log_flush_queued = true
+		_flush_verbose_logs.call_deferred()
+
+func _log_verbose(message: String) -> void:
+	if not enable_verbose_logging:
+		return
+	_queue_log(message)
+
+func _flush_verbose_logs() -> void:
+	_log_flush_queued = false
+	for line in _pending_logs:
+		print(line)
+	_pending_logs.clear()
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # INITIALIZATION
@@ -212,11 +327,35 @@ func _initialize_session() -> void:
 	# Reset all tracking arrays
 	performance_window.clear()
 	performance_history.clear()
+	# Cleared alongside the log it counts — a stale total here would report games
+	# from the previous session against the new session_id.
+	total_games_recorded = 0
 	difficulty_changes.clear()
-	
+
+	# Latency evidence is per-session; carrying samples across a reset would
+	# attribute the previous session's measurements to the new one.
+	adaptation_latencies_ms.clear()
+	adaptation_latency_total_ms = 0.0
+	adaptation_latency_samples = 0
+	adaptation_latency_max_ms = 0.0
+
 	# Reset flags
 	games_since_adaptation = 0
 	total_score = 0
+
+	# The supplementary progression ramp is per-session, exactly like
+	# current_difficulty above. Left standing, a new session opened in the same
+	# process inherited the previous player's escalation and started at up to
+	# speed ×2.4 / time_limit 6s / item_count 16 while still labelled "Easy".
+	progressive_level = 0
+	consecutive_successes = 0
+
+	# Milestone latches are gated on get_behavioral_metrics(), which reads
+	# performance_history — cleared just above. Keeping the latches meant the
+	# awards could only ever be earned in the first session of a process, and
+	# once all three had fired the early-out in _check_behavioral_milestones()
+	# disabled milestone checking for every later session.
+	_milestones_achieved.clear()
 
 func _generate_session_id() -> String:
 	var timestamp = Time.get_unix_time_from_system()
@@ -231,10 +370,16 @@ func _get_effective_min_games() -> int:
 	return clamp(min_games_before_adaptation, 3, max_allowed)
 
 func _get_lifetime_games_played() -> int:
-	var save_mgr = get_node_or_null("/root/SaveManager")
-	if save_mgr and save_mgr.has_method("get_total_games_played"):
-		return int(save_mgr.get_total_games_played())
-	return performance_history.size()
+	# is_inside_tree() is a required precondition, not a defensive null check:
+	# get_node_or_null() with an absolute path raises an engine error when called
+	# from a detached node instead of returning null. That happens whenever this
+	# instance is used outside a live scene tree (verification harnesses, unit
+	# tests) or from a deferred callback that lands after a scene swap.
+	if is_inside_tree():
+		var save_mgr := get_node_or_null("/root/SaveManager")
+		if save_mgr and save_mgr.has_method("get_total_games_played"):
+			return int(save_mgr.get_total_games_played())
+	return total_games_recorded
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # FORMATIVE ASSESSMENT - PERFORMANCE TRACKING
@@ -273,10 +418,14 @@ func add_performance(
 	}
 	
 	# ────────────────────────────────────────────────────────────────────────
-	# STEP 2: Save to complete history (for research data)
+	# STEP 2: Save to research history (bounded — see MAX_PERFORMANCE_HISTORY)
 	# ────────────────────────────────────────────────────────────────────────
-	# ELI5: Like keeping ALL your report cards in a big folder forever
+	# ELI5: Like keeping your recent report cards in a folder, and a running
+	#       tally of how many you've ever had so the count is never wrong.
 	performance_history.append(performance_data)
+	total_games_recorded += 1
+	if performance_history.size() > MAX_PERFORMANCE_HISTORY:
+		performance_history.pop_front()
 	
 	# ────────────────────────────────────────────────────────────────────────
 	# STEP 3: Add to ROLLING WINDOW (FIFO = First In, First Out)
@@ -328,47 +477,81 @@ func add_performance(
 	var ready_to_adapt = (
 		games_since_adaptation >= adaptation_frequency
 		and performance_window.size() >= required_games)
+
+	# ────────────────────────────────────────────────────────────────────────
+	# Close the latency span HERE, before any console logging.
+	# ────────────────────────────────────────────────────────────────────────
+	# The span used to wrap the whole function, including ~30 print() calls
+	# (this function, _print_algorithm_debug, and _log_difficulty_change).
+	# On a redirected stdout each print costs several milliseconds, so every
+	# single round reported ~145 ms against a 16 ms budget and pushed a warning
+	# — 50 of the 60 error/warning lines in a 150 s soak came from this one
+	# line. The rolling-window math itself is O(window_size) and lands well
+	# inside budget; _adapt_difficulty measures its own decision pass
+	# separately, also excluding logging.
+	if PerformanceProfiler and _lat_start > 0:
+		PerformanceProfiler.end_latency_measurement(
+			_lat_start, "AdaptiveDifficulty.add_performance"
+		)
+		_lat_start = 0
+
 	if ready_to_adapt:
-		print("\n🔬 ALGORITHM TRIGGERED: Warmup met (%d/%d games). Evaluating Φ..." % [
+		_log_verbose("\n🔬 ALGORITHM TRIGGERED: Warmup met (%d/%d games). Evaluating Φ..." % [
 			performance_window.size(), required_games])
 		_adapt_difficulty()  # 🎯 THIS IS WHERE THE ALGORITHM RUNS!
 		games_since_adaptation = 0
 	else:
 		if performance_window.size() < required_games:
-			print("⏳ Rolling Window: %d/%d games. Need %d more before algorithm activates." % [
+			_log_verbose("⏳ Rolling Window: %d/%d games. Need %d more before algorithm activates." % [
 				performance_window.size(), required_games,
 				required_games - performance_window.size()])
 	
 	# ────────────────────────────────────────────────────────────────────────
 	# STEP 6: Track consecutive successes for PROGRESSIVE DIFFICULTY
 	# ────────────────────────────────────────────────────────────────────────
-	# ELI5: If the player keeps succeeding at Hard difficulty, we increase
-	#       the progressive level, making the game progressively harder with
-	#       NO CEILING! The game can become infinitely difficult.
+	# ELI5: If the player keeps succeeding at Hard difficulty, we increase the
+	#       progressive level, making the game progressively harder — up to
+	#       MAX_PROGRESSIVE_LEVEL, past which the round would stop being winnable.
 	if accuracy >= 0.8:  # 80%+ accuracy = success
 		consecutive_successes += 1
 		# Every 3 consecutive successes at Hard difficulty increases progressive level
-		if current_difficulty == "Hard" and consecutive_successes >= 3:
+		var can_level_up: bool = (
+			current_difficulty == "Hard"
+			and consecutive_successes >= 3
+			and progressive_level < MAX_PROGRESSIVE_LEVEL
+		)
+		if can_level_up:
 			progressive_level += 1
 			consecutive_successes = 0  # Reset counter
-			print("🔥 PROGRESSIVE LEVEL UP! Now at level %d - Game gets HARDER!" % progressive_level)
+			_queue_log("🔥 PROGRESSIVE LEVEL UP! Now at level %d/%d - Game gets HARDER!" % [
+				progressive_level, MAX_PROGRESSIVE_LEVEL])
 	else:
 		# Failure resets the streak but doesn't decrease progressive level
 		consecutive_successes = 0
 	
 	# Performance logging
+	# Wall-clock for this whole call, including signal listeners and the queuing
+	# of deferred logs. Deliberately NOT labelled "latency": it is not the
+	# adaptation latency the paper's <100 ms claim refers to, and a reader
+	# comparing a 742 ms line against that claim would draw the wrong conclusion.
+	# The algorithm's own spans are measured separately (see the two
+	# end_latency_measurement calls) and surfaced via get_latency_report().
 	var elapsed = Time.get_ticks_msec() - start_time
-	if enable_verbose_logging:
-		print("⚡ Performance Added (Latency: %dms)" % elapsed)
+	var lat: Dictionary = get_latency_report()
+	if lat["measured"]:
+		_log_verbose(
+			"⚡ Performance Added (call wall-clock: %dms"
+			% elapsed
+			+ " | measured adaptation: %.2fms avg, %.2fms max)"
+			% [lat["avg_ms"], lat["max_ms"]])
+	else:
+		_log_verbose(
+			"⚡ Performance Added (call wall-clock: %dms"
+			% elapsed
+			+ " | adaptation not yet measured)")
 	
 	# Emit algorithm metrics
 	algorithm_update.emit(_get_window_metrics())
-
-	# Record latency for ISO 25010 compliance
-	if PerformanceProfiler and _lat_start > 0:
-		PerformanceProfiler.end_latency_measurement(
-			_lat_start, "AdaptiveDifficulty.add_performance"
-		)
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # RULE-BASED ALGORITHM - ROLLING WINDOW DECISION TREE
@@ -392,6 +575,14 @@ func _adapt_difficulty() -> void:
 	var required_games = _get_effective_min_games()
 	if performance_window.size() < required_games:
 		return  # Not enough data yet, wait for more games
+
+	# Latency span covers only the decision pass (metrics + decision tree +
+	# apply), deliberately excluding the print-heavy research logging below.
+	# See the note in add_performance(): console I/O dominated the old timing
+	# and produced a false budget breach every single round.
+	var _decision_lat_start: int = 0
+	if PerformanceProfiler:
+		_decision_lat_start = PerformanceProfiler.begin_latency_measurement()
 	
 	# ────────────────────────────────────────────────────────────────────────
 	# STEP 1: Save current difficulty (to compare if it changes)
@@ -433,6 +624,14 @@ func _adapt_difficulty() -> void:
 		"decision_path": decision_tree["path"]          # Which rule was triggered?
 	}
 	difficulty_changes.append(change_data)  # Save to history for later analysis
+
+	# Decision pass is complete — close the latency span before the logging
+	# block so console I/O is never charged against the algorithm's budget.
+	if PerformanceProfiler and _decision_lat_start > 0:
+		var measured_ms: float = PerformanceProfiler.end_latency_measurement(
+			_decision_lat_start, "AdaptiveDifficulty._adapt_difficulty"
+		)
+		_record_adaptation_latency(measured_ms)
 	
 	# ────────────────────────────────────────────────────────────────────────
 	# STEP 6: Emit signal if difficulty changed
@@ -475,8 +674,8 @@ func _print_algorithm_debug(
 			change_icon = "⬇️"  # Difficulty decreased
 	
 	# Simplified output - just difficulty and calculation
-	print("🎮 Session Game #%d (Lifetime: %d) | Φ=%.3f | %s %s %s" % [
-		performance_history.size(),
+	_queue_log("🎮 Session Game #%d (Lifetime: %d) | Φ=%.3f | %s %s %s" % [
+		total_games_recorded,
 		_get_lifetime_games_played(),
 		phi,
 		old_difficulty.to_upper(),
@@ -533,7 +732,7 @@ func _calculate_window_metrics() -> Dictionary:
 	# - N = number of games
 	#
 	# Normalized Penalty = min(σ / 5000.0, 0.2)
-	# - Dividing by 5000ms normalizes erratic timing
+	# - 5000 is a FIXED normalization constant taken from the thesis
 	# - Capped at 0.2 (20% maximum penalty)
 	# - Erratic timing → high penalty → lower proficiency
 	#
@@ -544,7 +743,7 @@ func _calculate_window_metrics() -> Dictionary:
 	# Squared: [883600, 3600, 193600, 547600, 4243600]
 	# Variance: (883600+3600+193600+547600+4243600) / 5 = 1174400
 	# σ = sqrt(1174400) ≈ 1083.7ms
-	# Penalty = min(1083.7 / 5000, 0.2) = 0.217 → clamped to 0.2
+	# Penalty = min(1083.7 / 5000, 0.2) = min(0.217, 0.2) = 0.2 (capped)
 	#
 	# PART C: Proficiency Index (Phi - Φ)
 	# ────────────────────────────────────
@@ -662,28 +861,34 @@ func _calculate_window_metrics() -> Dictionary:
 	# ═══════════════════════════════════════════════════════════════════════
 	# ELI5: Convert the standard deviation into a penalty between 0.0 and 0.2
 	#
-	# Formula: penalty = min(σ / T_max_ms, 0.2)
+	# Formula (thesis): CP = min(σ_ms / 5000, 0.2)
 	#
-	# Why divide by T_max_ms? This normalizes σ RELATIVE to the game's time window.
-	# A σ of 2000ms is normal variation in a 20s game, but very erratic in a 10s game.
-	# Why cap at 0.2? We don't want to penalize TOO harshly (max 20% reduction).
+	# 5000 is a FIXED normalization constant, NOT the current time limit.
+	# It must stay fixed for two reasons:
+	#   1. The thesis publishes a worked example (σ = 1140ms → CP = 0.2) that
+	#      the artifact has to reproduce exactly.
+	#   2. A difficulty-scaled divisor would make CP depend on
+	#      current_difficulty, and current_difficulty is itself chosen from Φ.
+	#      That feedback loop makes the same player performance yield different
+	#      Φ values depending on which tier they happen to be in, which breaks
+	#      the determinism the algorithm is supposed to guarantee.
 	#
-	# Example (Easy, T_max = 20000ms):
-	#   σ = 2000ms → penalty = 2000/20000 = 0.10 (10% penalty)
-	#   σ = 4000ms → penalty = 4000/20000 = 0.20 (20% penalty - capped)
-	# Example (Hard, T_max = 10000ms):
-	#   σ = 2000ms → penalty = 2000/10000 = 0.20 (20% penalty - harder to stay!)
+	# Why cap at 0.2? We don't want to penalize TOO harshly (max 20% reduction),
+	# which also keeps Φ inside its documented [-0.2, 1.0] range.
+	#
+	# Example:
+	#   σ =  500ms → CP = 500/5000  = 0.10 (10% penalty)
+	#   σ = 1000ms → CP = 1000/5000 = 0.20 (20% penalty - at the cap)
+	#   σ = 4000ms → CP = min(0.8, 0.2) = 0.20 (capped)
 	# ═══════════════════════════════════════════════════════════════════════
-	
+
 	# Normalize standard deviation to penalty range [0.0, 0.2]
 	# High σ → High penalty (erratic timing)
 	# Low σ → Low penalty (consistent timing)
-	# Paper: CP = min(σ / normalizer, 0.2)
-	# Normalizer scaled to current difficulty's time_limit so CP fairly
-	# reflects timing variability RELATIVE to the available time window.
-	# (e.g., σ=2s is very erratic in a 10s game, but normal in a 20s game)
-	var time_limit_ms: float = float(DIFFICULTY_SETTINGS[current_difficulty]["time_limit"]) * 1000.0
-	var consistency_penalty: float = min(std_deviation / time_limit_ms, 0.2)
+	var consistency_penalty: float = min(
+		std_deviation / CONSISTENCY_PENALTY_NORMALIZER_MS,
+		CONSISTENCY_PENALTY_MAX
+	)
 	
 	# ═══════════════════════════════════════════════════════════════════════
 	# STEP 4: Calculate Proficiency Index (Φ - Greek letter Phi)
@@ -847,7 +1052,7 @@ func _evaluate_decision_tree(metrics: Dictionary) -> Dictionary:
 	#       Either way → Make the game EASIER so they can learn
 	# ═══════════════════════════════════════════════════════════════════════
 	
-	if proficiency < 0.5:
+	if proficiency < PROFICIENCY_THRESHOLD_EASY:
 		new_difficulty = "Easy"
 		
 		# Detailed diagnostic reasoning
@@ -887,7 +1092,7 @@ func _evaluate_decision_tree(metrics: Dictionary) -> Dictionary:
 	#       → Make the game HARDER to keep them challenged and engaged!
 	# ═══════════════════════════════════════════════════════════════════════
 	
-	elif proficiency > 0.85:
+	elif proficiency > PROFICIENCY_THRESHOLD_HARD:
 		new_difficulty = "Hard"
 		reason = (
 			"Mastery (Φ=%.2f): Strong WMA (%.2f)"
@@ -939,6 +1144,19 @@ func _evaluate_decision_tree(metrics: Dictionary) -> Dictionary:
 func _get_window_metrics() -> Dictionary:
 	return _calculate_window_metrics()
 
+## Public read-only view of the current rolling-window metrics
+## (Φ, WMA, CP, σ, and supporting figures).
+## Exposed so the algorithm overlay and the thesis verification harness can read
+## the live numbers without reaching into private methods.
+func get_window_metrics() -> Dictionary:
+	return _calculate_window_metrics()
+
+## Public, side-effect-free evaluation of the decision tree for given metrics.
+## Returns which difficulty the rules select and why, WITHOUT applying it —
+## useful for demonstrating the algorithm and for verification.
+func evaluate_decision_tree(metrics: Dictionary) -> Dictionary:
+	return _evaluate_decision_tree(metrics)
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # BEHAVIORAL METRICS (DERIVED FROM PERFORMANCE)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -951,30 +1169,47 @@ func get_behavioral_metrics() -> Dictionary:
 			"persistence": 0,
 			"mastery_progression": []
 		}
-	
-	# Learning Velocity (improvement rate)
-	var half_idx = int(performance_history.size() / 2.0)
-	var first_half = performance_history.slice(0, half_idx)
-	var second_half = performance_history.slice(
-		half_idx, performance_history.size())
-	
-	var first_avg = _calculate_avg_accuracy(first_half)
-	var second_avg = _calculate_avg_accuracy(second_half)
-	var learning_velocity = second_avg - first_avg
-	
-	# Decision Quality (accuracy / time ratio)
-	var total_quality = 0.0
-	for perf in performance_history:
-		var time_seconds = max(perf["reaction_time"] / 1000.0, 0.1)
-		total_quality += perf["accuracy"] / time_seconds
-	var decision_quality = total_quality / performance_history.size()
-	
-	# Persistence (games played after failures)
-	var persistence = 0
-	for i in range(1, performance_history.size()):
-		if performance_history[i - 1]["accuracy"] < 0.5:
+
+	# Single indexed pass over the retained history.
+	#
+	# This used to take two performance_history.slice() copies (one per half) and
+	# then three more full passes, and it runs once per completed round from
+	# _check_behavioral_milestones(). Because performance_history grows with the
+	# session, the per-round cost — and the amount of garbage handed to the
+	# collector — grew with it, right at the round-end transition.
+	#
+	# "Retained", not "whole session": past MAX_PERFORMANCE_HISTORY rounds the log
+	# holds only the tail, so learning_velocity then compares the older half of
+	# the retained window against the newer half rather than session start against
+	# session end. That bound is ~500 rounds and every milestone here is a one-shot
+	# latch, so in practice they have all fired long before trimming begins.
+	var count: int = performance_history.size()
+	var half_idx: int = int(count / 2.0)
+	var first_sum: float = 0.0
+	var second_sum: float = 0.0
+	var total_quality: float = 0.0
+	var persistence: int = 0
+
+	for i in range(count):
+		var perf: Dictionary = performance_history[i]
+		var acc: float = perf["accuracy"]
+		if i < half_idx:
+			first_sum += acc
+		else:
+			second_sum += acc
+		total_quality += acc / max(perf["reaction_time"] / 1000.0, 0.1)
+		# Persistence = rounds played after a failure. The original counted i in
+		# [1, count) whose predecessor failed, which is the same as counting
+		# failures among the first count-1 entries.
+		if i < count - 1 and acc < 0.5:
 			persistence += 1
-	
+
+	var first_avg: float = first_sum / float(half_idx) if half_idx > 0 else 0.0
+	var second_count: int = count - half_idx
+	var second_avg: float = second_sum / float(second_count) if second_count > 0 else 0.0
+	var learning_velocity: float = second_avg - first_avg
+	var decision_quality: float = total_quality / float(count)
+
 	# Mastery Progression
 	var mastery_progression = []
 	for change in difficulty_changes:
@@ -982,23 +1217,15 @@ func get_behavioral_metrics() -> Dictionary:
 			"timestamp": change["timestamp"],
 			"difficulty": change["new_difficulty"]
 		})
-	
+
 	return {
 		"learning_velocity": learning_velocity,
 		"decision_quality": decision_quality,
 		"persistence": persistence,
 		"mastery_progression": mastery_progression,
-		"total_games": performance_history.size(),
+		"total_games": total_games_recorded,
 		"current_streak": _calculate_current_streak()
 	}
-
-func _calculate_avg_accuracy(perf_array: Array) -> float:
-	if perf_array.is_empty():
-		return 0.0
-	var total = 0.0
-	for perf in perf_array:
-		total += perf["accuracy"]
-	return total / perf_array.size()
 
 func _calculate_current_streak() -> int:
 	var streak = 0
@@ -1009,19 +1236,37 @@ func _calculate_current_streak() -> int:
 			break
 	return streak
 
+## All behavioural milestones, each a one-shot latch.
+##
+## Listed so _check_behavioral_milestones() can tell when every one has fired and
+## stop recomputing metrics it will never act on again.
+const BEHAVIORAL_MILESTONES: Array[String] = [
+	"mastery_achieved",
+	"persistence_award",
+	"speed_demon",
+]
+
 func _check_behavioral_milestones() -> void:
+	# Every milestone below is a one-shot latch, so once all three have fired
+	# there is no outcome this function can produce. It is called after every
+	# completed round, and get_behavioral_metrics() walks the entire session
+	# history — so without this early-out a long session pays a growing scan at
+	# each round-end purely to re-derive numbers that are already spoken for.
+	if _milestones_achieved.size() >= BEHAVIORAL_MILESTONES.size():
+		return
+
 	var metrics = get_behavioral_metrics()
-	
+
 	# Mastery Achievement
 	if metrics["learning_velocity"] > 0.3 and not _has_milestone("mastery_achieved"):
 		behavioral_milestone.emit("mastery_achieved", metrics)
 		_add_milestone("mastery_achieved")
-	
+
 	# Persistence Award
 	if metrics["persistence"] >= 5 and not _has_milestone("persistence_award"):
 		behavioral_milestone.emit("persistence_award", metrics)
 		_add_milestone("persistence_award")
-	
+
 	# Speed Demon
 	if metrics["decision_quality"] > 0.8 and not _has_milestone("speed_demon"):
 		behavioral_milestone.emit("speed_demon", metrics)
@@ -1044,18 +1289,36 @@ func _add_milestone(milestone: String) -> void:
 func get_current_difficulty() -> String:
 	return current_difficulty
 
+## The paper's declared tier outputs for the current difficulty, with no
+## progression layer applied.
+##
+## get_difficulty_settings() returns *applied* values — the tier settings after
+## the supplementary progression ramp is folded in — which is what gameplay wants
+## but is NOT what the paper's Output Specification table declares. Verification
+## and defence demos should read this accessor, so the declared contract
+## (speed_multiplier ∈ {0.7, 1.0, 1.5}, time_limit ∈ {10, 15, 20}) can be shown
+## exactly as published without the ramp confusing the numbers.
+func get_paper_difficulty_settings() -> Dictionary:
+	return DIFFICULTY_SETTINGS[current_difficulty].duplicate(true)
+
+## Tier settings with the supplementary progression ramp applied.
+##
+## The returned speed_multiplier/time_limit are deliberately NOT the paper's
+## declared sets once progressive_level > 0 — see get_paper_difficulty_settings()
+## for those. The ramp is an extra mastery reward layered on top of the algorithm,
+## not part of it: it reads no window metrics and feeds nothing back into Φ or the
+## tier decision.
 func get_difficulty_settings() -> Dictionary:
 	var base_settings = DIFFICULTY_SETTINGS[current_difficulty].duplicate()
-	
-	# Apply progressive difficulty multipliers (NO CEILING!)
-	# The better the player performs, the harder it gets - infinitely!
+
+	# Apply the supplementary progression ramp (bounded — see MAX_PROGRESSIVE_LEVEL)
 	if progressive_level > 0:
 		# Each progressive level makes the game harder
 		var progression_multiplier = 1.0 + (progressive_level * 0.15)  # +15% per level
-		
+
 		# Speed increases exponentially
 		base_settings["speed_multiplier"] *= progression_multiplier
-		
+
 		# Time limit decreases (minimum 3 seconds to keep it playable)
 		var new_limit = int(
 			base_settings["time_limit"] / progression_multiplier)
@@ -1092,7 +1355,7 @@ func get_algorithm_status() -> Dictionary:
 	# Use this to display the algorithm's work to panelists or in debug UI.
 	var metrics = _get_window_metrics() if performance_window.size() > 0 else {}
 	var required_games = _get_effective_min_games()
-	var session_games = performance_history.size()
+	var session_games = total_games_recorded
 	var lifetime_games = _get_lifetime_games_played()
 	
 	var status = {
@@ -1201,6 +1464,91 @@ func has_chaos_effect(effect_name: String) -> bool:
 # RESEARCH DATA EXPORT
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+## Trajectory summary of every difficulty decision recorded this session.
+##
+## Pure aggregation of difficulty_changes, which _adapt_difficulty() appends to on
+## every evaluation. Nothing here is recomputed, inferred or estimated.
+##
+## It exists because the two fields an examiner reads first - final_difficulty and
+## window_metrics - are both INSTANTANEOUS samples of the last window, and a
+## session that held Hard for forty consecutive games and then had the player
+## abandon four rounds exports final_difficulty = "Easy". Measured over the 48
+## case studies in user://: final_difficulty reads Easy in 38 and Medium in 10 and
+## Hard in none, while the difficulty_timeline arrays inside those same 48 files
+## contain 129 Hard decisions, including one unbroken 41-evaluation Hard streak.
+## The export contradicted itself; this is the field that resolves it.
+func get_difficulty_progression() -> Dictionary:
+	var order: Array[String] = ["Easy", "Medium", "Hard"]
+	var counts: Dictionary = {"Easy": 0, "Medium": 0, "Hard": 0}
+	var longest: Dictionary = {"Easy": 0, "Medium": 0, "Hard": 0}
+	var first_at: Dictionary = {"Easy": null, "Medium": null, "Hard": null}
+	var sequence: PackedStringArray = PackedStringArray()
+	var transitions: int = 0
+	var phi_min: float = INF
+	var phi_max: float = -INF
+	var phi_above_hard: int = 0
+	var run_tier: String = ""
+	var run_len: int = 0
+
+	for i in range(difficulty_changes.size()):
+		var entry: Dictionary = difficulty_changes[i]
+		var tier: String = str(entry.get("new_difficulty", ""))
+		if not counts.has(tier):
+			continue
+		counts[tier] = int(counts[tier]) + 1
+		if first_at[tier] == null:
+			# 1-based index into the evaluation sequence: "reached on the Nth
+			# evaluated game", which is the form a results chapter quotes.
+			first_at[tier] = i + 1
+		sequence.append(tier.substr(0, 1))
+		if str(entry.get("old_difficulty", "")) != tier:
+			transitions += 1
+		if tier == run_tier:
+			run_len += 1
+		else:
+			run_tier = tier
+			run_len = 1
+		if run_len > int(longest[tier]):
+			longest[tier] = run_len
+		var m: Dictionary = entry.get("metrics", {})
+		if m.has("proficiency_index"):
+			var phi: float = float(m["proficiency_index"])
+			phi_min = minf(phi_min, phi)
+			phi_max = maxf(phi_max, phi)
+			if phi > PROFICIENCY_THRESHOLD_HARD:
+				phi_above_hard += 1
+
+	var reached: Array[String] = []
+	var peak = null
+	for t in order:
+		if int(counts[t]) > 0:
+			reached.append(t)
+			peak = t
+
+	var has_phi: bool = phi_max > -INF
+	return {
+		"evaluations": difficulty_changes.size(),
+		"tiers_reached": reached,
+		# The single claim a defence has to make about the decision tree.
+		"all_three_tiers_reached": reached.size() == order.size(),
+		"decisions_per_tier": counts,
+		"longest_consecutive_per_tier": longest,
+		"first_reached_at_evaluation": first_at,
+		"peak_difficulty": peak,
+		"tier_transitions": transitions,
+		# Instantaneous, NOT a summary: the tier the last evaluated window landed on.
+		"final_difficulty": current_difficulty,
+		"tier_sequence": ">".join(sequence),
+		# null, not 0.0, when no evaluation has run: an unmeasured range must not
+		# read as a measured one.
+		"phi_min": (phi_min if has_phi else null),
+		"phi_max": (phi_max if has_phi else null),
+		"phi_above_hard_threshold": phi_above_hard,
+		"easy_threshold": PROFICIENCY_THRESHOLD_EASY,
+		"hard_threshold": PROFICIENCY_THRESHOLD_HARD
+	}
+
+
 func export_complete_session() -> Dictionary:
 	var session_data = {
 		"session_id": session_id,
@@ -1209,19 +1557,32 @@ func export_complete_session() -> Dictionary:
 		
 		# Gameplay Data
 		"gameplay": {
-			"total_games_played": performance_history.size(),
+			"total_games_played": total_games_recorded,
 			"total_score": total_score,
 			"performance_history": performance_history,
+			# Flags whether the log above is the full session or only its tail, so
+			# an analyst reading the export can never mistake a trimmed log for a
+			# complete one.
+			"performance_history_capped": (
+				performance_history.size() >= MAX_PERFORMANCE_HISTORY
+			),
+			"performance_history_retained": performance_history.size(),
 			"difficulty_timeline": difficulty_changes,
 			"behavioral_metrics": get_behavioral_metrics(),
 			"final_difficulty": current_difficulty,
+			# final_difficulty above is one instantaneous sample. The trajectory it
+			# came from is what actually evidences the three-tier decision tree.
+			"difficulty_progression": get_difficulty_progression(),
 			"window_metrics": _get_window_metrics()
 		},
 		
 		# Algorithm Performance
 		"algorithm_stats": {
 			"total_adaptations": difficulty_changes.size(),
+			# Measured, not estimated. -1.0 means no adaptation ran this
+			# session, so there is nothing to report.
 			"avg_latency_ms": _calculate_avg_latency(),
+			"latency": get_latency_report(),
 			"window_size": window_size,
 			"adaptation_frequency": adaptation_frequency
 		}
@@ -1253,9 +1614,42 @@ func get_case_study_data() -> Dictionary:
 	return export_complete_session()
 
 func _calculate_avg_latency() -> float:
-	# This would require actual timing measurements during adaptation
-	# For now, return target latency as estimate
-	return target_latency_ms
+	# Mean of REAL measured adaptation-pass durations. Returns -1.0 when no
+	# adaptation has run yet so consumers can tell "not measured" apart from
+	# "measured as fast", rather than reading a fabricated 0 or target value.
+	if adaptation_latency_samples <= 0:
+		return -1.0
+	return adaptation_latency_total_ms / float(adaptation_latency_samples)
+
+## Record one measured adaptation-pass duration (milliseconds).
+## Running sum/count/max are kept separately from the sample array so the
+## reported statistics stay exact after the array is trimmed.
+func _record_adaptation_latency(elapsed_ms: float) -> void:
+	if elapsed_ms < 0.0:
+		return
+	adaptation_latency_total_ms += elapsed_ms
+	adaptation_latency_samples += 1
+	if elapsed_ms > adaptation_latency_max_ms:
+		adaptation_latency_max_ms = elapsed_ms
+	adaptation_latencies_ms.append(elapsed_ms)
+	if adaptation_latencies_ms.size() > MAX_LATENCY_SAMPLES:
+		adaptation_latencies_ms.pop_front()
+
+## Honest latency report for the thesis. All figures are measured; the only
+## declared value is the target the measurements are compared against.
+func get_latency_report() -> Dictionary:
+	var measured: bool = adaptation_latency_samples > 0
+	var avg: float = _calculate_avg_latency()
+	return {
+		"measured": measured,
+		"samples": adaptation_latency_samples,
+		"avg_ms": avg,
+		"max_ms": adaptation_latency_max_ms if measured else -1.0,
+		"target_ms": target_latency_ms,
+		# Only meaningful when measured; explicitly false otherwise so an
+		# unmeasured session can never read as a passing result.
+		"within_target": measured and avg >= 0.0 and avg < target_latency_ms
+	}
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # UTILITY METHODS
@@ -1270,7 +1664,7 @@ func get_total_score() -> int:
 	return total_score
 
 func get_games_played() -> int:
-	return performance_history.size()
+	return total_games_recorded
 
 func get_performance_history() -> Array:
 	return performance_history.duplicate()
@@ -1299,33 +1693,38 @@ func _log_system_start() -> void:
 func _log_difficulty_change(change_data: Dictionary) -> void:
 	if not enable_research_logging:
 		return
-	
+
 	var metrics = change_data["metrics"]
-	
-	print("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-	print("📊 ADAPTIVE DIFFICULTY UPDATE (Formative)")
-	print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-	print("🔬 Algorithm: Rule-Based Rolling Window")
-	print("📏 Window: %d/%d games" % [metrics["window_size"], window_size])
-	print("")
-	print("📈 Performance Metrics:")
-	print("  • Success Rate: %.1f%%" % metrics["success_rate"])
-	print("  • Avg Time: %.1fs" % metrics["avg_time"])
-	print("  • Avg Mistakes: %.1f" % metrics["avg_mistakes"])
-	print("  • Total Errors: %d" % metrics["total_errors"])
-	print("")
-	print("🌳 Decision Tree:")
+
+	# Deferred, not printed inline. This block runs only on a tier change, which
+	# is exactly when the results screen is tearing down and the next minigame is
+	# loading. ~20 synchronous print() calls there cost 464–754 ms of main-thread
+	# time in a 150 s soak (measured), stalling the transition on the frame the
+	# player is waiting on. The output is unchanged — it flushes after the frame.
+	_queue_log("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	_queue_log("📊 ADAPTIVE DIFFICULTY UPDATE (Formative)")
+	_queue_log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	_queue_log("🔬 Algorithm: Rule-Based Rolling Window")
+	_queue_log("📏 Window: %d/%d games" % [metrics["window_size"], window_size])
+	_queue_log("")
+	_queue_log("📈 Performance Metrics:")
+	_queue_log("  • Success Rate: %.1f%%" % metrics["success_rate"])
+	_queue_log("  • Avg Time: %.1fs" % metrics["avg_time"])
+	_queue_log("  • Avg Mistakes: %.1f" % metrics["avg_mistakes"])
+	_queue_log("  • Total Errors: %d" % metrics["total_errors"])
+	_queue_log("")
+	_queue_log("🌳 Decision Tree:")
 	for path in change_data["decision_path"]:
-		print("  %s" % path)
-	print("")
-	print("🎯 Difficulty: %s → %s" % [change_data["old_difficulty"], change_data["new_difficulty"]])
-	print("💡 Reason: %s" % change_data["reason"])
-	
+		_queue_log("  %s" % path)
+	_queue_log("")
+	_queue_log("🎯 Difficulty: %s → %s" % [change_data["old_difficulty"], change_data["new_difficulty"]])
+	_queue_log("💡 Reason: %s" % change_data["reason"])
+
 	if change_data["new_difficulty"] == "Hard":
 		var settings = DIFFICULTY_SETTINGS["Hard"]
-		print("🎪 CHAOS EFFECTS: %s" % str(settings["chaos_effects"]))
-	
-	print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+		_queue_log("🎪 CHAOS EFFECTS: %s" % str(settings["chaos_effects"]))
+
+	_queue_log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # POST-TEST (Summative Assessment)
@@ -1496,8 +1895,23 @@ func get_posttest_results() -> Dictionary:
 		"category_breakdown": breakdown
 	}
 
-func calculate_correlation() -> Dictionary:
-	## Compute correlation between in-game performance and posttest knowledge score.
+## How closely this player's gameplay accuracy and posttest knowledge score agree.
+##
+## Deliberately NOT called a correlation, and deliberately not reported as Pearson r.
+## Pearson r is defined over N paired observations across a sample; both of its
+## variance terms are zero for a single participant, so r is undefined here — there
+## is no sample to correlate, only one player's two scores. This screen used to print
+## the value below as "Correlation (r)", which would not survive the first question
+## about how it was computed.
+##
+## What it actually is: both scores are put on [0,1] and their gap is scaled so that
+## identical scores give 1.0, a 50-point gap gives 0.0, and a 100-point gap gives
+## -1.0. That is a legitimate agreement index for one learner's feedback screen —
+## "did your play match what you retained" — and it is presented as exactly that.
+##
+## A real correlation for the study has to be computed across participants from the
+## exported session data (see export_session_data()), not in-game from one session.
+func calculate_knowledge_alignment() -> Dictionary:
 	var gameplay_perf := 0.0
 	if performance_history.size() > 0:
 		var acc_sum := 0.0
@@ -1508,24 +1922,30 @@ func calculate_correlation() -> Dictionary:
 	var results := get_posttest_results()
 	var posttest_knowledge: float = results["percentage"]
 
-	# Approximate Pearson-r via normalized deviation with both values on [0,1].
 	var gp_norm := gameplay_perf / 100.0
 	var pk_norm := posttest_knowledge / 100.0
-	var r := 0.0
+	var alignment := 0.0
 	if gameplay_perf > 0.0 or posttest_knowledge > 0.0:
-		r = clampf(1.0 - absf(gp_norm - pk_norm) * 2.0, -1.0, 1.0)
+		alignment = clampf(1.0 - absf(gp_norm - pk_norm) * 2.0, -1.0, 1.0)
 
+	# Signed, not absolute. The ladder used to test absf(alignment), which made the
+	# worst possible result read as the best: 5% gameplay against a 95% posttest is a
+	# 0.9 gap, i.e. alignment -0.8, and absf() promoted that to "Strong". A negative
+	# alignment means the two measures disagree, which is its own finding and must
+	# never be reported as agreement.
 	var interpretation: String
-	if absf(r) >= 0.7:
-		interpretation = "Strong correlation between gameplay and water conservation knowledge"
-	elif absf(r) >= 0.4:
-		interpretation = "Moderate correlation between gameplay and knowledge"
+	if alignment >= 0.7:
+		interpretation = "Gameplay closely matches water conservation knowledge"
+	elif alignment >= 0.4:
+		interpretation = "Gameplay moderately matches knowledge"
+	elif alignment >= 0.0:
+		interpretation = "Gameplay and knowledge only loosely match — more practice recommended"
 	else:
-		interpretation = "Low correlation — more practice recommended"
+		interpretation = "Gameplay and knowledge scores disagree — worth reviewing both"
 
 	return {
 		"gameplay_performance": gameplay_perf,
 		"posttest_knowledge": posttest_knowledge,
-		"correlation_coefficient": r,
+		"alignment_index": alignment,
 		"interpretation": interpretation
 	}

@@ -77,3 +77,71 @@ func assert_lte(actual: float, threshold: float, message := "") -> void:
 	if not (actual <= threshold):
 		var fallback = "Assertion failed: %s > %s" % [str(actual), str(threshold)]
 		push_warning(message if message != "" else fallback)
+
+# ──────────────────────────────────────────────────────────────────────────
+# GUT-COMPATIBLE ALIASES AND CONTAINER / TYPE ASSERTIONS
+# ──────────────────────────────────────────────────────────────────────────
+# The suites under test/ were written against the real GUT addon, which is not
+# vendored here — this file is a minimal stand-in. Five suites failed to parse
+# because they call assertions that existed in GUT but were never stubbed:
+# assert_has, assert_typeof, assert_same, assert_equal, assert_approximately.
+# A parse failure takes the whole file out, so those suites were not merely
+# failing, they were not running at all.
+
+## Passes when `container` holds `key`.
+## Works for Dictionary keys and for Array/String membership, mirroring GUT.
+func assert_has(container, key, message := "") -> void:
+	var found := false
+	if container is Dictionary:
+		found = (container as Dictionary).has(key)
+	elif container is Array:
+		found = (container as Array).has(key)
+	elif container is String:
+		found = (container as String).contains(str(key))
+	else:
+		push_warning("assert_has: unsupported container type %s" % typeof(container))
+		return
+
+	if not found:
+		var fallback = "Assertion failed: container missing %s" % str(key)
+		push_warning(message if message != "" else fallback)
+
+## Passes when `value`'s runtime type matches the TYPE_* constant `expected_type`.
+func assert_typeof(value, expected_type: int, message := "") -> void:
+	if typeof(value) != expected_type:
+		var fallback = "Assertion failed: typeof %d != expected %d" % [
+			typeof(value), expected_type
+		]
+		push_warning(message if message != "" else fallback)
+
+## Passes when both arguments are the SAME instance, not merely equal.
+## Object identity is compared by instance id; other types fall back to ==,
+## since only objects have a meaningful identity distinct from equality.
+func assert_same(a, b, message := "") -> void:
+	var identical := false
+	if a is Object and b is Object:
+		var obj_a := a as Object
+		var obj_b := b as Object
+		identical = (
+			obj_a != null and obj_b != null
+			and obj_a.get_instance_id() == obj_b.get_instance_id()
+		)
+	else:
+		identical = (a == b)
+
+	if not identical:
+		push_warning(message if message != "" else "Assertion failed: not the same instance")
+
+## GUT spells equality both ways; keep both so suites can use either.
+func assert_equal(actual, expected, message := "") -> void:
+	assert_eq(actual, expected, message)
+
+func assert_not_equal(actual, expected, message := "") -> void:
+	assert_ne(actual, expected, message)
+
+## Tolerance-based float comparison. Same semantics as assert_almost_eq, kept
+## under GUT's longer name because the suites use both spellings.
+func assert_approximately(
+	actual: float, expected: float, tolerance: float, message := ""
+) -> void:
+	assert_almost_eq(actual, expected, tolerance, message)

@@ -50,6 +50,13 @@ signal object_missed(obj: Area2D)
 var screen_size: Vector2 = Vector2.ZERO
 var current_width: float = 100.0
 var target_x: float = 0.0
+## Which contact steers the bucket. target_x used to be assigned from ANY touch
+## index, so a thumb resting at the screen edge - normal in a two-handed hold -
+## pinned the bucket there for as long as it rested. The first contact keeps
+## steering until it lifts; the mouse only steers when no finger is down, which on
+## Android leaves the emulated pointer out of the way.
+const NO_TOUCH_INDEX: int = -1
+var _steer_index: int = NO_TOUCH_INDEX
 var is_active: bool = true
 
 # Difficulty adjustment
@@ -146,9 +153,22 @@ func _input(event: InputEvent) -> void:
 	
 	# Follow mouse/touch position
 	if event is InputEventMouseMotion:
-		target_x = event.position.x
-	elif event is InputEventScreenTouch or event is InputEventScreenDrag:
-		target_x = event.position.x
+		if _steer_index == NO_TOUCH_INDEX:
+			target_x = event.position.x
+	elif event is InputEventScreenTouch:
+		var touch := event as InputEventScreenTouch
+		if touch.pressed:
+			if _steer_index == NO_TOUCH_INDEX:
+				_steer_index = touch.index
+				target_x = touch.position.x
+		elif touch.index == _steer_index:
+			_steer_index = NO_TOUCH_INDEX
+	elif event is InputEventScreenDrag:
+		var drag := event as InputEventScreenDrag
+		if _steer_index == NO_TOUCH_INDEX:
+			_steer_index = drag.index
+		if drag.index == _steer_index:
+			target_x = drag.position.x
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # COLLISION HANDLING

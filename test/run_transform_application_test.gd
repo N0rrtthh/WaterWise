@@ -160,24 +160,29 @@ func test_transform_application_logic():
 	print("\nTesting Edge Cases...")
 	
 	# Test zero scale (should be clamped to minimum)
+	#
+	# Compared with is_equal_approx, not ==. Vector2 stores 32-bit floats, so
+	# 0.01 is narrowed on assignment and never equals the 64-bit literal exactly
+	# — this assertion reported a clamping failure that did not exist. The 10.0
+	# case below happened to pass only because 10 is exactly representable.
 	var zero_scale = Vector2.ZERO
 	var clamped_scale = Vector2(clamp(zero_scale.x, 0.01, 10.0), clamp(zero_scale.y, 0.01, 10.0))
-	if clamped_scale.x == 0.01 and clamped_scale.y == 0.01:
+	if is_equal_approx(clamped_scale.x, 0.01) and is_equal_approx(clamped_scale.y, 0.01):
 		test_passed += 1
 		print("  ✓ Zero scale clamped to minimum (0.01, 0.01)")
 	else:
 		test_failed += 1
-		print("  ✗ FAILED: Zero scale not clamped correctly")
+		print("  ✗ FAILED: Zero scale not clamped correctly (got %s)" % str(clamped_scale))
 	
 	# Test extreme scale (should be clamped to maximum)
 	var extreme_scale = Vector2(100.0, 100.0)
 	var clamped_extreme = Vector2(clamp(extreme_scale.x, 0.01, 10.0), clamp(extreme_scale.y, 0.01, 10.0))
-	if clamped_extreme.x == 10.0 and clamped_extreme.y == 10.0:
+	if is_equal_approx(clamped_extreme.x, 10.0) and is_equal_approx(clamped_extreme.y, 10.0):
 		test_passed += 1
 		print("  ✓ Extreme scale clamped to maximum (10.0, 10.0)")
 	else:
 		test_failed += 1
-		print("  ✗ FAILED: Extreme scale not clamped correctly")
+		print("  ✗ FAILED: Extreme scale not clamped correctly (got %s)" % str(clamped_extreme))
 	
 	# Print summary
 	print("\n" + "=".repeat(60))

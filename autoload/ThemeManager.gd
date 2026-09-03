@@ -9,6 +9,14 @@ extends Node
 
 signal theme_changed(is_dark: bool)
 
+## Emoji fallback font (monochrome Noto Emoji) — see _install_emoji_fallback().
+const EMOJI_FONT_PATH := "res://fonts/NotoEmoji.ttf"
+## Bundled display fonts that get the emoji fallback attached.
+const BASE_FONT_PATHS: Array[String] = [
+	"res://fonts/Cubao_Free_Wide.otf",
+	"res://fonts/NTBrickSans.otf",
+]
+
 # Global full-screen tint colors. Dark mode is intentionally cool-toned,
 # not pure black, so the game remains colorful while still distinct.
 const LIGHT_SCENE_TINT := Color(1.0, 0.97, 0.88, 0.06)
@@ -127,12 +135,38 @@ const MINIGAME_THEME_KEYWORDS: Array[Dictionary] = [
 const DEFAULT_MINIGAME_THEME_ID := "aqua_blue"
 
 func _ready() -> void:
+	_install_emoji_fallback()
 	_ensure_theme_tint_layer()
 	if not theme_changed.is_connected(_on_theme_changed):
 		theme_changed.connect(_on_theme_changed)
 
 	# Apply saved theme on startup
 	call_deferred("_apply_initial_theme")
+
+## The bundled display fonts (Cubao, NT Brick Sans) have no emoji glyphs, so
+## every emoji in UI text rendered as tofu boxes. Attaching the monochrome
+## Noto Emoji font as a fallback on each bundled FontFile resource fixes ALL
+## emoji labels project-wide in one place (resources are cached, so patching
+## the loaded instance covers every screen that loads these fonts).
+func _install_emoji_fallback() -> void:
+	if not ResourceLoader.exists(EMOJI_FONT_PATH):
+		push_warning("ThemeManager: emoji fallback font missing: " + EMOJI_FONT_PATH)
+		return
+	var emoji_font: Font = load(EMOJI_FONT_PATH)
+	if emoji_font == null:
+		return
+	for font_path in BASE_FONT_PATHS:
+		if not ResourceLoader.exists(font_path):
+			continue
+		var base_font: Font = load(font_path)
+		if base_font == null:
+			continue
+		var fallbacks: Array = base_font.fallbacks.duplicate() if base_font.fallbacks else []
+		if emoji_font in fallbacks:
+			continue
+		fallbacks.append(emoji_font)
+		base_font.fallbacks = fallbacks
+
 
 func _apply_initial_theme() -> void:
 	theme_changed.emit(is_dark_mode())

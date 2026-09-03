@@ -198,8 +198,10 @@ func _spawn_particle(particle_type: CutsceneTypes.ParticleType, label: String) -
 	# Clear previous particles
 	_clear_particles()
 	
-	# Spawn new particles
-	current_particles = await character.spawn_particles(particle_type, 2.0)
+	# Spawn new particles.
+	# spawn_particles() is synchronous now — it returns the emitter immediately
+	# and schedules its own expiry — so awaiting it would await a plain Node.
+	current_particles = character.spawn_particles(particle_type, 2.0)
 	
 	# Apply adaptive density
 	if current_particles:

@@ -76,9 +76,22 @@ var _sweep_running: bool = false
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func _ready() -> void:
-	print("🌐 NetworkFaultSimulator ready")
-	print("   Packet loss: %.0f%%, Latency: %.0f–%.0fms" % [
+	# This module is an OFFLINE simulator: it operates purely on its own
+	# host_counter/client_counter pair and never touches NetworkManager or the
+	# live GCounter. The rates below describe the fault conditions a sweep will
+	# inject when one is explicitly started — real multiplayer traffic is never
+	# dropped or delayed by this node.
+	print("🌐 NetworkFaultSimulator ready (idle — no effect on live multiplayer)")
+	print("   Sweep profile when run: %.0f%% loss, %.0f–%.0fms jitter" % [
 		packet_loss_rate * 100, latency_min_ms, latency_max_ms])
+
+	# Event-driven, not polled. As an autoload this node outlives every scene, so
+	# a _process() that runs unconditionally would call into the delivery queue
+	# ~60 times a second for the entire session — allocating a scratch array each
+	# time — while the queue is empty in all but the few seconds a sweep is
+	# actually running. Processing is switched on only while packets are in
+	# flight (see send_sync_packet / _process_delivery_queue).
+	set_process(false)
 
 func _process(_delta: float) -> void:
 	_process_delivery_queue()
@@ -110,23 +123,44 @@ func send_sync_packet(from: String, counter_state: Dictionary) -> bool:
 		"jitter_ms": jitter_ms
 	})
 
+	# A packet is now in flight, so the queue needs ticking until it drains.
+	set_process(true)
+
 	return true
 
-## Process the delivery queue — deliver packets whose jitter time has elapsed
+## Process the delivery queue — deliver packets whose jitter time has elapsed.
+##
+## Packets are removed from the queue BEFORE being delivered. _deliver_packet
+## emits packet_delivered and convergence_measured, and a listener is free to
+## call send_sync_packet or reset_stats from those handlers — which would
+## reallocate delivery_queue underneath us. Collecting indices during the walk
+## and deleting afterwards (the previous approach) would then delete the wrong
+## entries or index out of bounds.
 func _process_delivery_queue() -> void:
-	var now_usec = Time.get_ticks_usec()
-	var delivered: Array[int] = []
+	var now_usec := Time.get_ticks_usec()
+	var due: Array[Dictionary] = []
+	var still_in_flight: Array[Dictionary] = []
 
-	for i in range(delivery_queue.size()):
-		var pkt = delivery_queue[i]
-		if now_usec >= pkt["deliver_at_usec"]:
-			delivered.append(i)
-			_deliver_packet(pkt)
+	for pkt in delivery_queue:
+		if now_usec >= int(pkt["deliver_at_usec"]):
+			due.append(pkt)
+		else:
+			still_in_flight.append(pkt)
 
-	# Remove delivered packets (reverse order to keep indices valid)
-	delivered.reverse()
-	for idx in delivered:
-		delivery_queue.remove_at(idx)
+	if due.is_empty():
+		# Nothing due. Stop ticking once the queue is completely empty, otherwise
+		# keep processing until the remaining jitter timers expire.
+		if delivery_queue.is_empty():
+			set_process(false)
+		return
+
+	delivery_queue = still_in_flight
+
+	for pkt in due:
+		_deliver_packet(pkt)
+
+	if delivery_queue.is_empty():
+		set_process(false)
 
 ## Deliver a packet — merge into the target replica
 func _deliver_packet(pkt: Dictionary) -> void:
@@ -310,6 +344,7 @@ func run_packet_loss_sweep(host_amount: int = 5, client_amount: int = 3) -> void
 		else:
 			min_ms = 0.0
 
+		var all_converged: bool = converge_count == SWEEP_TRIALS_PER_RATE
 		var rate_result = {
 			"loss_rate_pct": rate * 100.0,
 			"trials": SWEEP_TRIALS_PER_RATE,
@@ -318,7 +353,7 @@ func run_packet_loss_sweep(host_amount: int = 5, client_amount: int = 3) -> void
 			"avg_convergence_ms": avg_ms,
 			"min_convergence_ms": min_ms,
 			"max_convergence_ms": max_ms,
-			"meets_target": avg_ms <= CONVERGENCE_TARGET_MS and converge_count == SWEEP_TRIALS_PER_RATE,
+			"meets_target": avg_ms <= CONVERGENCE_TARGET_MS and all_converged,
 			"total_packets_sent": total_packets_sent,
 			"total_packets_dropped": total_packets_dropped,
 			"avg_retries": float(total_retries) / SWEEP_TRIALS_PER_RATE

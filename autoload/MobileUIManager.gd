@@ -14,9 +14,16 @@ extends Node
 const UIScalerUtil = preload("res://scripts/mobile/UIScaler.gd")
 const LayoutManagerUtil = preload("res://scripts/mobile/LayoutManager.gd")
 
-# Godot 4 DisplayServer screen orientation int values
-const SCREEN_LANDSCAPE_VALUE: int = 0       # SCREEN_LANDSCAPE
-const SCREEN_SENSOR_LANDSCAPE_VALUE: int = 6 # SCREEN_SENSOR_LANDSCAPE
+# Godot's own DisplayServer.ScreenOrientation values, referenced symbolically
+# instead of copied. The copies read 0 and 6, and 6 is SCREEN_SENSOR - free
+# rotation into BOTH portraits - not SCREEN_SENSOR_LANDSCAPE, which is 4. So
+# flipping allow_reverse_landscape, whose name promises the other LANDSCAPE,
+# would have handed the device full rotation and broken every landscape-only
+# assumption below (is_portrait is pinned false, and the whole mobile layout is
+# authored against a 16:9-or-wider canvas). Checked against the engine by
+# tools/ProbeOrientation.tscn so a future enum change cannot pass unnoticed.
+const SCREEN_LANDSCAPE_VALUE: int = DisplayServer.SCREEN_LANDSCAPE
+const SCREEN_SENSOR_LANDSCAPE_VALUE: int = DisplayServer.SCREEN_SENSOR_LANDSCAPE
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # SIGNALS
@@ -49,7 +56,16 @@ signal keyboard_visibility_changed(keyboard_height: int)
 
 ## Orientation
 @export var enforce_landscape_only: bool = true
-@export var allow_reverse_landscape: bool = false
+## Whether the device may auto-rotate between the two LANDSCAPE orientations.
+##
+## Was false, which made _enforce_landscape_orientation() push SCREEN_LANDSCAPE
+## and silently override project.godot's handheld/orientation="sensor_landscape"
+## on every _ready() and every resize. A player holding the phone the other way
+## round got an upside-down game that would not rotate, and the setting the
+## Android export writes into the manifest disagreed with the setting the running
+## game applied. Both values are landscape, so this does not weaken
+## enforce_landscape_only - is_portrait stays pinned false either way.
+@export var allow_reverse_landscape: bool = true
 
 ## Performance
 @export var mobile_particle_reduction: float = 0.4
@@ -58,7 +74,32 @@ signal keyboard_visibility_changed(keyboard_height: int)
 var _last_scene: Node = null
 @export var mobile_target_fps: int = 30
 
-## Gameplay adjustments
+## Gameplay adjustments — UNADOPTED BY DESIGN. Read this before wiring them in.
+##
+## These four knobs and apply_game_object_scaling() feed the getters below. Nothing
+## in the shipped game calls those getters: the one minigame that did (CatchTheRainV2)
+## was measured and reverted. See tools/VerifyMobilePath.tscn and the comments in
+## CatchTheRainV2._apply_difficulty_settings / _build_drum for the numbers.
+##
+## Why they stay unused rather than being wired into MiniGameBase/MicrogameShell:
+##
+##   * The speed and spawn knobs move the wrong quantity. reaction_time in
+##     MiniGameBase is the round's ELAPSED time and AdaptiveDifficulty normalises it
+##     by the TIER's time_limit, which these do not touch — so slowing a game down
+##     LOWERS the thesis speed term 1 - T_r/T_max for the mobile player.
+##   * Any of them applied to some games and not others makes a player's
+##     (Accuracy, ReactionTime) samples incomparable across games on one device, and
+##     those samples are the study's data, not a game feature.
+##   * apply_game_object_scaling scales a Node2D's drawing only. Every minigame's hit
+##     test is arithmetic against authored constants, so scaling the node desynchronises
+##     the visuals from the logic rather than enlarging a touch target.
+##   * project.godot stretches "canvas_items" from a 1920x1080 base, so gameplay
+##     objects are already proportionally identical on every panel. Scaling on mobile
+##     compensates a second time for something the stretch mode has already done.
+##
+## The mobile provisions that ARE wired, and are the right places to extend, are the
+## UI ones: safe-area insets, touch-target minimum sizes and haptics, applied to every
+## scene automatically by _on_tree_changed → adapt_scene_for_mobile.
 @export var mobile_game_speed_reduction: float = 0.15
 @export var mobile_timing_window_increase: float = 0.2
 @export var mobile_spawn_rate_reduction: float = 0.1
@@ -76,11 +117,14 @@ var debug_logging_enabled: bool = false
 var debug_visualization_enabled: bool = false
 var viewport_width: int = 0
 var viewport_height: int = 0
-
-# Orientation change detection
-var _orientation_change_timer: float = 0.0
-var _pending_orientation_change: bool = false
-var _new_orientation: bool = false
+# Orientation change detection is handled synchronously by
+# _on_viewport_size_changed(), which the root Viewport's size_changed signal
+# drives. It used to ALSO be polled from _process() behind a 0.5 s debounce
+# (_pending_orientation_change / _orientation_change_timer / _new_orientation);
+# tools/VerifyViewportPolling.tscn measured that path as unreachable — the signal
+# handler has already overwritten viewport_width/height before any frame boundary,
+# so the poll's comparison was false forever and the debounce never armed across
+# 307 frames spanning two real orientation flips. The dead poll is gone.
 
 # Keyboard avoidance
 var keyboard_height: int = 0  ## Current on-screen keyboard height (pixels, 0 when hidden)
@@ -95,9 +139,50 @@ var _low_fps_warning_shown: bool = false
 # Background state
 var _is_in_background: bool = false
 
+## Whether THIS autoload is the one that paused the tree.
+##
+## _on_app_focus_gained() used to clear get_tree().paused unconditionally, which
+## cancelled every pause the game takes on purpose: GameManager.pause_game(),
+## NetworkManager._execute_pause(), MiniGameBase pause menu, the pause handlers in
+## all five MP minigames, and MultiplayerGameOver. On Android that is an everyday
+## gesture - open the pause menu, pull the notification shade down, dismiss it - and
+## the round resumed underneath a pause menu still on screen. The pause is only ours
+## to lift if it was ours to take. Covered by tools/ProbeBackgroundPause.tscn.
+var _paused_by_background: bool = false
+
 # Debug visualization
 var _debug_overlay: CanvasLayer = null
 var _last_adapted_scene_id: int = -1
+
+## The Android/Material minimum touch target, in density-independent pixels.
+## Android's accessibility guidance states 48dp; WCAG 2.5.5 asks for the
+## equivalent 44 CSS px, so 48dp satisfies both.
+const MIN_TOUCH_TARGET_DP: float = 48.0
+
+## Marker meta a scene sets on the Control it manages itself, so
+## adapt_scene_for_mobile() leaves that node's offsets alone. Settings uses it: it
+## needs the safe-area inset AND a reserve for its fixed action bar in the same
+## two properties, and only the scene knows how tall that bar is.
+const SAFE_AREA_SELF_MANAGED_META := "safe_area_self_managed"
+
+## Test-only dpi injection, mirroring debug_mobile_mode above. tools/AuditMobileUI.gd
+## sets this to a real device's dpi so the touch-target maths can be verified at
+## several device profiles on one desktop screen. 0.0 means "ask the DisplayServer".
+var debug_dpi_override: float = 0.0
+
+## Test-only cutout injection, in DEVICE PIXELS, same shape as
+## SafeAreaInfo.to_dictionary(). Desktop and headless DisplayServers report no
+## cutout at all, so without a seam the entire safe-area path is unreachable off
+## a real phone and could only be reasoned about, not measured. Empty means
+## "ask the DisplayServer".
+var debug_safe_area_px_override: Dictionary = {}
+
+## Cache for _resolve_button_min_size(). Recomputed on resize and when the
+## large-touch-target setting changes, because the dp-derived floor depends on the
+## window size, and because the node_added hook asks for this value once per node
+## added to the tree.
+var _button_min_cache: Vector2 = Vector2.ZERO
+var _button_min_cache_valid: bool = false
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # INITIALIZATION
@@ -133,6 +218,8 @@ func _ready() -> void:
 			get_tree().connect("current_scene_changed", _on_current_scene_changed)
 	else:
 		get_tree().tree_changed.connect(_on_tree_changed)
+	# Catch buttons built at runtime, which a single scene-change pass misses.
+	get_tree().node_added.connect(_on_node_added)
 	
 	# Create debug overlay if enabled
 	if debug_visualization_enabled:
@@ -146,51 +233,26 @@ func _ready() -> void:
 	print("   - Orientation: %s" % ("Portrait" if is_portrait else "Landscape"))
 	print("   - Debug Mode: %s" % debug_mobile_mode)
 
+## Frame-rate sampling, and nothing else.
+##
+## The viewport-size poll that used to live here was unreachable: the size_changed
+## handler mirrors viewport_width/height synchronously inside the resize, so by the
+## time a frame boundary arrived the poll's comparison was always false and its
+## 0.5 s orientation debounce never armed (measured over 307 frames and two real
+## flips in tools/VerifyViewportPolling.tscn). Removing it leaves _monitor_frame_rate
+## as the only body, which is mobile-only — so _refresh_process_state() switches this
+## callback off entirely on desktop and while the app is backgrounded rather than
+## paying a per-frame script call to reach an early return.
 func _process(delta: float) -> void:
-	# Monitor viewport size, detect orientation changes, and track FPS
-	# Get current viewport size
-	var viewport = get_viewport()
-	if not viewport:
-		return
-	
-	var viewport_size = viewport.get_visible_rect().size
-	var current_width = int(viewport_size.x)
-	var current_height = int(viewport_size.y)
-	
-	# Check if viewport size changed
-	if current_width != viewport_width or current_height != viewport_height:
-		viewport_width = current_width
-		viewport_height = current_height
-		
-		# Detect new orientation
-		var new_is_portrait = viewport_height > viewport_width
-		if _should_force_landscape() and new_is_portrait:
-			_enforce_landscape_orientation()
-			new_is_portrait = false
-		
-		# Check if orientation changed
-		if new_is_portrait != is_portrait:
-			# Start orientation change timer
-			_pending_orientation_change = true
-			_new_orientation = new_is_portrait
-			_orientation_change_timer = 0.0
-	
-	# Handle pending orientation change
-	if _pending_orientation_change:
-		_orientation_change_timer += delta
-		
-		# Trigger layout reorganization within 0.5 seconds
-		if _orientation_change_timer >= 0.5:
-			is_portrait = _new_orientation
-			orientation_changed.emit(is_portrait)
-			_pending_orientation_change = false
-			_orientation_change_timer = 0.0
-			
-			print("📱 Orientation changed: %s" % ("Portrait" if is_portrait else "Landscape"))
-	
-	# Frame rate monitoring (mobile only)
 	if is_mobile and not _is_in_background:
 		_monitor_frame_rate(delta)
+
+
+## Enable _process only while it has work: FPS sampling, which is mobile-only and
+## pointless while the app is in the background. Called from every place that can
+## change either input (platform detection, the debug-mobile override, focus).
+func _refresh_process_state() -> void:
+	set_process(is_mobile and not _is_in_background)
 
 func _detect_platform() -> void:
 	# Detect if running on mobile platform or small viewport
@@ -215,6 +277,10 @@ func _detect_platform() -> void:
 	if debug_mobile_mode:
 		is_mobile = true
 
+	# _process now exists only for the mobile FPS sampler, so whether it runs at
+	# all follows is_mobile.
+	_refresh_process_state()
+
 func _detect_orientation() -> void:
 	# Detect if viewport is in portrait or landscape orientation
 	is_portrait = viewport_height > viewport_width
@@ -230,10 +296,32 @@ func _should_force_landscape() -> bool:
 	return OS.get_name() in ["Android", "iOS"]
 
 
+## The orientation value to push at runtime, derived from project.godot rather
+## than decided a second time here.
+##
+## display/window/handheld/orientation is what the Android export writes into the
+## manifest, so a runtime call that disagrees with it ships a build whose declared
+## and applied orientations differ - which is exactly the bug this replaces.
+## allow_reverse_landscape can only NARROW a sensor variant down to one fixed
+## landscape; it can never widen the project's choice. Returns -1 when the project
+## is not asking for a landscape at all, so the caller pushes nothing instead of
+## overriding a deliberate portrait or free-rotation setting.
 func _landscape_orientation_value() -> int:
-	if allow_reverse_landscape:
-		return SCREEN_SENSOR_LANDSCAPE_VALUE
-	return SCREEN_LANDSCAPE_VALUE
+	var declared := str(ProjectSettings.get_setting(
+		"display/window/handheld/orientation", "sensor_landscape"))
+	var base: int
+	match declared:
+		"landscape":
+			base = SCREEN_LANDSCAPE_VALUE
+		"reverse_landscape":
+			base = DisplayServer.SCREEN_REVERSE_LANDSCAPE
+		"sensor_landscape":
+			base = SCREEN_SENSOR_LANDSCAPE_VALUE
+		_:
+			return -1
+	if not allow_reverse_landscape and base == SCREEN_SENSOR_LANDSCAPE_VALUE:
+		return SCREEN_LANDSCAPE_VALUE
+	return base
 
 
 func _enforce_landscape_orientation() -> void:
@@ -242,7 +330,12 @@ func _enforce_landscape_orientation() -> void:
 	if not DisplayServer.has_method("screen_set_orientation"):
 		return
 
-	DisplayServer.screen_set_orientation(_landscape_orientation_value())
+	var want := _landscape_orientation_value()
+	if want < 0:
+		# project.godot is not asking for a landscape. Pushing one anyway would
+		# override a deliberate setting with a stale assumption baked into this file.
+		return
+	DisplayServer.screen_set_orientation(want)
 
 func _calculate_safe_area() -> void:
 	# Calculate safe area margins for devices with notches
@@ -256,7 +349,50 @@ func _calculate_safe_area() -> void:
 	
 	# Get base margins from SafeAreaInfo
 	var base_margins = safe_area_info.to_dictionary()
+	if not debug_safe_area_px_override.is_empty():
+		base_margins = debug_safe_area_px_override.duplicate()
+
+	# DEVICE PIXELS -> CANVAS UNITS.
+	#
+	# DisplayServer.get_display_safe_area() and screen_get_size() are both in
+	# device pixels, but every consumer of safe_area_margins spends the number as
+	# CANVAS units: LayoutManager.apply_safe_area_margins writes it into Control
+	# offsets, Settings folds it into its own offsets, and _build_safe_area_overlay
+	# sizes ColorRects with it. Those two units coincide only when the stretch
+	# ratio is 1, i.e. on a 1080p phone against this project's 1920x1080 base.
+	# On a 720p phone the ratio is 0.667, so a 60px cutout inset was applied as 60
+	# units where 90 were needed and 20 device pixels of UI stayed under the
+	# cutout; on a 1440p phone the same bug over-reserved by a third and wasted
+	# screen. Converting once here keeps every consumer correct without each of
+	# them having to know about the stretch.
+	var px_per_unit := _stretch_ratio()
+	for side in ["top", "bottom", "left", "right"]:
+		base_margins[side] = float(base_margins.get(side, 0.0)) / px_per_unit
 	
+	# ROTATION INVARIANCE.
+	#
+	# allow_reverse_landscape lets the OS flip the device 180 degrees, and a 180
+	# degree landscape flip does not change the viewport SIZE - so the resize path
+	# that re-reads this never runs, and "left"/"right" stop being stable labels for a
+	# cutout that has physically moved to the other edge. Nothing else would correct
+	# it either: safe_area_changed has no listeners anywhere in the project, and every
+	# consumer pulls get_safe_area_margins() while laying out, which happens on
+	# _ready() and on size_changed only. Reserving the larger of each opposing pair on
+	# BOTH edges is invariant under the flip by construction - no polling, no new
+	# signal, no per-screen wiring - and it keeps centred content centred, which is
+	# the same symmetry the authored-margin rule below exists to protect. On the
+	# paper's target class, legacy sub-2GB phones with no cutout, every inset is 0 and
+	# this is a no-op.
+	if allow_reverse_landscape:
+		var inset_h := maxf(float(base_margins["left"]), float(base_margins["right"]))
+		var inset_v := maxf(float(base_margins["top"]), float(base_margins["bottom"]))
+		base_margins["left"] = inset_h
+		base_margins["right"] = inset_h
+		base_margins["top"] = inset_v
+		base_margins["bottom"] = inset_v
+	
+	# mobile_safe_area_margin is an authored design constant, already expressed in
+	# canvas units, so it is added AFTER the conversion above rather than scaled.
 	# Apply 20-pixel extra margin ONLY on sides that have an actual hardware
 	# cutout (notch/camera cutout). Sides with 0 base margin have no cutout and
 	# must NOT receive the extra padding — that would make safe_area_margins
@@ -313,8 +449,22 @@ func _on_tree_changed() -> void:
 func adapt_scene_for_mobile(scene_root: Node) -> void:
 	if not is_mobile or not scene_root:
 		return
+	# is_mobile and the accessibility toggle are both inputs to the resolved
+	# minimum, and Settings re-runs the adaptation right after flipping the
+	# toggle, so recomputing here covers both without a second hook.
+	_button_min_cache_valid = false
 
 	var safe_target := _find_safe_area_target(scene_root)
+	# A scene that computes its own safe-area offsets must not have them
+	# overwritten here. LayoutManager.apply_safe_area_margins writes offset_top and
+	# offset_bottom ABSOLUTELY, so on Settings it replaced the bar reserve
+	# (-(bottom_margin + row_height + gap), measured -253) with the bare inset
+	# (-68) and let the scroll viewport run 27 units under the fixed Back button -
+	# leaving touchable checkbox slivers beneath it. Settings already folds
+	# safe_area_margins into its own arithmetic, so the fix is to stop two systems
+	# writing one property rather than to interleave them.
+	if safe_target and safe_target.has_meta(SAFE_AREA_SELF_MANAGED_META):
+		safe_target = null
 	if safe_target and not safe_area_margins.is_empty():
 		LayoutManagerUtil.apply_safe_area_margins(safe_target, safe_area_margins)
 
@@ -368,15 +518,80 @@ func _find_safe_area_target(scene_root: Node) -> Control:
 	return null
 
 
+## The dp -> canvas-unit conversion, and the reason this function is not just a
+## constant.
+##
+## project.godot uses stretch/mode="canvas_items" with a 1920x1080 base, so every
+## Control size is in CANVAS units, not device pixels. mobile_button_min_size was
+## therefore internally consistent but said nothing about finger size: 60 canvas
+## units is 60 physical px on a 1080p phone and 40 px on a 720p one. Measured with
+## tools/AuditMobileUI.tscn, the 60-unit floor landed between 13.1dp and 17.4dp
+## across five device profiles - every touch target in the game was under a third
+## of the 48dp Android minimum.
+##
+## canvas_units = dp * (dpi / 160) / stretch_ratio
+##
+## where stretch_ratio is physical px per canvas unit, read back from the
+## DisplayServer rather than assumed, because stretch/aspect="expand" lets Godot
+## pick the governing axis.
+## Device pixels per canvas unit.
+##
+## Read back rather than assumed: project.godot uses stretch/aspect="expand", so
+## Godot chooses which axis absorbs the extra room and window.x/1920 is only the
+## right ratio when the window aspect happens to match the base aspect.
+func _stretch_ratio() -> float:
+	var tree := get_tree()
+	if tree == null or tree.root == null:
+		return 1.0
+	var canvas := tree.root.get_visible_rect().size
+	if canvas.x <= 0.0:
+		return 1.0
+	var r := float(DisplayServer.window_get_size().x) / canvas.x
+	return r if r > 0.0 else 1.0
+
+
+func _dp_to_canvas_units(dp: float) -> float:
+	var dpi := debug_dpi_override
+	if dpi <= 0.0:
+		dpi = float(DisplayServer.screen_get_dpi(DisplayServer.window_get_current_screen()))
+	# A DisplayServer that cannot report dpi returns 0 (and some Android drivers
+	# report absurd values). Fall back to the mdpi baseline of 160, which makes
+	# 1dp == 1px and degrades to the old behaviour instead of producing a
+	# nonsensical floor.
+	if dpi <= 40.0 or dpi > 1200.0:
+		dpi = 160.0
+	var ratio := _stretch_ratio()
+	# Rounded UP, not to the nearest unit. A fractional minimum of 146.86 units
+	# produces a button that measures 47.997dp - short of the standard by a
+	# rounding error, which is still short. Ceiling guarantees the target meets or
+	# exceeds 48dp, and costs at most one canvas unit of extra height.
+	return ceilf(dp * (dpi / 160.0) / ratio)
+
+
 func _resolve_button_min_size() -> Vector2:
+	if _button_min_cache_valid:
+		return _button_min_cache
 	var target_size = mobile_button_min_size
 	var save_mgr = get_node_or_null("/root/SaveManager")
 	if save_mgr and save_mgr.has_method("get_setting"):
 		var wants_large_targets = bool(save_mgr.get_setting("large_touch_targets", false))
 		if wants_large_targets:
 			target_size = Vector2(max(target_size.x, 120.0), max(target_size.y, 80.0))
+	# Raise the authored minimum to the 48dp floor when the screen needs it. This
+	# only ever grows the target, so a scene that already authored something bigger
+	# keeps its own size.
+	if is_mobile:
+		var floor_units := _dp_to_canvas_units(MIN_TOUCH_TARGET_DP)
+		target_size = Vector2(maxf(target_size.x, floor_units), maxf(target_size.y, floor_units))
+	_button_min_cache = target_size
+	_button_min_cache_valid = true
 	return target_size
 
+
+## Called wherever an input to the size changes: a resize alters the stretch ratio,
+## and the accessibility toggle alters the authored floor.
+func invalidate_button_min_size_cache() -> void:
+	_button_min_cache_valid = false
 
 func _apply_mobile_performance_profile() -> void:
 	# Apply baseline performance limits for mobile hardware.
@@ -403,14 +618,35 @@ func _optimize_particles_recursive(node: Node) -> void:
 		_optimize_particles_recursive(child)
 
 
+## Runtime-built buttons, which are the majority in this project: 80
+## BaseButton.new() sites across 25 scripts. Several of them run after an `await`
+## inside _ready(), so the single adapt_scene_for_mobile() pass at scene-change
+## time cannot see them - MainMenu is the proof, since it builds its Auto-Play
+## toggle after `await get_tree().process_frame` and that toggle measured 190x40
+## on a mobile profile, below this manager's own enforced minimum.
+##
+## node_added fires once per node and the handler is a single type check, so it
+## costs far less than constructing the node it follows, and it makes the touch
+## minimum unmissable instead of dependent on frame ordering.
+func _on_node_added(node: Node) -> void:
+	if not is_mobile:
+		return
+	if node is BaseButton:
+		_apply_button_min_size(node as BaseButton, _resolve_button_min_size())
+
+
+## Only ever grows a button: a scene that authored something larger keeps it, and
+## re-running the adaptation is therefore idempotent.
+func _apply_button_min_size(button: BaseButton, button_minimum_size: Vector2) -> void:
+	button.custom_minimum_size = Vector2(
+		maxf(button.custom_minimum_size.x, button_minimum_size.x),
+		maxf(button.custom_minimum_size.y, button_minimum_size.y)
+	)
+
+
 func _apply_mobile_layout_hints(node: Node, button_minimum_size: Vector2) -> void:
 	if node is BaseButton:
-		var button = node as BaseButton
-		button.custom_minimum_size = Vector2(
-			max(button.custom_minimum_size.x, button_minimum_size.x),
-			max(button.custom_minimum_size.y, button_minimum_size.y)
-		)
-
+		_apply_button_min_size(node as BaseButton, button_minimum_size)
 	if node is BoxContainer:
 		var box = node as BoxContainer
 		var desired_sep = (
@@ -779,66 +1015,118 @@ func is_debug_mode() -> bool:
 # PUBLIC INTERFACE - CONFIGURATION
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+## Read the tuning knobs out of a hand-editable ConfigFile.
+##
+## Every value goes through a checked accessor rather than straight into the
+## @export member. The members are statically typed, so `mobile_ui_scale =
+## config.get_value(...)` with a String in the file did not store a wrong number —
+## it raised "Trying to assign value of type 'String' to a variable of type
+## 'float'" and ABORTED THIS FUNCTION, leaving every knob below it at its default
+## and skipping the `return true`, which the caller discards anyway. Measured in
+## tools/VerifyMobileConfig.tscn: one bad "scaling/ui_scale" dropped font_scale,
+## touch_target_min_size, max_tweens and drag_smoothing_increase from the same
+## file. A rejected key now falls back alone and says so.
+##
+## Numbers are accepted across int/float either way (a decimal in an int knob
+## truncates, which ConfigFile and GDScript already did: 41.7 -> 41), because the
+## point is to survive a hand-edit, not to be pedantic about how it was typed.
 func load_config_file(path: String) -> bool:
-	# Load configuration from file
-	var config = ConfigFile.new()
-	var err = config.load(path)
-	
+	var config := ConfigFile.new()
+	var err := config.load(path)
+
 	if err != OK:
 		push_warning("Failed to load mobile UI config from %s: %s" % [path, error_string(err)])
 		return false
-	
-	# Load scaling factors
-	mobile_ui_scale = config.get_value("scaling", "ui_scale", mobile_ui_scale)
-	mobile_font_scale = config.get_value("scaling", "font_scale", mobile_font_scale)
-	mobile_game_object_scale = config.get_value(
-		"scaling", "game_object_scale", mobile_game_object_scale
+
+	# Scaling factors
+	mobile_ui_scale = _cfg_float(config, "scaling", "ui_scale", mobile_ui_scale)
+	mobile_font_scale = _cfg_float(config, "scaling", "font_scale", mobile_font_scale)
+	mobile_game_object_scale = _cfg_float(
+		config, "scaling", "game_object_scale", mobile_game_object_scale
 	)
-	mobile_collectible_scale = config.get_value(
-		"scaling", "collectible_scale", mobile_collectible_scale
+	mobile_collectible_scale = _cfg_float(
+		config, "scaling", "collectible_scale", mobile_collectible_scale
 	)
-	
-	# Load minimum sizes
-	mobile_button_min_size = config.get_value("sizes", "button_min_size", mobile_button_min_size)
-	mobile_touch_target_min_size = config.get_value(
-		"sizes", "touch_target_min_size", mobile_touch_target_min_size
+
+	# Minimum sizes
+	mobile_button_min_size = _cfg_vector2(
+		config, "sizes", "button_min_size", mobile_button_min_size
 	)
-	
-	# Load spacing
-	mobile_button_spacing_vertical = config.get_value(
-		"spacing", "button_vertical", mobile_button_spacing_vertical
+	mobile_touch_target_min_size = _cfg_vector2(
+		config, "sizes", "touch_target_min_size", mobile_touch_target_min_size
 	)
-	mobile_button_spacing_horizontal = config.get_value(
-		"spacing", "button_horizontal", mobile_button_spacing_horizontal
+
+	# Spacing
+	mobile_button_spacing_vertical = _cfg_float(
+		config, "spacing", "button_vertical", mobile_button_spacing_vertical
 	)
-	mobile_safe_area_margin = config.get_value(
-		"spacing", "safe_area_margin", mobile_safe_area_margin
+	mobile_button_spacing_horizontal = _cfg_float(
+		config, "spacing", "button_horizontal", mobile_button_spacing_horizontal
 	)
-	mobile_edge_dead_zone = config.get_value("spacing", "edge_dead_zone", mobile_edge_dead_zone)
-	
-	# Load performance settings
-	mobile_particle_reduction = config.get_value(
-		"performance", "particle_reduction", mobile_particle_reduction
+	mobile_safe_area_margin = _cfg_float(
+		config, "spacing", "safe_area_margin", mobile_safe_area_margin
 	)
-	mobile_max_tweens = config.get_value("performance", "max_tweens", mobile_max_tweens)
-	mobile_target_fps = config.get_value("performance", "target_fps", mobile_target_fps)
-	
-	# Load gameplay adjustments
-	mobile_game_speed_reduction = config.get_value(
-		"gameplay", "speed_reduction", mobile_game_speed_reduction
+	mobile_edge_dead_zone = _cfg_float(
+		config, "spacing", "edge_dead_zone", mobile_edge_dead_zone
 	)
-	mobile_timing_window_increase = config.get_value(
-		"gameplay", "timing_window_increase", mobile_timing_window_increase
+
+	# Performance settings
+	mobile_particle_reduction = _cfg_float(
+		config, "performance", "particle_reduction", mobile_particle_reduction
 	)
-	mobile_spawn_rate_reduction = config.get_value(
-		"gameplay", "spawn_rate_reduction", mobile_spawn_rate_reduction
+	mobile_max_tweens = _cfg_int(config, "performance", "max_tweens", mobile_max_tweens)
+	mobile_target_fps = _cfg_int(config, "performance", "target_fps", mobile_target_fps)
+
+	# Gameplay adjustments
+	mobile_game_speed_reduction = _cfg_float(
+		config, "gameplay", "speed_reduction", mobile_game_speed_reduction
 	)
-	mobile_drag_smoothing_increase = config.get_value(
-		"gameplay", "drag_smoothing_increase", mobile_drag_smoothing_increase
+	mobile_timing_window_increase = _cfg_float(
+		config, "gameplay", "timing_window_increase", mobile_timing_window_increase
 	)
-	
+	mobile_spawn_rate_reduction = _cfg_float(
+		config, "gameplay", "spawn_rate_reduction", mobile_spawn_rate_reduction
+	)
+	mobile_drag_smoothing_increase = _cfg_float(
+		config, "gameplay", "drag_smoothing_increase", mobile_drag_smoothing_increase
+	)
+
 	print("📱 Loaded mobile UI config from %s" % path)
 	return true
+
+
+func _reject_cfg(section: String, key: String, value: Variant, expected: String) -> void:
+	push_warning("📱 mobile UI config \"%s/%s\" is %s, expected %s — keeping %s"
+		% [section, key, type_string(typeof(value)), expected, "the default"])
+
+
+func _cfg_float(config: ConfigFile, section: String, key: String, fallback: float) -> float:
+	var value: Variant = config.get_value(section, key, fallback)
+	if value is float or value is int:
+		return float(value)
+	_reject_cfg(section, key, value, "a number")
+	return fallback
+
+
+func _cfg_int(config: ConfigFile, section: String, key: String, fallback: int) -> int:
+	var value: Variant = config.get_value(section, key, fallback)
+	if value is int:
+		return value
+	if value is float:
+		return int(value)
+	_reject_cfg(section, key, value, "a number")
+	return fallback
+
+
+func _cfg_vector2(config: ConfigFile, section: String, key: String,
+		fallback: Vector2) -> Vector2:
+	var value: Variant = config.get_value(section, key, fallback)
+	if value is Vector2:
+		return value
+	if value is Vector2i:
+		return Vector2(value)
+	_reject_cfg(section, key, value, "a Vector2")
+	return fallback
 
 func save_config_file(path: String) -> bool:
 	# Save current configuration to file
@@ -884,6 +1172,8 @@ func save_config_file(path: String) -> bool:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func _on_viewport_size_changed() -> void:
+	# The stretch ratio just changed, so the dp-derived touch floor has too.
+	_button_min_cache_valid = false
 	var old_is_mobile := is_mobile
 	var old_is_portrait := is_portrait
 
@@ -1041,9 +1331,13 @@ func _on_app_focus_lost() -> void:
 		return
 	
 	_is_in_background = true
+	_refresh_process_state()
 	
-	# Pause the scene tree
-	get_tree().paused = true
+	# Take the pause only if the game is not already paused on purpose, and record
+	# that we took it so the resume stays symmetric. See _paused_by_background.
+	if not get_tree().paused:
+		get_tree().paused = true
+		_paused_by_background = true
 	
 	# Disable screen keep-on when in background
 	DisplayServer.screen_set_keep_on(false)
@@ -1058,9 +1352,13 @@ func _on_app_focus_gained() -> void:
 		return
 	
 	_is_in_background = false
+	_refresh_process_state()
 	
-	# Resume the scene tree
-	get_tree().paused = false
+	# Lift only our own pause. A pause menu, a network pause or a game-over screen
+	# that was already up when the app went to background stays up.
+	if _paused_by_background:
+		_paused_by_background = false
+		get_tree().paused = false
 	
 	# Re-enable screen keep-on when returning to foreground
 	DisplayServer.screen_set_keep_on(true)

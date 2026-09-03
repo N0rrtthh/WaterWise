@@ -26,6 +26,43 @@ func _ready() -> void:
 
 	# Detect low-end device: skip intro if fps_avg is already struggling.
 	var is_low_end := _is_low_end_device()
+
+	# Preferred path: "Dumb Ways to Die"-style CAUSE clip — an animated scene
+	# showing *why* this round matters, instead of a static title card.
+	# On weak devices it plays compressed rather than being cut, because the
+	# cause clip is the educational payload of the loop.
+	#
+	# Tier 1: authored 4-beat clips (MicrogameIntroBase subclasses) at
+	# res://scenes/ui/cutscenes/beats/<Game>Intro.tscn.
+	var beat_path := "res://scenes/ui/cutscenes/beats/%sIntro.tscn" % game_name
+	if ResourceLoader.exists(beat_path):
+		var clip = (load(beat_path) as PackedScene).instantiate()
+		if "speed_scale" in clip:
+			# Compression from a weak device and compression the player asked for are
+			# separate reasons and multiply: 1.7 x 3.0 on a low-end phone with reduced
+			# motion on. speed_scale is a divisor inside the clip.
+			clip.speed_scale = (1.7 if is_low_end else 1.0) * _motion_speed()
+		host.add_child(clip)
+		await clip.play_cutscene()
+		clip.queue_free()
+		await get_tree().process_frame
+		await _launch(game_path)
+		return
+
+	if CartoonScenarios.has_scenario(game_name):
+		var stage := CartoonStage.new()
+		stage.configure(
+			CartoonStage.Kind.CAUSE,
+			game_name,
+			{"speed": (1.7 if is_low_end else 1.0) * _motion_speed()}
+		)
+		host.add_child(stage)
+		await stage.play_cutscene()
+		stage.queue_free()
+		await get_tree().process_frame
+		await _launch(game_path)
+		return
+
 	var scene := null if is_low_end else _resolve_intro_scene(game_name)
 
 	if scene:
@@ -35,7 +72,7 @@ func _ready() -> void:
 			intro.configure(
 				game_name,
 				"Get ready...",
-				_get_intro_anim_profile(game_name)
+				_with_motion_speed(_get_intro_anim_profile(game_name))
 			)
 		if intro.has_method("play_cutscene"):
 			await intro.play_cutscene()
@@ -47,8 +84,12 @@ func _ready() -> void:
 		# doesn't feel instant, then launch immediately.
 		await get_tree().create_timer(0.3).timeout
 
-	# Wait for GameManager's previous fade-in to settle before starting
-	# the next transition (transition_to_scene guards against re-entry with
+	await _launch(game_path)
+
+## Shared tail for every intro path (cartoon clip, legacy intro, or no intro).
+func _launch(game_path: String) -> void:
+	# Wait for GameManager's previous fade-in to settle before starting the next
+	# transition (transition_to_scene guards against re-entry with
 	# _is_transitioning, so we must wait for it to become false first).
 	var safety_iters := 0
 	while GameManager.is_scene_transitioning() and safety_iters < 90:
@@ -114,3 +155,25 @@ func _is_low_end_device() -> bool:
 	return false
 
 const STARTUP_WARMUP_SEC_CHECK: float = 5.0
+
+## AccessibilityManager.get_animation_speed(), guarded, never zero. Every cutscene in
+## this bridge divides its durations by a speed number, so returning 1.0 when the
+## accessibility layer is unavailable leaves the pacing exactly as authored.
+##
+## Duplicated deliberately from MiniGameBase rather than shared through a new autoload:
+## the bridge is a standalone scene that runs when no minigame exists yet, so it cannot
+## reach MiniGameBase's copy, and one guarded read is smaller than a new global.
+func _motion_speed() -> float:
+	if AccessibilityManager and AccessibilityManager.has_method("get_animation_speed"):
+		var reported := float(AccessibilityManager.get_animation_speed())
+		if reported > 0.0:
+			return reported
+	return 1.0
+
+## Fold the reduced-motion factor into an authored intro profile, leaving the per-game
+## pacing it carries intact. Copied, not mutated, so a future cached profile cannot
+## accumulate the multiplier once per round.
+func _with_motion_speed(profile: Dictionary) -> Dictionary:
+	var out: Dictionary = profile.duplicate()
+	out["speed"] = float(out.get("speed", 1.0)) * _motion_speed()
+	return out

@@ -10,6 +10,13 @@ const PRESS_REBOUND := 0.94
 var _button_tweens: Dictionary = {}  # Button -> Tween
 var _button_base_scales: Dictionary = {}  # Button -> Vector2
 var _connected_buttons: Dictionary = {}  # Button -> true
+## Hover state as reported by mouse_entered / mouse_exited. _on_pressed() used to ask
+## whether the mouse POSITION was inside the button instead, which is wrong on touch:
+## with emulate_mouse_from_touch (Godot's default, and on in this project) a tap
+## leaves the emulated cursor inside the button that was tapped, so the press settled
+## at HOVER_SCALE and no mouse_exited ever arrived to bring it back down — every
+## tapped button stayed permanently 10% enlarged on Android.
+var _button_hovered: Dictionary = {}  # Button -> bool
 
 
 func _ready() -> void:
@@ -32,18 +39,25 @@ func _scan_tree(node: Node) -> void:
 func _on_node_added(node: Node) -> void:
 	if node is BaseButton:
 		var btn := node as BaseButton
-		# Guard: skip if already connected (reparented buttons trigger node_added again)
-		if not btn.ready.is_connected(_hook_button):
+		# A button that is ALREADY ready is being re-added (a menu that hides a panel
+		# with remove_child and puts it back). Node.ready fires once per lifetime, so
+		# waiting on it here would never hook such a button. _hook_button() is
+		# idempotent, so calling it on a still-hooked button is a no-op.
+		if btn.is_node_ready():
+			_hook_button(btn)
+		elif not btn.ready.is_connected(_hook_button):
 			btn.ready.connect(_hook_button.bind(btn), CONNECT_ONE_SHOT)
 
 
 func _hook_button(button: BaseButton) -> void:
 	if not is_instance_valid(button):
 		return
+	_prune_freed()
 	if _connected_buttons.has(button):
 		return
 	_connected_buttons[button] = true
 	_button_base_scales[button] = button.scale
+	_button_hovered[button] = false
 	button.pivot_offset = button.size * 0.5
 
 	button.resized.connect(_on_resized.bind(button))
@@ -53,14 +67,34 @@ func _hook_button(button: BaseButton) -> void:
 	button.tree_exiting.connect(_on_button_removed.bind(button))
 
 
+## Leaving the tree is NOT the end of a button's life — a hidden panel is commonly
+## removed and re-added, and the signal connections made in _hook_button() survive
+## that. So the identity and the AUTHORED base scale are kept: erasing them left the
+## re-added button animating around Vector2.ONE, which made it visibly snap to the
+## wrong size on its next hover. Only the live tween is dropped, and the button is
+## returned to its base scale so it cannot come back frozen mid-animation.
 func _on_button_removed(button: BaseButton) -> void:
-	_connected_buttons.erase(button)
-	_button_base_scales.erase(button)
 	if _button_tweens.has(button):
 		var tw = _button_tweens[button]
 		if tw and tw.is_valid():
 			tw.kill()
 		_button_tweens.erase(button)
+	if not is_instance_valid(button):
+		return
+	_button_hovered[button] = false
+	if _button_base_scales.has(button):
+		button.scale = _button_base_scales[button]
+
+
+## Entries are keyed by object, and a button that is freed while out of the tree
+## leaves a dead key behind. Swept on each new hook so the four dictionaries cannot
+## grow across a long session.
+func _prune_freed() -> void:
+	for dict in [_connected_buttons, _button_base_scales, _button_hovered,
+			_button_tweens]:
+		for key in dict.keys():
+			if not is_instance_valid(key):
+				dict.erase(key)
 
 
 func _on_resized(button: BaseButton) -> void:
@@ -68,25 +102,39 @@ func _on_resized(button: BaseButton) -> void:
 		button.pivot_offset = button.size * 0.5
 
 
+## Duration scaler. AccessibilityManager.get_animation_speed() is a DIVISOR (3.0 with
+## reduced motion on), the same way the cutscene family and JuiceEffects consume it.
+## Button feedback is SHORTENED rather than suppressed: a button that answers a tap
+## with nothing at all reads as an unresponsive button, which is worse than a fast one.
+func _t(seconds: float) -> float:
+	var speed := 1.0
+	if AccessibilityManager and AccessibilityManager.has_method("get_animation_speed"):
+		var reported := float(AccessibilityManager.get_animation_speed())
+		if reported > 0.0:
+			speed = reported
+	return max(seconds / speed, 0.016)
+
+
 func _on_hover(button: BaseButton, hovered: bool) -> void:
 	if not is_instance_valid(button):
 		return
+	_button_hovered[button] = hovered
 	var base = _button_base_scales.get(button, Vector2.ONE)
 	var tw = _begin_tween(button)
 
 	if hovered:
 		tw.tween_property(
-			button, "scale", base * HOVER_OVERSHOOT, 0.10
+			button, "scale", base * HOVER_OVERSHOOT, _t(0.10)
 		).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 		tw.tween_property(
-			button, "scale", base * HOVER_SCALE, 0.09
+			button, "scale", base * HOVER_SCALE, _t(0.09)
 		).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 	else:
 		tw.tween_property(
-			button, "scale", base * 0.96, 0.06
+			button, "scale", base * 0.96, _t(0.06)
 		).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
 		tw.tween_property(
-			button, "scale", base, 0.11
+			button, "scale", base, _t(0.11)
 		).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 
 
@@ -94,23 +142,20 @@ func _on_pressed(button: BaseButton) -> void:
 	if not is_instance_valid(button):
 		return
 	var base = _button_base_scales.get(button, Vector2.ONE)
-	var viewport = button.get_viewport()
-	var is_hovered = false
-	if viewport != null:
-		is_hovered = button.get_global_rect().has_point(
-			viewport.get_mouse_position()
-		)
+	# Settle at hover scale only if a real mouse_entered put this button in a hover
+	# state. See _button_hovered for why the mouse position cannot answer this.
+	var is_hovered: bool = bool(_button_hovered.get(button, false))
 	var settle = base * (HOVER_SCALE if is_hovered else 1.0)
 	var tw = _begin_tween(button)
 
 	tw.tween_property(
-		button, "scale", base * PRESS_SCALE, 0.07
+		button, "scale", base * PRESS_SCALE, _t(0.07)
 	).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 	tw.tween_property(
-		button, "scale", base * PRESS_REBOUND, 0.06
+		button, "scale", base * PRESS_REBOUND, _t(0.06)
 	).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
 	tw.tween_property(
-		button, "scale", settle, 0.10
+		button, "scale", settle, _t(0.10)
 	).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 
 

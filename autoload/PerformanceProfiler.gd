@@ -10,7 +10,11 @@ extends Node
 ##
 ## Monitored Metrics:
 ##   ✅ FPS (≥60 target, ≥30 minimum)
-##   ✅ Frame time budget (<16.67ms per frame at 60FPS)
+##   ✅ Frame time budget — BOTH lines are counted separately:
+##        frames_over_60_budget: frames slower than 16.67ms (the 60FPS target)
+##        dropped_frames:        frames slower than FRAME_BUDGET_MS = 36.67ms,
+##                               i.e. meaningfully slower than the 30FPS MINIMUM.
+##        Only the second gates meets_budget, matching the paper's 30FPS floor.
 ##   ✅ Memory usage (<200MB target)
 ##   ✅ Algorithm latency (<16ms for all O(1) operations)
 ##   ✅ Battery drain estimation (<10mAh per 5min session)
@@ -37,6 +41,9 @@ const MIN_FPS: int = 30
 ## At exactly 30fps delta is ~33.33ms; using 36.67ms only counts
 ## frames meaningfully slower than the 30fps minimum.
 const FRAME_BUDGET_MS: float = 36.67  # (1000ms / 30fps) * 1.1 tolerance
+## The 60FPS line, for frames_over_60_budget. Separate from FRAME_BUDGET_MS so
+## the pass/fail gate stays on the paper's 30FPS floor.
+const FRAME_BUDGET_60_MS: float = 16.67
 ## How many seconds to skip dropped-frame counting after cold start.
 ## The first few frames always spike during scene tree setup.
 const STARTUP_WARMUP_SEC: float = 3.0
@@ -66,6 +73,27 @@ var memory_current_mb: float = 0.0
 var memory_peak_mb: float = 0.0
 var memory_history: Array[float] = []
 
+## Object-lifecycle tracking.
+##
+## OS.get_static_memory_usage() measures the allocator's static pool, which stays
+## roughly flat whether or not nodes are being orphaned — so it cannot support the
+## thesis's ΔRAM = 0 claim on its own, and it cannot answer the question every soak
+## log raises with "ObjectDB instances leaked at exit".
+##
+## OBJECT_ORPHAN_NODE_COUNT is the metric that matches that warning exactly: nodes
+## removed from the tree (remove_child) but never freed. A flat orphan count across
+## a multi-round soak means the exit-time report is a shutdown-order artifact; a
+## rising one means a real per-round lifecycle bug. Baselines are recorded after the
+## first snapshot so autoload construction is not charged to the game loop.
+##
+## Both monitors are debug-build only; in an exported release build they read 0,
+## which is why the deltas below are reported rather than the raw counts.
+var object_count: int = 0
+var orphan_node_count: int = 0
+var object_count_baseline: int = -1
+var orphan_node_baseline: int = -1
+var orphan_node_peak: int = 0
+
 ## Algorithm latency tracking
 var algo_latencies: Array[float] = []
 var algo_latency_avg_ms: float = 0.0
@@ -75,7 +103,16 @@ var algo_latency_max_ms: float = 0.0
 var session_start_time: int = 0
 var session_elapsed_sec: float = 0.0
 var total_frames: int = 0
-var dropped_frames: int = 0  # Frames >16.67ms
+## Frames slower than FRAME_BUDGET_MS (36.67ms) — the 30FPS floor plus 10%,
+## NOT the 60FPS line. This comment used to read "Frames >16.67ms", which
+## misdescribed every dropped_frames figure exported in a snapshot or printed
+## in a report: a reader would take it for "missed 60FPS" when it means
+## "missed 30FPS". The threshold itself is the paper's and is unchanged.
+var dropped_frames: int = 0
+## Frames slower than 16.67ms — the 60FPS target the header claims to monitor.
+## Counted alongside dropped_frames rather than replacing it, so no previously
+## reported dropped_frames number shifts meaning.
+var frames_over_60_budget: int = 0
 
 ## Battery estimation (simulated for non-Android builds)
 var estimated_battery_mah: float = 0.0
@@ -108,10 +145,18 @@ var cpu_temp_timer: float = 0.0  # 1-second sample timer
 ## S_clk: Clock Speed Stability
 ## Throttle = CPU freq drops below 80% of max rated speed
 const THROTTLE_THRESHOLD: float = 0.80
+## Consecutive 1 Hz samples below THROTTLE_THRESHOLD required before a throttle
+## event is counted. Thermal throttling is sustained; a single low second is a
+## loading hitch, and counting those published s_clk_stable = false off one scene
+## transition. See _sample_clock_speed.
+const THROTTLE_MIN_SAMPLES: int = 2
 var clock_speed_ratio: float = 1.0
 var throttle_events: Array[Dictionary] = []
 var is_throttling: bool = false
 var throttle_count: int = 0
+## Run length of consecutive below-threshold samples. Reset by a healthy sample, by
+## the startup warmup guard, and by start_stress_test().
+var _low_clock_samples: int = 0
 
 ## ΔE: Battery drain normalized per minute of gameplay
 var battery_drain_per_min: float = 0.0  # mAh/min (ΔE)
@@ -122,6 +167,11 @@ const STRESS_TEST_DURATION_SEC: float = 1800.0
 var stress_test_active: bool = false
 var stress_test_start: int = 0
 var stress_test_passed: bool = false
+## Tri-state outcome, because "did not fail" is not "passed" when there was no
+## sensor to fail against. One of: "not_run", "running", "pass", "fail", "aborted",
+## "inconclusive_no_thermal_sensor". Published in both report dictionaries so an
+## exported session log cannot be read as a thermal pass it did not earn.
+var stress_test_verdict: String = "not_run"
 
 ## TF Lite MobileNet Baseline (Paper: DL comparison)
 ## Typical MobileNet on Cortex-A53: ~8-12 mAh/min
@@ -133,6 +183,13 @@ var rule_based_vs_dl_ratio: float = 0.0
 ## Warnings emit at most once per second per metric.
 var _warning_last_emit: Dictionary = {}
 const WARNING_COOLDOWN_SEC: float = 1.0
+
+## Latency budget breaches use a much longer window than fps/memory warnings.
+## A slow algorithm call happens once per round, not once per frame, so a 1 s
+## cooldown never suppresses anything — the round is always longer than that.
+## 30 s means a persistent problem still reports (a few times per session) while
+## a 150 s soak logs ~5 lines instead of ~50.
+const LATENCY_WARNING_COOLDOWN_SEC: float = 30.0
 
 ## Profiler UI visibility
 var overlay_visible: bool = false
@@ -280,6 +337,8 @@ func _process(delta: float) -> void:
 	)
 	
 	# Count dropped frames only after startup warmup settles
+	if session_elapsed_sec > STARTUP_WARMUP_SEC and frame_time_ms > FRAME_BUDGET_60_MS:
+		frames_over_60_budget += 1
 	if frame_time_ms > FRAME_BUDGET_MS and session_elapsed_sec > STARTUP_WARMUP_SEC:
 		dropped_frames += 1
 	
@@ -398,6 +457,11 @@ func begin_latency_measurement() -> int:
 
 ## Call this after an algorithm operation ends
 func end_latency_measurement(start_usec: int, operation_name: String = "") -> float:
+	# Guard: a span that was never opened (begin returned 0 because the profiler
+	# was unavailable) must not be measured against the epoch.
+	if start_usec <= 0:
+		return 0.0
+
 	var elapsed_usec = Time.get_ticks_usec() - start_usec
 	var elapsed_ms = float(elapsed_usec) / 1000.0
 	
@@ -415,12 +479,29 @@ func end_latency_measurement(start_usec: int, operation_name: String = "") -> fl
 	algo_latency_avg_ms /= algo_latencies.size()
 	
 	if elapsed_ms > MAX_ALGO_LATENCY_MS:
-		push_warning("⚠️ Algorithm '%s' exceeded latency budget: %.2fms > %.2fms" % [
-			operation_name, elapsed_ms, MAX_ALGO_LATENCY_MS
-		])
-		performance_warning.emit("algo_latency", elapsed_ms, MAX_ALGO_LATENCY_MS)
+		# Rate-limited per operation name. Without this gate a single slow
+		# operation that runs once per round emits a warning every round for
+		# the whole session, which buries every other diagnostic in the log.
+		# The signal is gated too, so subscribers can't be spammed either.
+		if _should_emit_latency_warning(operation_name):
+			push_warning("⚠️ Algorithm '%s' exceeded latency budget: %.2fms > %.2fms" % [
+				operation_name, elapsed_ms, MAX_ALGO_LATENCY_MS
+			])
+			performance_warning.emit("algo_latency", elapsed_ms, MAX_ALGO_LATENCY_MS)
 	
 	return elapsed_ms
+
+## Cooldown gate for latency warnings, keyed per operation name.
+##
+## Uses the same window as _emit_warning() but its own key namespace so a noisy
+## algorithm can never suppress an fps/memory warning, and vice versa.
+func _should_emit_latency_warning(operation_name: String) -> bool:
+	var key: String = "algo_latency:" + operation_name
+	var last: float = _warning_last_emit.get(key, -LATENCY_WARNING_COOLDOWN_SEC - 1.0)
+	if session_elapsed_sec - last < LATENCY_WARNING_COOLDOWN_SEC:
+		return false
+	_warning_last_emit[key] = session_elapsed_sec
+	return true
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # THRESHOLD CHECKS
@@ -456,6 +537,17 @@ func _check_thresholds() -> void:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func _take_snapshot() -> void:
+	# Object lifecycle is sampled here at 1 Hz rather than in _process(), for the
+	# same reason memory_history is: per-frame sampling would add 60 monitor reads
+	# a second to answer a question that only moves across scene transitions.
+	object_count = int(Performance.get_monitor(Performance.OBJECT_COUNT))
+	orphan_node_count = int(Performance.get_monitor(Performance.OBJECT_ORPHAN_NODE_COUNT))
+	if object_count_baseline < 0:
+		object_count_baseline = object_count
+		orphan_node_baseline = orphan_node_count
+	if orphan_node_count > orphan_node_peak:
+		orphan_node_peak = orphan_node_count
+
 	var snap = {
 		"timestamp": Time.get_unix_time_from_system(),
 		"elapsed_sec": session_elapsed_sec,
@@ -465,9 +557,12 @@ func _take_snapshot() -> void:
 		"frame_time_ms": frame_time_ms,
 		"memory_mb": memory_current_mb,
 		"memory_peak_mb": memory_peak_mb,
+		"object_count": object_count,
+		"orphan_nodes": orphan_node_count,
 		"algo_latency_avg_ms": algo_latency_avg_ms,
 		"algo_latency_max_ms": algo_latency_max_ms,
 		"dropped_frames": dropped_frames,
+		"frames_over_60_budget": frames_over_60_budget,
 		"total_frames": total_frames,
 		"battery_mah": estimated_battery_mah,
 		"battery_pct": battery_pct_current,
@@ -514,7 +609,9 @@ func export_session_report() -> Dictionary:
 		},
 		"frame_timing": {
 			"budget_ms": FRAME_BUDGET_MS,
+			"budget_60_ms": FRAME_BUDGET_60_MS,
 			"dropped_frames": dropped_frames,
+			"frames_over_60_budget": frames_over_60_budget,
 			"drop_rate_percent": drop_rate,
 			"meets_budget": drop_rate < 5.0  # <5% dropped frames = pass
 		},
@@ -523,6 +620,30 @@ func export_session_report() -> Dictionary:
 			"peak_mb": memory_peak_mb,
 			"limit_mb": MAX_MEMORY_MB,
 			"meets_limit": memory_peak_mb <= MAX_MEMORY_MB
+		},
+		"object_lifecycle": {
+			# Deltas against the first snapshot, not raw counts: the baseline is
+			# whatever the 23 autoloads plus the boot scene happen to allocate, which
+			# is not a leak and varies by entry point. Growth from there is the
+			# evidence that matters for ΔRAM = 0 across a multi-round session.
+			#
+			# Both monitors return 0 in an exported release build (debug-only), so
+			# "measured" says whether these numbers mean anything for this run.
+			"measured": OS.is_debug_build(),
+			"object_count": object_count,
+			"object_count_delta": (
+				object_count - object_count_baseline if object_count_baseline >= 0 else 0
+			),
+			"orphan_nodes": orphan_node_count,
+			"orphan_nodes_peak": orphan_node_peak,
+			"orphan_nodes_delta": (
+				orphan_node_count - orphan_node_baseline if orphan_node_baseline >= 0 else 0
+			),
+			# Nodes detached and never freed accumulate for the whole session, so any
+			# steady growth here is a per-round lifecycle bug rather than noise.
+			"no_orphan_growth": (
+				orphan_node_baseline < 0 or orphan_node_count <= orphan_node_baseline
+			)
 		},
 		"algorithm_latency": {
 			"average_ms": algo_latency_avg_ms,
@@ -534,8 +655,16 @@ func export_session_report() -> Dictionary:
 			"estimated_mah": estimated_battery_mah,
 			"drain_per_min_mah": battery_drain_per_min,
 			"limit_mah_per_5min": MAX_BATTERY_MAH_PER_5MIN,
+			# ΔE is only ever a real number when the Android sysfs battery nodes were
+			# readable. On desktop estimated_battery_mah stays 0.0, so the old
+			# unguarded "0.0 <= limit" published "meets_limit": true — a battery pass
+			# from a run with no battery measurement. The warning path at
+			# _check_thresholds already gates on battery_source == "android_sysfs";
+			# this is the same rule applied to the published field.
+			"measured": battery_source == "android_sysfs",
 			"meets_limit": (
-				estimated_battery_mah <= MAX_BATTERY_MAH_PER_5MIN
+				(estimated_battery_mah <= MAX_BATTERY_MAH_PER_5MIN)
+				if battery_source == "android_sysfs" else null
 			),
 			"measurement_source": battery_source,
 			"start_pct": battery_pct_start,
@@ -547,7 +676,14 @@ func export_session_report() -> Dictionary:
 			"cpu_temp_c": cpu_temp_c,
 			"cpu_temp_peak": cpu_temp_peak,
 			"threshold_c": MAX_CPU_TEMP_C,
-			"meets_threshold": cpu_temp_peak <= MAX_CPU_TEMP_C,
+			# Same trap as the stress verdict: with no sensor cpu_temp_peak stays 0.0
+			# and 0.0 <= 45.0 published "meets_threshold": true — a thermal pass in an
+			# exported session log from a run that read no temperature. null means "not
+			# evaluated", which is what _check_iso_compliance already does with this
+			# criterion. "thermal_source" below says why.
+			"meets_threshold": (
+				(cpu_temp_peak <= MAX_CPU_TEMP_C) if _thermal_source == "sensor" else null
+			),
 			"clock_speed_ratio": clock_speed_ratio,
 			"throttle_events": throttle_count,
 			"s_clk_stable": throttle_count == 0,
@@ -555,17 +691,42 @@ func export_session_report() -> Dictionary:
 			"thermal_source": _thermal_source
 		},
 		"dl_baseline_comparison": {
+			# The whole comparison is derived from battery_drain_per_min, which stays
+			# 0.0 unless the Android sysfs battery nodes were readable. Unguarded, that
+			# left rule_based_vs_dl_ratio at 0.0 and published
+			# "reduction_pct": 100.0 / "is_more_efficient": true — i.e. a 100% energy
+			# saving over the MobileNet baseline claimed by a desktop run that never
+			# measured a milliamp. get_dl_comparison(), the human-facing version of
+			# this same table, already prints "N/A (%s)" / "test on Android" here; the
+			# machine-readable dict was the one that did not.
+			"measured": battery_source == "android_sysfs" and battery_drain_per_min > 0.0,
 			"rule_based_mah_min": battery_drain_per_min,
 			"dl_baseline_mah_min": DL_BASELINE_MAH_PER_MIN,
-			"ratio": rule_based_vs_dl_ratio,
-			"reduction_pct": (
-				(1.0 - rule_based_vs_dl_ratio) * 100.0
+			"measurement_source": battery_source,
+			"ratio": (
+				rule_based_vs_dl_ratio
+				if battery_source == "android_sysfs" and battery_drain_per_min > 0.0
+				else null
 			),
-			"is_more_efficient": rule_based_vs_dl_ratio < 1.0
+			"reduction_pct": (
+				((1.0 - rule_based_vs_dl_ratio) * 100.0)
+				if battery_source == "android_sysfs" and battery_drain_per_min > 0.0
+				else null
+			),
+			"is_more_efficient": (
+				(rule_based_vs_dl_ratio < 1.0)
+				if battery_source == "android_sysfs" and battery_drain_per_min > 0.0
+				else null
+			)
 		},
 		"stress_test": {
 			"active": stress_test_active,
+			# "passed" is kept for any existing reader, but it is the WEAK field:
+			# false covers both "exceeded 45 °C" and "no sensor, never evaluated".
+			# "verdict" is the one to read. See _update_stress_test.
 			"passed": stress_test_passed,
+			"verdict": stress_test_verdict,
+			"thermal_source": _thermal_source,
 			"target_sec": STRESS_TEST_DURATION_SEC
 		},
 		"mobile_context": _build_mobile_context(),
@@ -778,8 +939,33 @@ func _sample_clock_speed() -> void:
 	else:
 		clock_speed_ratio = 1.0
 
-	is_throttling = clock_speed_ratio < THROTTLE_THRESHOLD
-	
+	var below_threshold: bool = clock_speed_ratio < THROTTLE_THRESHOLD
+
+	# Engine boot is not a measurement. _update_metrics already refuses to count
+	# dropped_frames before STARTUP_WARMUP_SEC for exactly this reason, and the CPU
+	# temperature warning already refuses to fire when _thermal_source is not a real
+	# sensor — S_clk had neither guard. Measured consequence, in a session that did
+	# nothing but idle and load one scene: a throttle event at t=1.57 s with
+	# fps=1.0 and S_clk=3%, the engine's first frames, which then published
+	# s_clk_stable = false for the whole run (tools/logs/throttle.log).
+	if session_elapsed_sec <= STARTUP_WARMUP_SEC:
+		_low_clock_samples = 0
+		is_throttling = false
+		return
+
+	# Throttling is a SUSTAINED clock reduction — that is what makes the FPS ratio a
+	# usable proxy for it at all. A single 1 Hz sample below the threshold is a
+	# loading hitch (a scene swap, a first-frame shader compile), and counting those
+	# meant one transition was enough to report the session as thermally unstable.
+	# THROTTLE_MIN_SAMPLES consecutive seconds is the smallest window that separates
+	# the two; a real thermal throttle lasts far longer and still registers, one
+	# second later than before.
+	if below_threshold:
+		_low_clock_samples += 1
+	else:
+		_low_clock_samples = 0
+	is_throttling = _low_clock_samples >= THROTTLE_MIN_SAMPLES
+
 	# Log new throttle events
 	if is_throttling and not prev_throttling:
 		throttle_count += 1
@@ -789,19 +975,26 @@ func _sample_clock_speed() -> void:
 			"clock_ratio": clock_speed_ratio,
 			"cpu_temp_c": cpu_temp_c,
 			"fps": fps_current,
+			# How many consecutive 1 Hz samples had been below the threshold when the
+			# event was raised. Kept so the thesis appendix can show the events were
+			# sustained dips and not single-frame hitches.
+			"low_samples": _low_clock_samples,
 			"measurement_note": (
 				"clock_ratio derived from FPS/target_FPS "
-				+ "(behavioral proxy, not actual CPU frequency)"
-			)
+				+ "(behavioral proxy, not actual CPU frequency); "
+				+ "requires %d consecutive samples below threshold, "
+				+ "startup warmup excluded"
+			) % THROTTLE_MIN_SAMPLES
 		})
 		# throttle_count remains the authoritative total; the array is only
 		# the detailed tail kept for the thesis appendix.
 		if throttle_events.size() > MAX_EVENT_ENTRIES:
 			throttle_events.pop_front()
 		print(
-			"🔥 THROTTLE #%d: S_clk=%.0f%%" % [
+			"🔥 THROTTLE #%d: S_clk=%.0f%% (low for %ds)" % [
 				throttle_count,
-				clock_speed_ratio * 100.0
+				clock_speed_ratio * 100.0,
+				_low_clock_samples
 			]
 		)
 
@@ -811,11 +1004,13 @@ func _sample_clock_speed() -> void:
 
 ## Start a 30-minute stress test session
 func start_stress_test() -> void:
+	stress_test_verdict = "running"
 	stress_test_active = true
 	stress_test_start = Time.get_ticks_msec()
 	stress_test_passed = false
 	cpu_temp_history.clear()
 	throttle_events.clear()
+	_low_clock_samples = 0
 	throttle_count = 0
 	print("🔬 STRESS TEST STARTED (30 min target)")
 	print("   Pass: T_cpu < 45°C throughout")
@@ -827,20 +1022,50 @@ func _update_stress_test() -> void:
 	
 	if elapsed >= STRESS_TEST_DURATION_SEC:
 		stress_test_active = false
-		stress_test_passed = (
-			cpu_temp_peak <= MAX_CPU_TEMP_C
-		)
-		var result = "PASS ✅" if stress_test_passed else "FAIL ❌"
+
+		# The pass criterion is "peak T_cpu stayed under 45 °C". With no thermal
+		# sensor, cpu_temp_peak never leaves 0.0, and 0.0 <= 45.0 reported
+		# PASS ✅ / "Peak T_cpu: 0.0°C / 45°C" — a 30-minute thermal result from a
+		# machine that measured no temperature at all. _check_iso_compliance already
+		# refuses to judge thermal without a sensor, and this file's own note above
+		# _sample_cpu_temperature says heuristic approximations "would be misleading
+		# in exported session logs"; the stress verdict was the one place that did
+		# not honour that. Absence of a sensor is INCONCLUSIVE, not a pass.
+		if _thermal_source != "sensor":
+			stress_test_verdict = "inconclusive_no_thermal_sensor"
+			stress_test_passed = false
+		elif cpu_temp_peak <= MAX_CPU_TEMP_C:
+			stress_test_verdict = "pass"
+			stress_test_passed = true
+		else:
+			stress_test_verdict = "fail"
+			stress_test_passed = false
+
+		var result := "PASS ✅"
+		if stress_test_verdict == "fail":
+			result = "FAIL ❌"
+		elif stress_test_verdict == "inconclusive_no_thermal_sensor":
+			result = "INCONCLUSIVE ⚠️ (no thermal sensor — thermal criterion not evaluated)"
 		print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 		print("🔬 STRESS TEST: %s" % result)
-		print("   Peak T_cpu: %.1f°C / %.0f°C" % [
-			cpu_temp_peak, MAX_CPU_TEMP_C
-		])
+		if _thermal_source == "sensor":
+			print("   Peak T_cpu: %.1f°C / %.0f°C" % [
+				cpu_temp_peak, MAX_CPU_TEMP_C
+			])
+		else:
+			print("   Peak T_cpu: unmeasured (thermal_source = %s)" % _thermal_source)
 		print("   Throttles: %d" % throttle_count)
+		print("   Ran %.0f s of %.0f s" % [elapsed, STRESS_TEST_DURATION_SEC])
 		print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 
 func stop_stress_test() -> void:
 	stress_test_active = false
+	# A manual stop is not a result. Leaving the verdict at "running" would let a
+	# report published later be read as a test still in progress, and calling it a
+	# pass would be worse — an aborted run measured only part of the 30 minutes.
+	if stress_test_verdict == "running":
+		stress_test_verdict = "aborted"
+	stress_test_passed = false
 	print("🔬 Stress test stopped manually.")
 
 ## Get stress test report
@@ -859,13 +1084,24 @@ func get_stress_test_report() -> Dictionary:
 		"temp_samples": cpu_temp_history.size(),
 		"throttle_events": throttle_count,
 		"s_clk_stable": throttle_count == 0,
+		# Read "verdict", not "passed": with no thermal sensor the 45 °C criterion is
+		# never evaluated, and a false "passed" would otherwise be indistinguishable
+		# from a measured overheat. See _update_stress_test.
 		"passed": stress_test_passed,
+		"verdict": stress_test_verdict,
+		"thermal_source": _thermal_source,
 		"battery_drain_per_min": battery_drain_per_min,
 		"dl_comparison": {
+			# Same guard as export_session_report().dl_baseline_comparison: without a
+			# real ΔE reading this used to publish savings_pct = 100.0.
+			"measured": battery_source == "android_sysfs" and battery_drain_per_min > 0.0,
+			"measurement_source": battery_source,
 			"rule_based": battery_drain_per_min,
 			"mobilenet": DL_BASELINE_MAH_PER_MIN,
 			"savings_pct": (
-				(1.0 - rule_based_vs_dl_ratio) * 100.0
+				((1.0 - rule_based_vs_dl_ratio) * 100.0)
+				if battery_source == "android_sysfs" and battery_drain_per_min > 0.0
+				else null
 			)
 		}
 	}
@@ -932,9 +1168,9 @@ func _update_overlay_text() -> void:
 		+ "%s FPS: %.0f (avg:%.0f min:%.0f)\n" % [
 			fps_ico, fps_current, fps_avg, fps_min
 		]
-		+ "  %.1fms/%.1fms Drop:%d(%.1f%%)\n" % [
+		+ "  %.1fms/%.1fms Drop:%d(%.1f%%) >16.7ms:%d\n" % [
 			frame_time_ms, FRAME_BUDGET_MS,
-			dropped_frames, drop_pct
+			dropped_frames, drop_pct, frames_over_60_budget
 		]
 		+ "%s Mem: %.0f/%.0fMB pk:%.0f\n" % [
 			mem_ico, memory_current_mb,

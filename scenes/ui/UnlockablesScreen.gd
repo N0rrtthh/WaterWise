@@ -21,15 +21,34 @@ var characters_data = [
 	{"id": "coral", "name": "Coral", "cost": 500, "unlocked": false, "color": Color(1.0, 0.5, 0.5)},
 ]
 
-# Unlockable minigames data
+# Unlockable minigames data — EVERY single-player minigame, listed
+# individually. Buying one adds exactly that game to the rotation
+# (GameManager resolves the minigame name as an unlock id directly).
 var minigames_data = [
-	{"id": "catch_rain", "name": "Catch Rain", "cost": 0, "unlocked": true, "icon": "🌧️"},
-	{"id": "pipe_puzzle", "name": "Pipe Puzzle", "cost": 0, "unlocked": true, "icon": "🔧"},
-	{"id": "water_sorting", "name": "Water Sort", "cost": 100, "unlocked": false, "icon": "🧪"},
-	{"id": "leak_fix", "name": "Fix Leaks", "cost": 200, "unlocked": false, "icon": "💧"},
-	{"id": "water_quiz", "name": "Water Quiz", "cost": 300, "unlocked": false, "icon": "❓"},
-	{"id": "bucket_relay", "name": "Bucket Relay", "cost": 400, "unlocked": false, "icon": "🪣"},
-	{"id": "fun_games", "name": "Fun Games", "cost": 500, "unlocked": false, "icon": "🎉"},
+	{"id": "CatchTheRain", "name": "Catch The Rain", "cost": 0, "unlocked": true, "icon": "🌧️"},
+	{"id": "CoverTheDrum", "name": "Cover The Drum", "cost": 100, "unlocked": false, "icon": "🛢️"},
+	{"id": "RiceWashRescue", "name": "Rice Wash Rescue", "cost": 100, "unlocked": false, "icon": "🍚"},
+	{"id": "VegetableBath", "name": "Vegetable Wash", "cost": 100, "unlocked": false, "icon": "🥕"},
+	{"id": "ScrubToSave", "name": "Scrub To Save", "cost": 150, "unlocked": false, "icon": "🧽"},
+	{"id": "GreywaterSorter", "name": "Greywater Sorter", "cost": 150, "unlocked": false, "icon": "🧪"},
+	{"id": "WringItOut", "name": "Wring It Out", "cost": 150, "unlocked": false, "icon": "👕"},
+	{"id": "ThirstyPlant", "name": "Thirsty Plant", "cost": 100, "unlocked": false, "icon": "🌱"},
+	{"id": "MudPieMaker", "name": "Mud Pie Maker", "cost": 150, "unlocked": false, "icon": "🥧"},
+	{"id": "SpotTheSpeck", "name": "Spot The Speck", "cost": 200, "unlocked": false, "icon": "🔍"},
+	{"id": "FixLeak", "name": "Fix The Leak", "cost": 200, "unlocked": false, "icon": "💧"},
+	{"id": "WaterPlant", "name": "Water The Plant", "cost": 100, "unlocked": false, "icon": "🌼"},
+	{"id": "PlugTheLeak", "name": "Plug The Leak", "cost": 150, "unlocked": false, "icon": "🔧"},
+	{"id": "SwipeTheSoap", "name": "Swipe The Soap", "cost": 100, "unlocked": false, "icon": "🧼"},
+	{"id": "QuickShower", "name": "Quick Shower", "cost": 200, "unlocked": false, "icon": "🚿"},
+	{"id": "FilterBuilder", "name": "Filter Builder", "cost": 250, "unlocked": false, "icon": "⚙️"},
+	{"id": "ToiletTankFix", "name": "Toilet Tank Fix", "cost": 250, "unlocked": false, "icon": "🚽"},
+	{"id": "TracePipePath", "name": "Trace The Pipe", "cost": 250, "unlocked": false, "icon": "🛠️"},
+	{"id": "TimingTap", "name": "Timing Tap", "cost": 200, "unlocked": false, "icon": "⏱️"},
+	{"id": "TurnOffTap", "name": "Turn Off The Tap", "cost": 100, "unlocked": false, "icon": "🚰"},
+	{"id": "BucketBrigade", "name": "Bucket Brigade", "cost": 300, "unlocked": false, "icon": "🏺"},
+	{"id": "CloudCatcher", "name": "Cloud Catcher", "cost": 300, "unlocked": false, "icon": "☁️"},
+	{"id": "WaterMemory", "name": "Water Memory", "cost": 300, "unlocked": false, "icon": "🧠"},
+	{"id": "DropletDash", "name": "Droplet Dash", "cost": 300, "unlocked": false, "icon": "🏃"},
 ]
 
 # Unlockable accessories data
@@ -96,6 +115,12 @@ var _scroll_container: ScrollContainer
 var _scroll_dragging: bool = false
 var _scroll_drag_start_y: float = 0.0
 var _scroll_start_value: int = 0
+## Which contact owns the scroll. A second finger used to re-anchor the drag to
+## itself, so a thumb resting on the list steered it, and that thumb LIFTING
+## cleared _scroll_dragging and killed the scroll the other finger was still
+## performing. Mouse wheel events carry no index and are unaffected.
+const NO_TOUCH_INDEX: int = -1
+var _scroll_touch_index: int = NO_TOUCH_INDEX
 
 func _ready() -> void:
 	_sync_from_save_manager()
@@ -134,7 +159,13 @@ func _sync_from_save_manager() -> void:
 		if minigames_data[i].cost == 0:
 			minigames_data[i].unlocked = true
 		else:
-			minigames_data[i].unlocked = save_mgr.is_minigame_unlocked(minigames_data[i].id)
+			var gid: String = minigames_data[i].id
+			# A per-game item counts as owned if the game itself was
+			# unlocked, OR if an old bundle purchase already includes it.
+			minigames_data[i].unlocked = (
+				save_mgr.is_minigame_unlocked(gid)
+				or _bundle_unlocked_for(gid)
+			)
 
 	for i in range(accessories_data.size()):
 		if accessories_data[i].cost == 0:
@@ -562,14 +593,20 @@ func _input(event: InputEvent) -> void:
 	if event is InputEventScreenTouch:
 		var touch = event as InputEventScreenTouch
 		if touch.pressed:
+			if _scroll_touch_index != NO_TOUCH_INDEX:
+				return
 			if _scroll_container.get_global_rect().has_point(touch.position):
+				_scroll_touch_index = touch.index
 				_scroll_dragging = true
 				_scroll_drag_start_y = touch.position.y
 				_scroll_start_value = _scroll_container.scroll_vertical
-		else:
+		elif touch.index == _scroll_touch_index:
+			_scroll_touch_index = NO_TOUCH_INDEX
 			_scroll_dragging = false
 	elif event is InputEventScreenDrag and _scroll_dragging:
 		var drag = event as InputEventScreenDrag
+		if drag.index != _scroll_touch_index:
+			return
 		var delta = _scroll_drag_start_y - drag.position.y
 		_scroll_container.scroll_vertical = int(_scroll_start_value + delta)
 	elif event is InputEventMouseButton:
@@ -1145,6 +1182,21 @@ func _show_insufficient_funds() -> void:
 	var tween = create_tween()
 	tween.tween_property(popup, "modulate:a", 0.0, 1.5)
 	tween.tween_callback(popup.queue_free)
+
+## True when a legacy bundle purchase already includes this minigame.
+func _bundle_unlocked_for(game_name: String) -> bool:
+	if GameManager == null:
+		return false
+	var mapping: Dictionary = GameManager.UNLOCK_ID_TO_MINIGAMES
+	var save_mgr = get_node_or_null("/root/SaveManager")
+	if save_mgr == null or not (save_mgr.unlocked_content is Dictionary):
+		return false
+	var owned: Array = save_mgr.unlocked_content.get("minigames", [])
+	for bundle_id in owned:
+		if mapping.has(bundle_id) and game_name in mapping[bundle_id]:
+			return true
+	return false
+
 
 func _is_accessory_unlocked_local(accessory_id: String) -> bool:
 	for data in accessories_data:

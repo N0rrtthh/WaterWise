@@ -268,6 +268,11 @@ func _start_game() -> void:
 	round_start_time = Time.get_ticks_msec()
 	game_timer = 60.0
 
+	# Force the next frame to repaint the countdown: on a replayed round the
+	# cached second is still the previous round's value, which would suppress
+	# the first write and briefly show a stale time.
+	reset_timer_label_cache()
+
 	if timer_sync_timer:
 		if _is_host():
 			timer_sync_timer.start()
@@ -602,7 +607,7 @@ func _on_team_won() -> void:
 	await get_tree().create_timer(2.0).timeout
 	
 	if GameManager and _is_host():
-		GameManager.rpc("_load_next_multiplayer_minigame")
+		GameManager.advance_multiplayer_round()
 
 func _on_team_lost() -> void:
 	game_active = false
@@ -622,7 +627,7 @@ func _on_team_lost() -> void:
 	
 	if GameManager and _is_host():
 		if GameManager.team_lives > 0:
-			GameManager.rpc("_load_next_multiplayer_minigame")
+			GameManager.advance_multiplayer_round()
 		else:
 			GameManager.rpc("_show_multiplayer_final_results")
 

@@ -6,6 +6,9 @@ extends MiniGameBase
 
 var tap_positions: Array = []
 var active_taps: Array = []
+## The six static faucet fixtures, kept so a viewport change can move them with
+## tap_positions instead of leaving them behind at the old margins.
+var _tap_fixtures: Array = []
 var tap_spawn_timer: float = 0.0
 var tap_spawn_interval: float = 1.2
 var water_wasted: float = 0.0
@@ -48,7 +51,10 @@ func _apply_difficulty_settings() -> void:
 		print("🔥 Progressive Lvl %d: %d taps, %.2fs interval" % [progressive_level, target_taps, tap_spawn_interval])
 
 func _ready():
-	game_name = "Turn Off Tap"
+	# Localized: the title stayed English above the Filipino objective FIX 58
+	# authored. _loc() keeps the English literal as the fallback for the case
+	# where the table is not up yet (tools/SceneLoadCheck instantiates that way).
+	game_name = _loc("turn_off_tap", "Turn Off Tap")
 	game_instruction_text = Localization.get_text("turn_off_tap_instructions") if Localization else "TAP running faucets to turn them off!\nDon't waste water! 🚿"
 	game_duration = 25.0
 	game_mode = "quota"
@@ -59,45 +65,28 @@ func _ready():
 	
 	# Background - Bathroom
 	var bg = ColorRect.new()
+	bg.name = "Backdrop"
 	bg.color = Color(0.85, 0.9, 0.92)
 	bg.position = Vector2.ZERO
-	bg.size = get_viewport_rect().size
+	bg.size = screen_size
 	bg.z_index = -10
 	add_child(bg)
 	
 	# Tile pattern
-	for row in range(8):
-		for col in range(6):
-			var tile = ColorRect.new()
-			tile.size = Vector2(screen_size.x / 6, screen_size.y / 8)
-			tile.position = Vector2(col * tile.size.x, row * tile.size.y)
-			tile.color = Color(0.82, 0.87, 0.89) if (row + col) % 2 == 0 else Color(0.85, 0.9, 0.92)
-			tile.z_index = -9
-			add_child(tile)
-	
-	# Generate tap positions (3x2 grid)
-	var margin_x = 100
-	var margin_y = 180
-	var spacing_x = (screen_size.x - margin_x * 2) / 2
-	var spacing_y = (screen_size.y - margin_y * 2) / 2
-	
-	for row in range(2):
-		for col in range(3):
-			var pos = Vector2(
-				margin_x + col * spacing_x,
-				margin_y + row * spacing_y
-			)
-			tap_positions.append(pos)
+	_build_tiles(screen_size)
+	# Generate tap positions (3 columns x 2 rows)
+	tap_positions = _tap_layout(screen_size)
 	
 	# Create tap fixtures at each position
 	for pos in tap_positions:
 		var fixture = _create_tap_fixture(pos)
 		add_child(fixture)
+		_tap_fixtures.append(fixture)
 	
 	# Score display
 	var score_display = Label.new()
 	score_display.name = "ScoreDisplay"
-	score_display.text = "🚰 0 / %d closed" % target_taps
+	score_display.text = _loc("hud_taps_closed", "🚰 %d / %d closed") % [0, target_taps]
 	score_display.add_theme_font_size_override("font_size", 26)
 	score_display.add_theme_color_override("font_color", Color.WHITE)
 	score_display.add_theme_color_override("font_outline_color", Color.BLACK)
@@ -122,11 +111,114 @@ func _ready():
 	
 	var waste_label = Label.new()
 	waste_label.name = "WasteLabel"
-	waste_label.text = "💧 Water: OK"
+	waste_label.text = _loc("hud_water_ok", "💧 Water: OK")
 	waste_label.add_theme_font_size_override("font_size", 18)
 	waste_label.add_theme_color_override("font_color", Color.WHITE)
 	waste_label.position = Vector2(screen_size.x - 220, 148)
 	add_child(waste_label)
+	
+	_connect_viewport_resize()
+
+func _connect_viewport_resize() -> void:
+	var vp := get_viewport()
+	if vp and not vp.size_changed.is_connected(_on_viewport_size_changed):
+		vp.size_changed.connect(_on_viewport_size_changed)
+
+
+## Re-lay out after a viewport change (device rotation, window resize, split view).
+##
+## Every position in _ready() came from a single get_viewport_rect() read, so a rotation
+## left the backdrop and the checkerboard at the old size, pushed the three right-anchored
+## waste widgets off-screen (they are placed at x - 220), and left the six taps clustered
+## in the old margins. Same pattern as MP_CatchRainAquarium._on_viewport_size_changed().
+##
+## The taps already on screen move in step with tap_positions, matched on their OLD
+## position, because _spawn_tap() decides whether a slot is occupied with an exact
+## `tap.position == tap_positions[i]` compare: renumbering the slots without moving what
+## stands on them would make every occupied slot read as free.
+func _on_viewport_size_changed() -> void:
+	if not is_inside_tree():
+		return
+	var screen_size: Vector2 = get_viewport_rect().size
+	var new_positions: Array = _tap_layout(screen_size)
+	if new_positions.size() == tap_positions.size():
+		for i in range(tap_positions.size()):
+			var old_pos: Vector2 = tap_positions[i]
+			var new_pos: Vector2 = new_positions[i]
+			for tap in active_taps:
+				if is_instance_valid(tap) and tap.position == old_pos:
+					tap.position = new_pos
+			for fixture in _tap_fixtures:
+				if is_instance_valid(fixture) and fixture.position == old_pos:
+					fixture.position = new_pos
+		tap_positions = new_positions
+	var bg = get_node_or_null("Backdrop")
+	if bg:
+		bg.size = screen_size
+	_build_tiles(screen_size)
+	for hud_name in ["WasteBg", "WasteBar", "WasteLabel"]:
+		var hud_node = get_node_or_null(hud_name)
+		if hud_node == null:
+			continue
+		hud_node.position = Vector2(
+			screen_size.x - 220.0,
+			148.0 if hud_name == "WasteLabel" else 120.0
+		)
+
+
+## Where the six taps sit for a given viewport (3 columns x 2 rows).
+##
+## The step between rows and columns is (span / (count - 1)), because the first and last
+## positions sit ON the margins. It used to divide both spans by a literal 2, which is
+## (count - 1) for the 3 columns and NOT for the 2 rows: the second row landed at
+## margin_y + (h - 2*margin_y)/2, the vertical CENTRE of the screen, so every tap was in
+## the top half and the bottom 50% of the playfield was dead space. Measured at 1920x1080:
+## rows at y=180 and y=540 with nothing below 590.
+##
+## margin_y also has to clear the HUD band, which the base and this scene fill down to
+## about y=180 (waste bar at y=120..145, its label at y=148..178, score readout at y=120).
+## The top row's 100x100 tap button is drawn from margin_y - 50, so a 180 margin put the
+## top-right tap UNDER the "Water: OK" readout - a tappable target with HUD text over it.
+func _tap_layout(screen_size: Vector2) -> Array:
+	var tap_cols: int = 3
+	var tap_rows: int = 2
+	var margin_x: float = 100.0
+	var margin_y: float = 240.0
+	var spacing_x: float = (screen_size.x - margin_x * 2.0) / float(maxi(tap_cols - 1, 1))
+	var spacing_y: float = (screen_size.y - margin_y * 2.0) / float(maxi(tap_rows - 1, 1))
+	var out: Array = []
+	for row in range(tap_rows):
+		for col in range(tap_cols):
+			out.append(Vector2(
+				margin_x + col * spacing_x,
+				margin_y + row * spacing_y
+			))
+	return out
+
+
+## (Re)build the bathroom checkerboard for a given viewport.
+##
+## remove_child() runs BEFORE queue_free() so the name "TileGrid" is free again in the
+## same frame: a queued-but-not-yet-freed sibling keeps its name, the replacement would
+## silently become "@Node2D@2", and the get_node_or_null() above would then miss it on
+## every later resize and leak one 48-tile grid per event.
+func _build_tiles(screen_size: Vector2) -> void:
+	var old_grid: Node = get_node_or_null("TileGrid")
+	if old_grid:
+		remove_child(old_grid)
+		old_grid.queue_free()
+	var grid := Node2D.new()
+	grid.name = "TileGrid"
+	grid.z_index = -9
+	add_child(grid)
+	for row in range(8):
+		for col in range(6):
+			var tile = ColorRect.new()
+			tile.size = Vector2(screen_size.x / 6, screen_size.y / 8)
+			tile.position = Vector2(col * tile.size.x, row * tile.size.y)
+			tile.color = Color(0.82, 0.87, 0.89) if (row + col) % 2 == 0 else Color(0.85, 0.9, 0.92)
+			grid.add_child(tile)
+
 
 func _create_tap_fixture(pos: Vector2) -> Node2D:
 	var fixture = Node2D.new()
@@ -175,13 +267,13 @@ func _process(delta):
 	var waste_label = get_node("WasteLabel")
 	if waste_ratio < 0.5:
 		waste_bar.color = Color(0.3, 0.5, 0.9)
-		waste_label.text = "💧 Water: OK"
+		waste_label.text = _loc("hud_water_ok", "💧 Water: OK")
 	elif waste_ratio < 0.8:
 		waste_bar.color = Color(0.9, 0.7, 0.2)
-		waste_label.text = "💧 Water: Caution!"
+		waste_label.text = _loc("hud_water_caution", "💧 Water: Caution!")
 	else:
 		waste_bar.color = Color(0.9, 0.3, 0.2)
-		waste_label.text = "💧 Water: CRITICAL!"
+		waste_label.text = _loc("hud_water_critical", "💧 Water: CRITICAL!")
 	
 	# Check failure
 	if water_wasted >= max_water_waste:
@@ -235,10 +327,11 @@ func _spawn_running_tap():
 	var button = Button.new()
 	button.name = "TapButton"
 	button.custom_minimum_size = Vector2(100, 100)
-	button.position = Vector2(-50, -50)
 	button.modulate.a = 0.0  # Invisible
 	button.pressed.connect(_on_tap_closed.bind(tap))
 	tap.add_child(button)
+	# Centred after growth, not at the authored offset: the 48dp floor enlarges this button.
+	centre_hit_control(button)
 	
 	# Alert indicator
 	var alert = Label.new()
@@ -268,7 +361,7 @@ func _on_tap_closed(tap: Node2D):
 	record_action(true)
 	
 	# Update score
-	get_node("ScoreDisplay").text = "🚰 %d / %d closed" % [taps_closed, target_taps]
+	get_node("ScoreDisplay").text = _loc("hud_taps_closed", "🚰 %d / %d closed") % [taps_closed, target_taps]
 	
 	# Visual feedback
 	var faucet = tap.get_node("Faucet")
@@ -301,6 +394,6 @@ func _input(event):
 		for tap in active_taps:
 			if is_instance_valid(tap) and tap.get_meta("running", false):
 				var distance = event.position.distance_to(tap.position)
-				if distance < 60:
+				if distance < 74:
 					_on_tap_closed(tap)
 					break

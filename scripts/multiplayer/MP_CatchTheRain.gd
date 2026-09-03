@@ -10,33 +10,82 @@ extends "res://scripts/multiplayer/MultiplayerMiniGameBase.gd"
 const DROP_SPEED: float = 200.0
 const SPAWN_INTERVAL: float = 1.0   # was 1.5 — faster rain = more water for P2
 const BUCKET_SPEED: float = 400.0
+const BUCKET_HALF_W: float = 60.0
+const BUCKET_MARGIN_BOTTOM: float = 100.0
+const POINTER_FOLLOW: float = 12.0
+const SPAWN_MARGIN: float = 80.0
 const MAX_ALLOWED_MISSES: int = 8   # was 3 — generous, uses shared life
-const QUOTA: int = 50  # Team needs 50 points total to win
+## WHAT A CAUGHT DROP PAYS, AND THE TEAM TOTAL THAT ENDS THE ROUND
+##
+## The catch paid a bare add_score(10) while every sibling catcher in this project pays 5
+## (MP_CatchRainAquarium.POINTS_PER_DROP), and the 50-point "team quota" in the comment here was
+## never calibrated against what the pair actually earns: with the old 10 and MP_FilterWater's
+## old 30-per-unit, a single drop caught and filtered was worth 40 team points, so the target
+## landed after two drops — a round decided at t=2s. At 5 here and 15 there a drop carried all
+## the way through is worth 20, and 10 such drops is a target that needs most of the round: rain
+## spawns every SPAWN_INTERVAL second — 30 drops offered at Medium, 45 once the Hard tier scales
+## the timer up — and the partner has to land PARTICLES_PER_WATER taps on each unit sent over.
+const POINTS_PER_DROP: int = 5
+const TEAM_TARGET: int = 200  # matches MP_FilterWater's TEAM_TARGET — 10 drops caught AND filtered
 
 var bucket: Area2D
 var spawn_timer: Timer
 var drops_caught: int = 0
 var drops_missed: int = 0
 var _layout_ready: bool = false
+## Where the last touch or mouse event landed in world space, and whether one has arrived.
+## The bucket is steered from these instead of polling get_global_mouse_position(): that poll
+## returns WORLD coordinates and was being range-checked against 0..viewport_width, which on this
+## camera excluded the visible left band (x -384..0) entirely and admitted 334px of off-screen
+## right. On a touch build the emulated mouse also reads (0, 0) until the first tap.
+var _pointer_active: bool = false
+var _pointer_world_x: float = 0.0
 
 func get_instructions() -> String:
-	return "Move the bucket with LEFT/RIGHT keys to catch raindrops.\nAvoid missing drops!"
+	return Localization.get_text("mp_catch_the_rain_instructions") % [POINTS_PER_DROP, TEAM_TARGET, MAX_ALLOWED_MISSES]
 
 func get_controls_text() -> String:
-	return "⬅️ ➡️ Arrows or Mouse\n🪣 Move bucket\n💧 Catch raindrops"
+	return Localization.get_text("mp_catch_the_rain_controls")
+
+## Records a pointer position for _process to steer toward. _unhandled_input, not _input, so the
+## instruction overlay and the pause menu keep first claim on a tap.
+func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventScreenTouch:
+		if event.pressed:
+			_note_pointer(event.position)
+	elif event is InputEventScreenDrag:
+		_note_pointer(event.position)
+	elif event is InputEventMouseMotion:
+		_note_pointer(event.position)
+	elif event is InputEventMouseButton and event.pressed:
+		_note_pointer(event.position)
+
+func _note_pointer(screen_pos: Vector2) -> void:
+	_pointer_world_x = world_from_screen(screen_pos).x
+	_pointer_active = true
 
 func _on_multiplayer_ready() -> void:
 	# Setup game when multiplayer is ready
 	game_name = "Catch the Rain"
+	title_key = "catch_the_rain"
 	connection_type = "resource_transfer"
 	_connect_viewport_resize()
 	
-	# Set quota for this round (use Rolling Window from GameManager)
+	# THE TEAM TARGET, ON BOTH WIN PATHS AT ONCE
+	#
+	# win_quota is the target MultiplayerMiniGameBase measures — add_score() ends the round early
+	# on it and _on_time_up() fails the round when it is missed — and it was never set here, so
+	# this round could not be won or lost, only survived, and CoopAdaptation recorded a success
+	# from it whatever the players did. GameManager's copy is the CRDT path (the host's
+	# _check_win_condition() compares the G-Counter total against it) and it was being set to
+	# QUOTA * GameManager.difficulty_multiplier — a SINGLE-PLAYER number, since MP tiers come from
+	# CoopAdaptation — so the two targets disagreed and the console could announce TEAM WINS at a
+	# score the round went on playing through. One number now, on both paths.
+	win_quota = TEAM_TARGET # a TEAM total — the partner's filtering pays into it too
 	if GameManager:
-		var difficulty_mult = GameManager.difficulty_multiplier
-		var adjusted_quota = int(QUOTA * difficulty_mult)
-		GameManager.set_minigame_quota(adjusted_quota)
-		_log("🎯 Team quota set to: %d (base: %d, mult: %.2f)" % [adjusted_quota, QUOTA, difficulty_mult])
+		GameManager.set_minigame_quota(TEAM_TARGET)
+		_log("🎯 Team target: %d pts (%d per drop caught, plus what the partner filters)"
+			% [TEAM_TARGET, POINTS_PER_DROP])
 	
 	# Create bucket
 	_create_bucket()
@@ -107,26 +156,39 @@ func _connect_viewport_resize() -> void:
 func _on_viewport_size_changed() -> void:
 	_update_bucket_layout()
 
+## Seats the bucket on the visible bottom edge. The first pass centres it; later passes (a resize,
+## an orientation flip) only re-seat the height and clamp the x the player steered to, because
+## teleporting a steered bucket back to the centre mid-round loses a drop the player had lined up.
 func _update_bucket_layout() -> void:
 	if bucket == null:
 		return
-	var rect = get_viewport_rect()
-	if rect.size.x <= 1.0 or rect.size.y <= 1.0:
+	var view := playfield_rect()
+	if view.size.x <= 1.0:
 		return
-	var cam = get_viewport().get_camera_2d() if get_viewport() else null
-	var top_left = Vector2.ZERO
-	if cam:
-		top_left = cam.global_position - rect.size * 0.5
-	bucket.position = top_left + Vector2(rect.size.x * 0.5, rect.size.y - 100.0)
-	_layout_ready = true
+	var y: float = view.end.y - BUCKET_MARGIN_BOTTOM
+	if not _layout_ready:
+		bucket.position = Vector2(view.get_center().x, y)
+		_layout_ready = true
+	else:
+		bucket.position = Vector2(
+			clampf(bucket.position.x, view.position.x + BUCKET_HALF_W, view.end.x - BUCKET_HALF_W), y)
 
 func _spawn_raindrop() -> void:
 	# Spawn a falling raindrop
 	if not game_active:
 		return
+	var view := playfield_rect()
+	if view.size.x <= 1.0:
+		return
 	
 	var drop = Area2D.new()
-	drop.position = Vector2(randf_range(50, get_viewport_rect().size.x - 50), -20)
+	# Across the VISIBLE width, and above the visible top so the drop enters frame instead of
+	# blinking into existence. The old band was world x[50, viewport_width - 50]: with the camera
+	# at (576, 324) that put ~18% of the rain outside the right edge, uncatchable and costing a
+	# shared life every eighth time, while the leftmost 434px never saw a drop at all.
+	drop.position = Vector2(
+		randf_range(view.position.x + SPAWN_MARGIN, view.end.x - SPAWN_MARGIN),
+		view.position.y - 50.0)
 	add_child(drop)
 	
 	# Collision
@@ -150,30 +212,32 @@ func _process(delta: float) -> void:
 		return
 	if not _layout_ready:
 		_update_bucket_layout()
+	var view := playfield_rect()
+	if view.size.x <= 1.0:
+		return
+	var min_x: float = view.position.x + BUCKET_HALF_W
+	var max_x: float = view.end.x - BUCKET_HALF_W
 	
-	# Move bucket with input (Keyboard or Mouse)
+	# Move bucket: arrow keys take priority, otherwise it eases toward the last pointer position.
 	if bucket:
-		var input_dir = Input.get_axis("ui_left", "ui_right")
-		if input_dir != 0:
+		var input_dir: float = Input.get_axis("ui_left", "ui_right")
+		if input_dir != 0.0:
 			bucket.position.x += input_dir * BUCKET_SPEED * delta
-		else:
-			# Mouse control fallback
-			var mouse_x = get_global_mouse_position().x
-			# Only move if mouse is inside window horizontally
-			if mouse_x > 0 and mouse_x < get_viewport_rect().size.x:
-				# Smoothly move towards mouse
-				bucket.position.x = lerp(bucket.position.x, mouse_x, 10 * delta)
-		
-		bucket.position.x = clamp(bucket.position.x, 50, get_viewport_rect().size.x - 50)
+		elif _pointer_active:
+			var target_x: float = clampf(_pointer_world_x, min_x, max_x)
+			bucket.position.x = lerpf(bucket.position.x, target_x,
+				clampf(POINTER_FOLLOW * delta, 0.0, 1.0))
+		bucket.position.x = clampf(bucket.position.x, min_x, max_x)
 	
 	# Move all drops
 	for child in get_children():
 		if child is Area2D and child.has_meta("velocity"):
 			var velocity = child.get_meta("velocity") as Vector2
 			child.position += velocity * delta
-			
-			# Remove if off screen
-			if child.position.y > get_viewport_rect().size.y + 50:
+			# Missed once it has passed the VISIBLE bottom. The old line was viewport height read as
+			# world space, 266px below what the player can see on desktop and 686px below it in a
+			# taller viewport, so a drop that had already left the screen kept falling.
+			if child.position.y > view.end.y + 50.0:
 				_on_drop_missed()
 				child.queue_free()
 
@@ -184,7 +248,7 @@ func _on_bucket_collision(area: Area2D) -> void:
 	
 	if area.get_meta("type") == "raindrop":
 		drops_caught += 1
-		add_score(10)
+		add_score(POINTS_PER_DROP)
 		
 		# Send water resource to partner
 		send_resource_to_partner("clean_water", 1, 1.0)

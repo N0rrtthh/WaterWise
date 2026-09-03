@@ -351,13 +351,27 @@ func _update_lives_display() -> void:
 func animate_life_lost() -> void:
 	if not lives_label:
 		return
-	var tween = create_tween()
-	tween.tween_property(lives_label, "modulate", Color(2.0, 0.3, 0.3), 0.1)
-	tween.tween_property(lives_label, "modulate", Color.WHITE, 0.3)
-
-	var original_scale = lives_label.scale
-	tween.parallel().tween_property(lives_label, "scale", Vector2(1.4, 1.4), 0.1)
-	var scale_tween = tween.tween_property(lives_label, "scale", original_scale, 0.2)
+	# A second life can be lost while this 0.6 s punch is still running — Rain reports
+	# a miss for every drop that reaches the floor and drops land in batches — and the
+	# old code both left the first tween running and captured `lives_label.scale` at
+	# tween-BUILD time. The overlapping tween therefore returned the label to a
+	# mid-punch value (~1.2-1.4) instead of to rest, that value became the next
+	# capture, and the label ratcheted upward and stayed oversized for the rest of the
+	# round. LivesLabel is a direct child of an HBoxContainer, which sizes but never
+	# scales its children, so nothing downstream ever corrected it: the glyphs
+	# overdrew the neighbouring ScoreLabel until the scene was reloaded.
+	#
+	# Kill the previous punch and rebase on the known rest values instead of reading
+	# the live ones. Tweener order and the parallel grouping are unchanged.
+	if _lives_punch_tween and _lives_punch_tween.is_valid():
+		_lives_punch_tween.kill()
+	lives_label.scale = Vector2.ONE
+	lives_label.modulate = Color.WHITE
+	_lives_punch_tween = create_tween()
+	_lives_punch_tween.tween_property(lives_label, "modulate", Color(2.0, 0.3, 0.3), 0.1)
+	_lives_punch_tween.tween_property(lives_label, "modulate", Color.WHITE, 0.3)
+	_lives_punch_tween.parallel().tween_property(lives_label, "scale", Vector2(1.4, 1.4), 0.1)
+	var scale_tween: PropertyTweener = _lives_punch_tween.tween_property(lives_label, "scale", Vector2.ONE, 0.2)
 	scale_tween.set_trans(Tween.TRANS_ELASTIC).set_ease(Tween.EASE_OUT)
 
 func animate_timer_warning() -> void:
@@ -391,6 +405,11 @@ func _start_game() -> void:
 	# Reset game timer
 	time_limit = 60.0  # 60 seconds per round
 	game_timer = time_limit
+
+	# Force the next frame to repaint the countdown: on a replayed round the
+	# cached second is still the previous round's value, which would suppress
+	# the first write and briefly show a stale time.
+	reset_timer_label_cache()
 
 	if timer_sync_timer:
 		if _is_host():
@@ -880,7 +899,7 @@ func _on_team_won() -> void:
 	
 	# Only host initiates next minigame load
 	if GameManager and GameManager.is_host:
-		GameManager.rpc("_load_next_multiplayer_minigame")
+		GameManager.advance_multiplayer_round()
 
 func _on_team_lost() -> void:
 	# Called when team runs out of lives.
@@ -899,7 +918,7 @@ func _on_team_lost() -> void:
 	if GameManager and GameManager.is_host:
 		if GameManager.team_lives > 0:
 			# Continue to next minigame
-			GameManager.rpc("_load_next_multiplayer_minigame")
+			GameManager.advance_multiplayer_round()
 		else:
 			# Game over - show final results
 			GameManager.rpc("_show_multiplayer_final_results")
@@ -912,12 +931,9 @@ func _on_life_lost(_remaining: int) -> void:
 	animate_life_lost()
 	play_mistake_effect()
 	
-	# Screen shake effect
-	var tween: Tween = create_tween()
-	tween.set_loops(1)
-	tween.tween_property(self, "position", Vector2(10, 0), 0.05)
-	tween.tween_property(self, "position", Vector2(-10, 0), 0.05)
-	tween.tween_property(self, "position", Vector2.ZERO, 0.05)
+	# Screen shake — kills the shake already running, returns to the real home
+	# position rather than to the origin, and honours the accessibility switch.
+	shake_self()
 
 func _show_result_screen(victory: bool) -> void:
 	# Show the result overlay

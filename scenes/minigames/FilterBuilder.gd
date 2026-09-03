@@ -4,6 +4,25 @@ extends MiniGameBase
 ## FILTER BUILDER - Drag layers to build a water filter
 ## ═══════════════════════════════════════════════════════════════════
 
+## Half-extent of a layer's grab box. 75 makes it a 150-unit square, clearing the 48dp
+## touch floor (147 canvas units on WVGA 4.5in, the densest profile shipped) in both axes.
+## The authored box was 120x50 - 16dp tall - which tools/VerifyTouchTargets.tscn measured
+## as the smallest grab target in the single-player set. The layer art stays strip-shaped;
+## the extra reach is hit area only, which is why the pick resolves to the nearest layer.
+const LAYER_GRAB_HALF: Vector2 = Vector2(75.0, 75.0)
+
+## The four materials, in the order the filter must be stacked. The layer chips and the
+## faint solution guides have to name them identically, and both used to carry their own
+## English literal ("🧻 Cloth" on the chip, "1) Cloth" on the guide), so the Filipino build
+## showed English on the only two labels this game has. One table, one key per material:
+## the emoji stays out of the key so the guide can print the plain name.
+const MATERIALS: Array[Dictionary] = [
+	{"type": "cloth", "emoji": "🧻", "key": "material_cloth", "label": "Cloth"},
+	{"type": "charcoal", "emoji": "⬛", "key": "material_charcoal", "label": "Charcoal"},
+	{"type": "sand", "emoji": "🟨", "key": "material_sand", "label": "Sand"},
+	{"type": "gravel", "emoji": "⛰️", "key": "material_gravel", "label": "Gravel"},
+]
+
 var filter_layers: Array = []
 var placed_layers: Array = []
 var correct_order: Array = ["cloth", "charcoal", "sand", "gravel"]
@@ -15,6 +34,12 @@ var snap_radius: float = 90.0
 var show_solution_guide: bool = true
 var touch_active: bool = false
 var touch_pos: Vector2 = Vector2.ZERO
+## Which contact owns the carry. touch_active used to be assigned from ANY
+## contact's pressed flag, so a second finger lifting dropped the layer still held
+## under the first, and touch_pos followed whichever finger moved last - teleporting
+## the carried layer across the screen. Mouse events carry no index of their own.
+const NO_TOUCH_INDEX: int = -1
+var _touch_index: int = NO_TOUCH_INDEX
 var undo_button: Button = null
 
 func _apply_difficulty_settings() -> void:
@@ -40,7 +65,10 @@ func _apply_difficulty_settings() -> void:
 			snap_radius = 90.0
 
 func _ready():
-	game_name = "Filter Builder"
+	# Localized: the title stayed English above the Filipino objective FIX 58
+	# authored. _loc() keeps the English literal as the fallback for the case
+	# where the table is not up yet (tools/SceneLoadCheck instantiates that way).
+	game_name = _loc("filter_builder", "Filter Builder")
 	game_instruction_text = (
 		Localization.get_text("filter_builder_instructions")
 		if Localization
@@ -99,7 +127,7 @@ func _ready():
 	# Score display
 	var score_display = Label.new()
 	score_display.name = "ScoreDisplay"
-	score_display.text = "🧱 0 / %d filters" % target_filters
+	score_display.text = _loc("hud_filters_built", "🧱 %d / %d filters") % [0, target_filters]
 	score_display.add_theme_font_size_override("font_size", 28)
 	score_display.add_theme_color_override("font_color", Color.WHITE)
 	score_display.add_theme_color_override("font_outline_color", Color.BLACK)
@@ -109,10 +137,11 @@ func _ready():
 
 	undo_button = Button.new()
 	undo_button.name = "UndoButton"
-	undo_button.text = "Undo Last"
+	undo_button.text = _loc("hud_undo_last", "Undo Last")
 	undo_button.custom_minimum_size = Vector2(170, 54)
 	undo_button.position = Vector2(screen_size.x * 0.45, 170)
 	undo_button.pressed.connect(_undo_last_placement)
+	MiniGameAssets.outline_text(undo_button)
 	add_child(undo_button)
 	_refresh_undo_button()
 	
@@ -143,10 +172,10 @@ func _spawn_materials():
 	
 	# Material definitions
 	var materials = [
-		{"type": "cloth", "color": Color(0.9, 0.9, 0.85), "label": "🧻 Cloth"},
-		{"type": "charcoal", "color": Color(0.2, 0.2, 0.2), "label": "⬛ Charcoal"},
-		{"type": "sand", "color": Color(0.9, 0.8, 0.6), "label": "🟨 Sand"},
-		{"type": "gravel", "color": Color(0.5, 0.5, 0.5), "label": "🪨 Gravel"}
+		{"type": "cloth", "color": Color(0.9, 0.9, 0.85)},
+		{"type": "charcoal", "color": Color(0.2, 0.2, 0.2)},
+		{"type": "sand", "color": Color(0.9, 0.8, 0.6)},
+		{"type": "gravel", "color": Color(0.5, 0.5, 0.5)}
 	]
 	
 	# Shuffle positions
@@ -167,7 +196,6 @@ func _spawn_materials():
 		filter_layers.append(layer)
 
 func _create_solution_guides(bottle: Node2D) -> void:
-	var guide_labels = ["1) Cloth", "2) Charcoal", "3) Sand", "4) Gravel"]
 	var guide_colors = [
 		Color(0.9, 0.9, 0.85, 0.28),
 		Color(0.2, 0.2, 0.2, 0.28),
@@ -184,7 +212,7 @@ func _create_solution_guides(bottle: Node2D) -> void:
 
 		var guide = Label.new()
 		guide.name = "GuideLabel"
-		guide.text = guide_labels[i]
+		guide.text = "%d) %s" % [i + 1, _loc(str(MATERIALS[i]["key"]), str(MATERIALS[i]["label"]))]
 		guide.add_theme_font_size_override("font_size", 16)
 		guide.add_theme_color_override("font_color", Color(0.1, 0.15, 0.2, 0.75))
 		guide.position = Vector2(8, 18)
@@ -201,22 +229,32 @@ func _update_solution_guides() -> void:
 		if guide:
 			guide.visible = show_solution_guide and not zone.get_meta("filled", false)
 
+## Chip caption for one material: the emoji stays outside the translation table (it is
+## language-neutral) and the name comes from it, so the Filipino build reads
+## "🧻 Tela" instead of the English literal this used to carry inline.
+func _material_caption(mat_type: String) -> String:
+	for m in MATERIALS:
+		if str(m["type"]) == mat_type:
+			return "%s %s" % [str(m["emoji"]), _loc(str(m["key"]), str(m["label"]))]
+	return mat_type
+
 func _create_layer(mat: Dictionary) -> Node2D:
 	var layer = Node2D.new()
 	layer.set_meta("type", mat["type"])
 	
 	var body = Polygon2D.new()
 	body.polygon = PackedVector2Array([
-		Vector2(-60, -25), Vector2(60, -25),
-		Vector2(60, 25), Vector2(-60, 25)
+		Vector2(-66, -33), Vector2(66, -33),
+		Vector2(66, 33), Vector2(-66, 33)
 	])
 	body.color = mat["color"]
 	layer.add_child(body)
 	
 	var label = Label.new()
-	label.text = mat["label"]
+	label.text = _material_caption(str(mat["type"]))
 	label.add_theme_font_size_override("font_size", 22)
 	label.position = Vector2(-50, -15)
+	MiniGameAssets.outline_text(label)
 	layer.add_child(label)
 	
 	return layer
@@ -230,10 +268,22 @@ func _process(delta):
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventScreenTouch:
 		var touch_event = event as InputEventScreenTouch
-		touch_active = touch_event.pressed
-		touch_pos = touch_event.position
+		if touch_event.pressed:
+			if _touch_index == NO_TOUCH_INDEX:
+				_touch_index = touch_event.index
+			if touch_event.index != _touch_index:
+				return
+			touch_active = true
+			touch_pos = touch_event.position
+		elif touch_event.index == _touch_index:
+			touch_active = false
+			_touch_index = NO_TOUCH_INDEX
 	elif event is InputEventScreenDrag:
 		var drag_event = event as InputEventScreenDrag
+		if _touch_index == NO_TOUCH_INDEX:
+			_touch_index = drag_event.index
+		if drag_event.index != _touch_index:
+			return
 		touch_active = true
 		touch_pos = drag_event.position
 
@@ -251,32 +301,41 @@ func _handle_drag():
 	
 	if _is_primary_pressing():
 		if current_drag == null:
-			# Try to pick up a layer
-			for layer in filter_layers:
-				if not is_instance_valid(layer): continue
-				
-				var layer_rect = Rect2(layer.position - Vector2(60, 25), Vector2(120, 50))
-				if layer_rect.has_point(pointer_pos):
-					if layer.get_meta("placed", false):
-						# Undo placement: free the old zone before re-dragging this layer.
-						var previous_zone = int(layer.get_meta("zone_index", -1))
-						if previous_zone >= 0:
-							var bottle = get_node("Bottle")
-							var prev_zone_node = bottle.get_node_or_null("Zone_%d" % previous_zone)
-							if prev_zone_node:
-								prev_zone_node.set_meta("filled", false)
-						layer.set_meta("placed", false)
-						layer.set_meta("zone_index", -1)
-						placed_layers = placed_layers.filter(func(item):
-							return item["type"] != layer.get_meta("type")
-						)
-						_update_solution_guides()
-						_refresh_undo_button()
+			# Nearest layer under the pointer, not the first in the list. The grab box is the
+			# 48dp floor square (150 units) while a PLACED layer sits in a bottle zone only 70
+			# units from its neighbour, so up to three share one finger - and first-match handed
+			# back whichever was authored earliest instead of the one being pointed at.
+			var pick: Node2D = null
+			var pick_d: float = INF
+			for candidate in filter_layers:
+				if not is_instance_valid(candidate): continue
+				var cand_rect := Rect2(candidate.position - LAYER_GRAB_HALF, LAYER_GRAB_HALF * 2.0)
+				if not cand_rect.has_point(pointer_pos): continue
+				var cand_d: float = pointer_pos.distance_squared_to(candidate.position)
+				if cand_d < pick_d:
+					pick_d = cand_d
+					pick = candidate as Node2D
+			if pick != null:
+				var layer: Node2D = pick
+				if layer.get_meta("placed", false):
+					# Undo placement: free the old zone before re-dragging this layer.
+					var previous_zone = int(layer.get_meta("zone_index", -1))
+					if previous_zone >= 0:
+						var bottle = get_node("Bottle")
+						var prev_zone_node = bottle.get_node_or_null("Zone_%d" % previous_zone)
+						if prev_zone_node:
+							prev_zone_node.set_meta("filled", false)
+					layer.set_meta("placed", false)
+					layer.set_meta("zone_index", -1)
+					placed_layers = placed_layers.filter(func(item):
+						return item["type"] != layer.get_meta("type")
+					)
+					_update_solution_guides()
+					_refresh_undo_button()
 
-					current_drag = layer
-					drag_offset = layer.position - pointer_pos
-					layer.z_index = 10
-					break
+				current_drag = layer
+				drag_offset = layer.position - pointer_pos
+				layer.z_index = 10
 		else:
 			# Move the layer
 			current_drag.position = pointer_pos + drag_offset
@@ -351,7 +410,7 @@ func _check_filter():
 	if correct:
 		filters_built += 1
 		record_action(true)
-		get_node("ScoreDisplay").text = "🧱 %d / %d filters" % [filters_built, target_filters]
+		get_node("ScoreDisplay").text = _loc("hud_filters_built", "🧱 %d / %d filters") % [filters_built, target_filters]
 		
 		# Success animation
 		var flash = ColorRect.new()
@@ -366,7 +425,7 @@ func _check_filter():
 		if filters_built >= target_filters:
 			end_game(true)
 		else:
-			await get_tree().create_timer(0.8).timeout
+			await round_delay(0.8)
 			if game_active:
 				_spawn_materials()
 	else:
@@ -382,7 +441,7 @@ func _check_filter():
 		tw.tween_property(flash, "modulate:a", 0.0, 0.3)
 		tw.tween_callback(flash.queue_free)
 		
-		await get_tree().create_timer(0.5).timeout
+		await round_delay(0.5)
 		if game_active:
 			_spawn_materials()
 

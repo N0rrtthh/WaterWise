@@ -1,3 +1,9 @@
+## ORPHAN: nothing instantiates this node. Multiplayer round flow is actually driven
+## by MultiplayerMiniGameBase + NetworkManager + GameManager; the round-transition
+## screen this file loads (res://scenes/ui/RoundTransition.tscn) is referenced from
+## nowhere else, so the pair is a dead subsystem kept for reference.
+## tools/VerifyScriptOwnership.tscn fails if this banner is removed while the file is
+## still unreferenced.
 extends Node
 
 ## ═══════════════════════════════════════════════════════════════════

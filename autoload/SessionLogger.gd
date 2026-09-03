@@ -195,6 +195,34 @@ func record_scene_visit(scene_name: String) -> void:
 # SP GAME RECORDING (called from GameManager.complete_minigame)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+## Which quantity the round's reaction_time actually was. Read off the live
+## minigame rather than guessed: MiniGameBase.report_reaction_time_source()
+## returns "per_action" when the round produced measured action latencies and
+## "round_duration" when it had nothing discrete to grade. "unknown" is returned
+## only when no minigame is in the tree to ask, and is deliberately not defaulted
+## to either real value.
+func _reaction_time_source() -> String:
+	var tree := get_tree()
+	if tree == null:
+		return "unknown"
+	var scene := tree.current_scene
+	if scene != null and scene.has_method("report_reaction_time_source"):
+		return str(scene.call("report_reaction_time_source"))
+	return "unknown"
+
+
+## True when AutoPlayManager is driving the rounds, i.e. the samples are a bot's,
+## not a player's. Read live rather than latched so a session that enables auto-play
+## partway through is still marked.
+func _auto_play_active() -> bool:
+	var apm := get_node_or_null("/root/AutoPlayManager")
+	if apm == null:
+		return false
+	if apm.has_method("is_auto_play_enabled"):
+		return bool(apm.call("is_auto_play_enabled"))
+	return false
+
+
 func record_sp_game(
 	game_name: String,
 	score: int,
@@ -219,6 +247,16 @@ func record_sp_game(
 		"reaction_time_s": snapf(float(reaction_time_ms) / 1000.0, 2),
 		"mistakes": mistakes,
 		"difficulty": difficulty,
+		# Recorded so a reader can tell a real reaction-time sample from the
+		# round-duration fallback used by games with no discrete graded actions.
+		"reaction_time_source": _reaction_time_source(),
+		# Which ALGORITHM session this round belongs to. SessionLogger accumulates for
+		# the whole process - it has no reset and session_start_unix is set once in
+		# _ready() - while GameManager finalizes and exports on every return to the
+		# menu, so one exported log can hold rounds from several game sessions whose
+		# sp_algorithm block describes only the last one. Without this field there is
+		# no way to partition the record list back into the sessions that produced it.
+		"algo_session_id": (str(AdaptiveDifficulty.session_id) if AdaptiveDifficulty else ""),
 		"phi_index": snapf(phi, 4),
 		"wma": snapf(wma, 4),
 		"consistency_penalty": snapf(cp, 4),
@@ -239,8 +277,13 @@ func record_sp_game(
 
 func _on_sp_difficulty_changed(old_diff: String, new_diff: String, reason: String) -> void:
 	var metrics: Dictionary = {}
-	if AdaptiveDifficulty and AdaptiveDifficulty.has_method("_calculate_window_metrics"):
-		metrics = AdaptiveDifficulty._calculate_window_metrics()
+	# Public accessor, not the private _calculate_window_metrics() this used to
+	# reach for. Every field below defaults to 0 when metrics comes back empty, so
+	# if that private name were ever renamed the has_method() guard would quietly
+	# log Φ=0.0 for every tier change instead of failing — corrupting the research
+	# record rather than reporting a problem.
+	if AdaptiveDifficulty and AdaptiveDifficulty.has_method("get_window_metrics"):
+		metrics = AdaptiveDifficulty.get_window_metrics()
 
 	sp_difficulty_changes.append({
 		"elapsed_sec": _elapsed(),
@@ -474,7 +517,17 @@ func get_mp_leaderboard() -> Array:
 # EXPORT
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-func export_session() -> String:
+## force=false is the automatic path (session finalize, window close): a log with no
+## rounds of either kind carries no measurement, and GameManager finalizes on EVERY
+## return to the menu, so those exports filled session_logs/ with content-free files -
+## 31 of 97 at the time this guard was added. Callers that deliberately want the
+## artifact regardless (the DevStats export button, harnesses that assert on the file)
+## pass force=true. Nothing is hidden: the skip is printed, and an empty log never
+## carried anything a reader could use.
+func export_session(force: bool = false) -> String:
+	if not force and sp_games.is_empty() and mp_rounds.is_empty():
+		print("\U0001F4CA SessionLogger: no rounds recorded - export skipped (pass force=true to write anyway)")
+		return ""
 	_take_perf_snapshot()  # Final snapshot before export
 
 	var end_unix := Time.get_unix_time_from_system()
@@ -525,7 +578,23 @@ func export_session() -> String:
 			"peak_c": snapf(cpu_temp_peak_c, 1),
 			"throttle_events": throttles,
 			"throttle_details": get_throttle_events(),
-			"passed": cpu_temp_peak_c <= 45.0 and throttles == 0
+			# cpu_temp_peak_c only ever moves when PerformanceProfiler has a real
+			# sensor to read; on desktop (and on any Android build whose sysfs nodes
+			# are unreadable) it stays 0.0, and "0.0 <= 45.0" published
+			# "passed": true — a thermal pass in the exported session log of a run
+			# that measured no temperature. null = not evaluated, matching
+			# PerformanceProfiler's thermal block and _check_iso_compliance, which
+			# both already refuse to judge thermal without sensor data.
+			"thermal_source": _thermal_source_str(),
+			"temperature_evaluated": _thermal_source_str() == "sensor",
+			"passed": (
+				(cpu_temp_peak_c <= 45.0 and throttles == 0)
+				if _thermal_source_str() == "sensor"
+				else null
+			),
+			# S_clk is a behavioural proxy (FPS/target) and IS measured everywhere,
+			# so the stability half of the criterion is still reported as a bool.
+			"s_clk_stable": throttles == 0
 		},
 		"algorithm_latency": {
 			"budget_ms": 16.0,
@@ -550,9 +619,26 @@ func export_session() -> String:
 	# ── SP algorithm summary ──────────────────────────────────────────
 	var sp_algo: Dictionary = {
 		"algorithm": "Rule-Based Rolling Window with Proficiency Index (Φ)",
+		# The block below describes ONE game session - this one. Cross-reference it
+		# against sp_game_records[].algo_session_id to select that session's rounds.
+		"algo_session_id": (str(AdaptiveDifficulty.session_id) if AdaptiveDifficulty else ""),
 		"window_size": AdaptiveDifficulty.window_size if AdaptiveDifficulty else 5,
 		"warmup_games": AdaptiveDifficulty.min_games_before_adaptation if AdaptiveDifficulty else 3,
 		"final_difficulty": AdaptiveDifficulty.get_current_difficulty() if AdaptiveDifficulty else "N/A",
+		# final_difficulty above is ONE INSTANTANEOUS SAMPLE - the tier the last
+		# evaluated window landed on - and reading it as the session's outcome is what
+		# produced the report "many games but it only got to Medium and it did not get
+		# harder". Across the 48 case studies in user://, final_difficulty reads Easy in
+		# 38 and Medium in 10 and Hard in none, while the difficulty timelines inside
+		# those same files hold 129 Hard decisions including one unbroken 41-evaluation
+		# Hard streak: a long Hard run followed by a few abandoned rounds exports "Easy".
+		# This field is the trajectory those decisions actually took, and it is the one
+		# that evidences the three-tier decision tree. See
+		# AdaptiveDifficulty.get_difficulty_progression().
+		"difficulty_progression": (
+			AdaptiveDifficulty.get_difficulty_progression()
+			if AdaptiveDifficulty and AdaptiveDifficulty.has_method("get_difficulty_progression")
+			else {}),
 		"final_phi": _get_current_phi(),
 		"final_wma": _get_current_wma(),
 		"final_cp": _get_current_cp(),
@@ -603,6 +689,16 @@ func export_session() -> String:
 	var report: Dictionary = {
 		"waterwise_session_log": true,
 		"schema_version": "2.0",
+		# Which kind of run produced this file. user:// mixes real play with headless
+		# harness and soak output, and the two are not interchangeable as evidence:
+		# a harness round has no minigame in the tree, so its reaction_time_source is
+		# "unknown" and its samples are synthetic. Recorded rather than left for a
+		# reader to infer from the numbers.
+		"run_context": {
+			"headless": DisplayServer.get_name() == "headless",
+			"auto_play": _auto_play_active(),
+			"synthetic": DisplayServer.get_name() == "headless" or _auto_play_active()
+		},
 		"session_id": session_id,
 		"session_start": session_start_iso,
 		"session_end": Time.get_datetime_string_from_system(),
@@ -670,18 +766,18 @@ func _format_duration(sec: float) -> String:
 	return "%02d:%02d:%02d" % [h, m, s]
 
 func _get_current_phi() -> float:
-	if AdaptiveDifficulty and AdaptiveDifficulty.has_method("_calculate_window_metrics"):
-		return snapf(AdaptiveDifficulty._calculate_window_metrics().get("proficiency_index", 0.0), 4)
+	if AdaptiveDifficulty and AdaptiveDifficulty.has_method("get_window_metrics"):
+		return snapf(AdaptiveDifficulty.get_window_metrics().get("proficiency_index", 0.0), 4)
 	return 0.0
 
 func _get_current_wma() -> float:
-	if AdaptiveDifficulty and AdaptiveDifficulty.has_method("_calculate_window_metrics"):
-		return snapf(AdaptiveDifficulty._calculate_window_metrics().get("weighted_accuracy", 0.0), 4)
+	if AdaptiveDifficulty and AdaptiveDifficulty.has_method("get_window_metrics"):
+		return snapf(AdaptiveDifficulty.get_window_metrics().get("weighted_accuracy", 0.0), 4)
 	return 0.0
 
 func _get_current_cp() -> float:
-	if AdaptiveDifficulty and AdaptiveDifficulty.has_method("_calculate_window_metrics"):
-		return snapf(AdaptiveDifficulty._calculate_window_metrics().get("consistency_penalty", 0.0), 4)
+	if AdaptiveDifficulty and AdaptiveDifficulty.has_method("get_window_metrics"):
+		return snapf(AdaptiveDifficulty.get_window_metrics().get("consistency_penalty", 0.0), 4)
 	return 0.0
 
 func _get_session_droplets_earned() -> int:
@@ -787,3 +883,11 @@ func get_dl_comparison() -> Array:
 	if PerformanceProfiler and PerformanceProfiler.has_method("get_dl_comparison"):
 		return PerformanceProfiler.get_dl_comparison()
 	return []
+
+## Thermal provenance, forwarded from the profiler so the exported log can say why a
+## thermal criterion was or was not evaluated. "unknown" when the profiler is absent
+## — which is itself not a pass.
+func _thermal_source_str() -> String:
+	if PerformanceProfiler and PerformanceProfiler.has_method("get_thermal_source"):
+		return PerformanceProfiler.get_thermal_source()
+	return "unknown"

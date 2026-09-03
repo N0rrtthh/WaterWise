@@ -49,7 +49,10 @@ func _apply_difficulty_settings() -> void:
 		print("🔥 Progressive Lvl %d: %d containers, %.1f fill rate" % [progressive_level, target_containers, fill_rate])
 
 func _ready():
-	game_name = "Timing Tap"
+	# Localized: the title stayed English above the Filipino objective FIX 58
+	# authored. _loc() keeps the English literal as the fallback for the case
+	# where the table is not up yet (tools/SceneLoadCheck instantiates that way).
+	game_name = _loc("timing_tap", "Timing Tap")
 	game_instruction_text = Localization.get_text("timing_tap_instructions") if Localization else "HOLD to fill container!\nStop at the TARGET line! 💧"
 	game_duration = 25.0
 	game_mode = "quota"
@@ -141,15 +144,16 @@ func _ready():
 	# Target label
 	var target_label = Label.new()
 	target_label.name = "TargetLabel"
-	target_label.text = "← TARGET"
+	target_label.text = _loc("hud_target_arrow", "← TARGET")
 	target_label.add_theme_font_size_override("font_size", 18)
 	target_label.add_theme_color_override("font_color", Color(0.2, 0.7, 0.2))
+	MiniGameAssets.outline_text(target_label)
 	container_node.add_child(target_label)
 	
 	# Instructions
 	var hold_label = Label.new()
 	hold_label.name = "HoldLabel"
-	hold_label.text = "👆 HOLD TO FILL"
+	hold_label.text = _loc("hud_hold_to_fill", "👆 HOLD TO FILL")
 	hold_label.add_theme_font_size_override("font_size", 32)
 	hold_label.add_theme_color_override("font_color", Color.WHITE)
 	hold_label.add_theme_color_override("font_outline_color", Color.BLACK)
@@ -197,7 +201,7 @@ func _process(delta):
 	
 	if is_holding:
 		stream.visible = true
-		get_node("HoldLabel").text = "💧 FILLING..."
+		get_node("HoldLabel").text = _loc("hud_filling", "💧 FILLING...")
 		get_node("HoldLabel").modulate = Color(0.5, 0.8, 1.0)
 		
 		# Fill container
@@ -210,7 +214,7 @@ func _process(delta):
 				drop.position.y = 50
 	else:
 		stream.visible = false
-		get_node("HoldLabel").text = "👆 HOLD TO FILL"
+		get_node("HoldLabel").text = _loc("hud_hold_to_fill", "👆 HOLD TO FILL")
 		get_node("HoldLabel").modulate = Color.WHITE
 	
 	# Update water visual
@@ -250,7 +254,7 @@ func _check_fill():
 		if containers_filled >= target_containers:
 			end_game(true)
 		else:
-			await get_tree().create_timer(0.8).timeout
+			await round_delay(0.8)
 			if game_active:
 				_setup_container()
 	else:
@@ -270,9 +274,9 @@ func _check_fill():
 		# Feedback
 		var feedback = Label.new()
 		if container_fill > target_fill:
-			feedback.text = "OVERFLOW! 💦"
+			feedback.text = _loc("hud_overflow", "OVERFLOW! 💦")
 		else:
-			feedback.text = "NOT ENOUGH! ⬆️"
+			feedback.text = _loc("hud_not_enough", "NOT ENOUGH! ⬆️")
 		feedback.add_theme_font_size_override("font_size", 32)
 		feedback.add_theme_color_override("font_color", Color(1, 0.3, 0.3))
 		feedback.position = container_node.position + Vector2(-70, -120)
@@ -283,6 +287,6 @@ func _check_fill():
 		tw2.tween_property(feedback, "modulate:a", 0.0, 0.5)
 		tw2.tween_callback(feedback.queue_free)
 		
-		await get_tree().create_timer(0.5).timeout
+		await round_delay(0.5)
 		if game_active:
 			_setup_container()

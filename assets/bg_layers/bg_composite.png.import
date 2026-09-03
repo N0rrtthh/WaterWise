@@ -3,19 +3,21 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://dvktqykw8u013"
-path="res://.godot/imported/bg_composite.png-73671563e9149d81ecc4af988b301acb.ctex"
+path.s3tc="res://.godot/imported/bg_composite.png-73671563e9149d81ecc4af988b301acb.s3tc.ctex"
+path.etc2="res://.godot/imported/bg_composite.png-73671563e9149d81ecc4af988b301acb.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 
 [deps]
 
 source_file="res://assets/bg_layers/bg_composite.png"
-dest_files=["res://.godot/imported/bg_composite.png-73671563e9149d81ecc4af988b301acb.ctex"]
+dest_files=["res://.godot/imported/bg_composite.png-73671563e9149d81ecc4af988b301acb.s3tc.ctex", "res://.godot/imported/bg_composite.png-73671563e9149d81ecc4af988b301acb.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

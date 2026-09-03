@@ -20,6 +20,12 @@ export*.log
 agent/
 data/skills/
 skills-lock.json
+# Editor-side MCP bridge. Not game code: it registers itself as the
+# _mcp_game_helper autoload, which is why project.godot must NOT hard-code that
+# entry — an untracked autoload path made a fresh clone fail to boot with three
+# "Failed to instantiate an autoload" errors. The plugin re-adds the entry itself
+# when enabled, and strips it back out of exported packs.
+addons/godot_ai/
 
 # Obsidian knowledge vault (project documentation, not game content)
 GOdot.md/
@@ -33,9 +39,26 @@ session_*.json
 !README.md
 _pdf_extract*.txt
 _*.ps1
+_*.log
+*.log
 *.tmp
 *.bak
 
 # OS junk
 .DS_Store
 Thumbs.db
+desktop.ini
+
+# Editor-local config (VS Code tasks/settings are per-machine)
+.vscode/
+
+# Godot export credentials — NEVER commit (keystore/keystore user)
+export_credentials.cfg
+*.keystore
+
+# Harness run output, not source. The verification tools write their console logs
+# here and ProbeFrames dumps PNG frame captures (144 files, 6.2 MB at the time this
+# was added). The harnesses are committed; what they emit on a given run is not
+# evidence anyone re-reads from git.
+tools/logs/
+tools/probe_frames/

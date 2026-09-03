@@ -1,3 +1,9 @@
+## ORPHAN: no scene loads this file. FixLeak.tscn runs
+## res://scripts/minigames_v2/FixLeakV2.gd instead — this is the pre-v2 version, kept
+## for reference. Editing it changes nothing in the running game: FIX 44 was written
+## here first, verified against the v2 script, and reported the pre-fix numbers.
+## tools/VerifyScriptOwnership.tscn fails if this banner is removed while the file is
+## still unreferenced.
 extends MiniGameBase
 
 ## ═══════════════════════════════════════════════════════════════════

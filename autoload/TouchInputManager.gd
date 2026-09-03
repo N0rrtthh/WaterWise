@@ -143,18 +143,26 @@ func _input(event: InputEvent) -> void:
 		_handle_screen_drag(event)
 
 func _handle_screen_touch(event: InputEventScreenTouch) -> void:
-	# Filter touches in edge dead zone
-	if _is_in_edge_dead_zone(event.position):
-		return
-	
 	if event.pressed:
+		# The dead zone exists to reject accidental presses against the bezel, so
+		# it gates STARTS only. A release must always be processed for a finger we
+		# are already tracking: filtering it would leave the entry in
+		# active_touches for a finger that is no longer down, and sliding a thumb
+		# off the bottom or side edge is the normal way a touch ends on a phone.
+		# get_touch_count() would then report that phantom finger forever, and
+		# RiceWashRescue._process steers its basin to get_touch_position(0) —
+		# the basin would lock to the finger's stale position for the rest of the
+		# round.
+		if _is_in_edge_dead_zone(event.position):
+			return
+
 		# Touch started
 		active_touches[event.index] = {
 			"start_position": event.position,
 			"start_time": Time.get_ticks_msec() / 1000.0,
 			"current_position": event.position
 		}
-		
+
 		if event.index == 0:  # Primary touch
 			touch_start_position = event.position
 			touch_start_time = Time.get_ticks_msec() / 1000.0
@@ -188,9 +196,19 @@ func _handle_screen_drag(event: InputEventScreenDrag) -> void:
 	if active_touches.has(event.index):
 		var old_position = active_touches[event.index]["current_position"]
 		active_touches[event.index]["current_position"] = event.position
-		
+
 		if event.index == 0:  # Primary touch
 			touch_drag.emit(old_position, event.position)
+
+
+func _notification(what: int) -> void:
+	# Android delivers no release event when the app is backgrounded mid-drag
+	# (home button, notification shade, incoming call), so every tracked finger
+	# would stay tracked across the pause. That is the same phantom-finger
+	# soft-lock the dead-zone fix above addresses, reached a different way.
+	if what == NOTIFICATION_APPLICATION_FOCUS_OUT:
+		active_touches.clear()
+		is_touching = false
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # HAPTIC FEEDBACK (Mobile Only)
@@ -249,16 +267,16 @@ func is_touch_target_valid(control: Control) -> bool:
 	return control.size.x >= min_size.x and control.size.y >= min_size.y
 
 func get_safe_area_margins() -> Dictionary:
-	# Get device safe area (for notched phones)
-	var safe_area = DisplayServer.get_display_safe_area()
-	var screen_size = DisplayServer.screen_get_size()
-	
-	return {
-		"top": safe_area.position.y,
-		"bottom": screen_size.y - (safe_area.position.y + safe_area.size.y),
-		"left": safe_area.position.x,
-		"right": screen_size.x - (safe_area.position.x + safe_area.size.x)
-	}
+	## Delegates to MobileUIManager, which is the single place the cutout is
+	## measured and converted from device pixels into canvas units. This function
+	## used to recompute it from DisplayServer directly, which duplicated the
+	## arithmetic, skipped SafeAreaInfo's validity checks (an empty safe-area rect
+	## makes "bottom" the whole screen height), and returned device pixels to a
+	## caller - InitialScreen - that spends them as canvas units.
+	var mui := get_node_or_null("/root/MobileUIManager")
+	if mui != null and mui.has_method("get_safe_area_margins"):
+		return mui.get_safe_area_margins()
+	return {"top": 0.0, "bottom": 0.0, "left": 0.0, "right": 0.0}
 
 func enable_button_haptics(button: BaseButton) -> void:
 	## Enable haptic feedback for a button on mobile.
