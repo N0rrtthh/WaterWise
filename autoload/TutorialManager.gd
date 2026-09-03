@@ -240,11 +240,6 @@ func get_tutorial(game_id: String) -> Dictionary:
 	
 	return {}
 
-func reset_tutorials() -> void:
-	# Reset all tutorials to show again
-	shown_tutorials.clear()
-	_save_shown_tutorials()
-
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # TUTORIAL POPUP CREATION
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -332,7 +327,7 @@ func create_tutorial_popup(game_id: String, parent: Node) -> Control:
 		tip_box.add_child(tip_margin)
 		
 		var tip_label = Label.new()
-		tip_label.text = "💡 TIP: " + tutorial_data.tip
+		tip_label.text = Localization.get_text("tutorial_tip_prefix") + tutorial_data.tip
 		tip_label.add_theme_font_size_override("font_size", 18)
 		tip_label.add_theme_color_override("font_color", Color(0.6, 0.4, 0.1))
 		tip_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -342,7 +337,7 @@ func create_tutorial_popup(game_id: String, parent: Node) -> Control:
 	
 	# Start button
 	var start_btn = Button.new()
-	start_btn.text = "▶️ START GAME"
+	start_btn.text = Localization.get_text("start_game")
 	start_btn.custom_minimum_size = Vector2(200, 60)
 	start_btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	
@@ -382,6 +377,20 @@ func create_tutorial_popup(game_id: String, parent: Node) -> Control:
 # CONTEXTUAL HINTS
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+## Four bilingual coaching lines, one per performance state. NOTHING CALLS
+## get_contextual_hint() BELOW, so none of these ever reaches a player today.
+##
+## They are kept rather than deleted with the rest of this file's dead code because they are
+## authored educational content, not code: the same reachability gap that left the whole
+## tutorial API uncalled until MiniGameBase._show_first_play_tutorial() was wired to it (see
+## tools/VerifyFirstPlayTutorial). The states are already computed every round -
+## _complete_game() has accuracy, reaction_time and mistakes_made, and AdaptiveDifficulty
+## already derives the same signals for its own use - so the missing piece is a delivery
+## surface, and that is a UI change, not a deletion. The old delivery function,
+## show_hint_popup(), was removed: it built a background ColorRect it never added to the
+## tree (an unparented Node, leaked on every call), sized it from label.size.x before
+## layout so it was always 40 px wide, and tweened raw 0.3s durations that no reduced-motion
+## setting could shorten.
 var gameplay_hints: Dictionary = {
 	"low_accuracy": {
 		"en": "Take your time! Accuracy is more important than speed.",
@@ -414,27 +423,3 @@ func get_contextual_hint(hint_type: String) -> String:
 	
 	return ""
 
-func show_hint_popup(parent: Node, hint_text: String, duration: float = 3.0) -> void:
-	# Show a temporary hint popup
-	var label = Label.new()
-	label.text = "💡 " + hint_text
-	label.add_theme_font_size_override("font_size", 24)
-	label.add_theme_color_override("font_color", Color(1, 1, 0.8))
-	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	label.set_anchors_preset(Control.PRESET_CENTER_TOP)
-	label.position.y = 100
-	
-	# Background
-	var bg = ColorRect.new()
-	bg.color = Color(0, 0, 0, 0.7)
-	bg.custom_minimum_size = Vector2(label.size.x + 40, 50)
-	
-	parent.add_child(label)
-	
-	# Animate
-	label.modulate.a = 0
-	var tween = label.create_tween()
-	tween.tween_property(label, "modulate:a", 1.0, 0.3)
-	tween.tween_interval(duration)
-	tween.tween_property(label, "modulate:a", 0.0, 0.3)
-	tween.tween_callback(label.queue_free)

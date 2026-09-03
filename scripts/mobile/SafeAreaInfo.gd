@@ -28,7 +28,13 @@ func from_display_safe_area() -> void:
 	
 	# Validate safe area data
 	if not _is_valid_safe_area(safe_area, screen_size):
-		push_warning("Invalid safe area data received from DisplayServer, using zero margins")
+		# Only worth a warning where a safe area is expected to exist. Headless
+		# runs and desktop report an empty rect by design, so warning there
+		# means the log opens with a false problem on every single boot.
+		if _platform_has_safe_area():
+			push_warning(
+				"Invalid safe area data received from DisplayServer, using zero margins"
+			)
 		_reset_margins()
 		return
 	
@@ -57,30 +63,38 @@ func to_dictionary() -> Dictionary:
 # PRIVATE HELPERS - VALIDATION
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+## True only on platforms that actually report notches / cutouts.
+## Everywhere else, an empty safe area is the correct answer rather than a fault.
+func _platform_has_safe_area() -> bool:
+	if DisplayServer.get_name() == "headless":
+		return false
+	var platform := OS.get_name()
+	return platform == "Android" or platform == "iOS"
+
 func _is_valid_safe_area(safe_area: Rect2i, screen_size: Vector2i) -> bool:
 	# Validate safe area data to prevent invalid calculations
+	#
+	# Invalid data is EXPECTED, not exceptional: headless runs, and desktop
+	# platforms with no safe-area concept, both report a zero screen size. The
+	# caller already emits one push_warning and falls back to zero margins, so
+	# these checks return quietly instead of pushing an error per boot.
 	# Check for zero or negative screen size
 	if screen_size.x <= 0 or screen_size.y <= 0:
-		push_error("Invalid screen size: %s" % screen_size)
 		return false
 	
 	# Check for negative safe area position
 	if safe_area.position.x < 0 or safe_area.position.y < 0:
-		push_error("Invalid safe area position: %s" % safe_area.position)
 		return false
 	
 	# Check for zero or negative safe area size
 	if safe_area.size.x <= 0 or safe_area.size.y <= 0:
-		push_error("Invalid safe area size: %s" % safe_area.size)
 		return false
 	
 	# Check if safe area extends beyond screen bounds
 	if safe_area.position.x + safe_area.size.x > screen_size.x:
-		push_error("Safe area extends beyond screen width: %s > %s" % [safe_area.position.x + safe_area.size.x, screen_size.x])
 		return false
 	
 	if safe_area.position.y + safe_area.size.y > screen_size.y:
-		push_error("Safe area extends beyond screen height: %s > %s" % [safe_area.position.y + safe_area.size.y, screen_size.y])
 		return false
 	
 	return true

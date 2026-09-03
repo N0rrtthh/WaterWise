@@ -1,3 +1,8 @@
+## ORPHAN: no scene loads this file. GreywaterSorter.tscn runs
+## res://scripts/minigames_v2/GreywaterSorterV2.gd instead — this is the pre-v2
+## version, kept for reference. Edits here do not reach the running game.
+## tools/VerifyScriptOwnership.tscn fails if this banner is removed while the file is
+## still unreferenced.
 extends MiniGameBase
 
 var buckets: Array = []
@@ -230,7 +235,7 @@ func _sort_bucket(bucket: Node2D, to_garden: bool):
 		tween.tween_callback(bucket.queue_free)
 		
 		if sorted_correct >= target_sort:
-			await get_tree().create_timer(0.4).timeout
+			await round_delay(0.4)
 			end_game(true)
 	else:
 		record_action(false)

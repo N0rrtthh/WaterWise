@@ -125,3 +125,28 @@ static func create_car_texture(width: int, height: int, color: Color) -> Texture
 			img.set_pixel(x, y, color)
 			
 	return ImageTexture.create_from_image(img)
+
+## Guarantees a label survives whatever art ends up behind it.
+##
+## The HUD text in MiniGameBase gets a fixed pale halo, but labels that live in the play
+## area sit over spawner art that changes every frame, so the backdrop cannot be known at
+## the moment the label is built. Outlining with the opposite luminance of the fill puts a
+## guaranteed light-to-dark edge inside every glyph box, which is what the WCAG contrast
+## ratio measures - a white "0/2" over a pale bucket read 1.25:1 without one, and a bright
+## green "OK" popup over wet mud read 1.49:1.
+## `size` is a flat 4px on purpose. Scaling the rim with the font size looked like the safer rule
+## and measured worse: a 2px rim on ToiletTankFix's 18px "← TAMANG LEBEL" dropped it from 5.97:1 to
+## 3.66:1, because what the ratio reads is the rim-against-fill edge and a thinner rim puts fewer
+## fully-rimmed pixels inside the glyph box. Nothing was gained either, since a 4px rim does not
+## swallow small text: a 14px white caption rendered on this project's panels still peaks at pure
+## white with one. The one case that looked like swallowing - five MP captions rasterising at 0.40
+## grey - was the top bar's 60% black scrim over them, fixed in attach_hud_panel().
+static func outline_text(label: Control, size: int = 4) -> void:
+	if label == null:
+		return
+	var fill: Color = label.get_theme_color("font_color")
+	var rim: Color = Color(0.04, 0.06, 0.09, 0.95)
+	if fill.get_luminance() <= 0.45:
+		rim = Color(1.0, 1.0, 1.0, 0.95)
+	label.add_theme_color_override("font_outline_color", rim)
+	label.add_theme_constant_override("outline_size", size)

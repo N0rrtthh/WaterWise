@@ -35,6 +35,12 @@ var large_targets_check: CheckBox
 var audio_cues_check: CheckBox
 var haptics_check: CheckBox
 var screen_shake_check: CheckBox
+## Reduce Motion had no player-facing control at all: AccessibilityManager
+## loads reduced_motion from the save file and set_reduced_motion() had no
+## caller anywhere outside the test harnesses, so the whole reduced-motion
+## path (JuiceEffects, the cutscene players, ButtonAnimator) was reachable
+## only by hand-editing waterwise_settings.json.
+var reduced_motion_check: CheckBox
 var particles_check: CheckBox
 
 # Dev-mode controls (for thesis monitoring)
@@ -205,13 +211,38 @@ func _configure_scroll_bounds() -> void:
 	var viewport_size = get_viewport_rect().size
 	if viewport_size == Vector2.ZERO:
 		return
+	# Derived from the offsets, not read back from center_cont.size. This runs at the
+	# end of _update_action_button_bar_layout(), on the same frame those offsets are
+	# written, and size only refreshes on the next layout pass - so reading size here
+	# returned the PRE-shrink height and over-sized the scroll view by the whole
+	# action-bar reserve. CenterContainer is anchored full-rect in Settings.tscn, so
+	# height is viewport - offset_top + offset_bottom (offset_bottom being negative).
 	var content_height = viewport_size.y
 	var center_cont = get_node_or_null("CenterContainer") as Control
-	if center_cont and center_cont.size.y > 0.0:
-		content_height = center_cont.size.y
+	if center_cont:
+		content_height = maxf(
+			viewport_size.y - center_cont.offset_top + center_cont.offset_bottom, 0.0
+		)
+
+	# The card chrome, measured instead of the old flat 90: the MarginContainer
+	# constants (40 + 40 in the scene) plus the panel StyleBox content margins. The
+	# 90 left ~10 units of slack that happened to work while the buttons were the
+	# authored 60 units tall and stopped working once the 48dp floor made them
+	# 111-147.
+	var chrome := 0.0
+	var card_margin := settings_scroll.get_parent() as MarginContainer
+	if card_margin != null:
+		chrome += (
+			float(card_margin.get_theme_constant("margin_top"))
+			+ float(card_margin.get_theme_constant("margin_bottom"))
+		)
+	if panel_card != null:
+		var sb: StyleBox = panel_card.get_theme_stylebox("panel")
+		if sb != null:
+			chrome += sb.get_margin(SIDE_TOP) + sb.get_margin(SIDE_BOTTOM)
 
 	var target_width = clamp(viewport_size.x - 120.0, 340.0, 980.0)
-	var target_height = clamp(content_height - 90.0, 240.0, 760.0)
+	var target_height = clamp(content_height - chrome, 240.0, 760.0)
 	settings_scroll.custom_minimum_size = Vector2(target_width, target_height)
 	settings_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	settings_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -249,7 +280,17 @@ func _update_action_button_bar_layout() -> void:
 	action_bar.add_theme_constant_override("margin_right", int(right_margin))
 	action_bar.add_theme_constant_override("margin_bottom", int(bottom_margin))
 
-	var btn_row = action_bar.get_node_or_null("ButtonRow") as HBoxContainer
+	# ButtonRow lives under ButtonColumn - _reparent_action_buttons() puts it there,
+	# inside the column that holds the BottomSpacer. This lookup asked action_bar for
+	# it directly, so btn_row was ALWAYS null and the function returned here: the row
+	# height, the CenterContainer reserve below, and the _configure_scroll_bounds()
+	# call at the end were all unreachable. That is why the scroll viewport kept
+	# extending under the fixed Back button and left touchable checkbox slivers
+	# beneath it. The direct child is kept as a fallback in case an older layout is
+	# still in the tree.
+	var btn_row = action_bar.get_node_or_null("ButtonColumn/ButtonRow") as HBoxContainer
+	if not btn_row:
+		btn_row = action_bar.get_node_or_null("ButtonRow") as HBoxContainer
 	if not btn_row:
 		return
 
@@ -263,6 +304,12 @@ func _update_action_button_bar_layout() -> void:
 	# Keep panel content in a dedicated safe zone above the fixed action bar.
 	var center_cont = get_node_or_null("CenterContainer") as Control
 	if center_cont:
+		# Claim these two offsets. MobileUIManager's safe-area pass targets
+		# CenterContainer and writes offset_top/offset_bottom absolutely, which
+		# erased the reserve below and let the scroll viewport extend under the
+		# fixed Back button. The inset is already accounted for here: offset_top
+		# adds safe.top and bottom_margin adds safe.bottom.
+		center_cont.set_meta(MobileUIManager.SAFE_AREA_SELF_MANAGED_META, true)
 		center_cont.offset_left = left_margin
 		center_cont.offset_right = -right_margin
 		center_cont.offset_top = 16.0 + float(safe.get("top", 0.0))
@@ -335,6 +382,7 @@ func _setup_interaction_polish() -> void:
 		haptics_check,
 		screen_shake_check,
 		particles_check,
+		reduced_motion_check,
 		dev_mode_check,
 		dev_profiler_check,
 		dev_algorithm_check,
@@ -595,6 +643,26 @@ func _setup_accessibility_section() -> void:
 	particles_check.toggled.connect(_on_particles_toggled)
 	acc_grid.add_child(particles_check)
 
+	# Reduce motion
+	var rm_label = Label.new()
+	_register_localized_text_control(
+		rm_label,
+		"settings_reduced_motion",
+		"🐢 Reduce Motion"
+	)
+	rm_label.add_theme_font_size_override("font_size", 18)
+	acc_grid.add_child(rm_label)
+	
+	reduced_motion_check = CheckBox.new()
+	_register_localized_text_control(
+		reduced_motion_check,
+		"settings_enable",
+		"Enable"
+	)
+	reduced_motion_check.button_pressed = _get_accessibility_setting("reduced_motion")
+	reduced_motion_check.toggled.connect(_on_reduced_motion_toggled)
+	acc_grid.add_child(reduced_motion_check)
+
 func _setup_dev_mode_section() -> void:
 	var vbox = _get_settings_vbox()
 	if not vbox:
@@ -742,7 +810,7 @@ func _setup_dev_mode_section() -> void:
 
 	# MP Auto-Play
 	var mp_ap_label = Label.new()
-	mp_ap_label.text = "🤖 Auto-Play (MP)"
+	mp_ap_label.text = _loc("settings_auto_play_mp", "🤖 Auto-Play (MP)")
 	mp_ap_label.add_theme_font_size_override("font_size", 18)
 	dev_grid.add_child(mp_ap_label)
 
@@ -769,15 +837,25 @@ func _setup_dev_mode_section() -> void:
 	vbox.add_child(note)
 
 	dev_stats_button = Button.new()
-	dev_stats_button.text = "📊 Dev Stats & Export Log"
+	dev_stats_button.text = _loc("settings_dev_stats", "📊 Dev Stats & Export Log")
 	dev_stats_button.custom_minimum_size = Vector2(0, 60)
 	dev_stats_button.add_theme_font_size_override("font_size", 20)
 	dev_stats_button.disabled = not dev_mode_enabled
 	dev_stats_button.pressed.connect(_on_dev_stats_pressed)
 	vbox.add_child(dev_stats_button)
 
+	var beat_viewer_button := Button.new()
+	beat_viewer_button.text = _loc("settings_beat_viewer", "🎬 Beat Viewer (animation check)")
+	beat_viewer_button.custom_minimum_size = Vector2(0, 60)
+	beat_viewer_button.add_theme_font_size_override("font_size", 20)
+	# Always enabled — it is a read-only preview tool, no dev data involved.
+	beat_viewer_button.pressed.connect(_on_beat_viewer_pressed)
+	vbox.add_child(beat_viewer_button)
+	if dev_stats_button:
+		dev_mode_check.set_meta("beat_viewer_button", beat_viewer_button)
+
 	erase_data_button = Button.new()
-	erase_data_button.text = "🗑️ Erase All Data"
+	erase_data_button.text = _loc("settings_erase_data", "🗑️ Erase All Data")
 	erase_data_button.custom_minimum_size = Vector2(0, 60)
 	erase_data_button.add_theme_font_size_override("font_size", 20)
 	erase_data_button.add_theme_color_override("font_color", Color(1.0, 0.3, 0.3))
@@ -788,7 +866,7 @@ func _setup_dev_mode_section() -> void:
 
 	if FileExporter.is_external_storage_available():
 		export_data_button = Button.new()
-		export_data_button.text = "📤 Export Session Logs"
+		export_data_button.text = _loc("settings_export_logs", "📤 Export Session Logs")
 		export_data_button.custom_minimum_size = Vector2(0, 60)
 		export_data_button.add_theme_font_size_override("font_size", 20)
 		export_data_button.disabled = not dev_mode_enabled
@@ -861,6 +939,20 @@ func _on_screen_shake_toggled(pressed: bool) -> void:
 		if save_mgr:
 			save_mgr.set_setting("screen_shake", pressed)
 
+## Reduce Motion. AccessibilityManager.get_animation_speed() returns 3.0 while
+## this is on, which the animation layers use as a DURATION DIVISOR — motion is
+## shortened, not removed, so nothing becomes unreadable or unresponsive.
+func _on_reduced_motion_toggled(pressed: bool) -> void:
+	if AudioManager:
+		AudioManager.play_click()
+	var acc_mgr = get_node_or_null("/root/AccessibilityManager")
+	if acc_mgr and acc_mgr.has_method("set_reduced_motion"):
+		acc_mgr.set_reduced_motion(pressed)
+	else:
+		var save_mgr = get_node_or_null("/root/SaveManager")
+		if save_mgr:
+			save_mgr.set_setting("reduced_motion", pressed)
+
 func _on_particles_toggled(pressed: bool) -> void:
 	if AudioManager:
 		AudioManager.play_click()
@@ -917,10 +1009,21 @@ func _apply_dev_mode_visibility(enabled: bool) -> void:
 		mp_auto_play_check.disabled = not enabled
 	if dev_stats_button:
 		dev_stats_button.disabled = not enabled
+	# has_meta() first: a NIL default reads as "no default" inside get_meta(), so this
+	# printed an error on every Settings open before the dev-mode row was built.
+	var bv := (dev_mode_check.get_meta("beat_viewer_button") if dev_mode_check.has_meta("beat_viewer_button") else null) as Button
+	if bv:
+		bv.disabled = not enabled
 	if erase_data_button:
 		erase_data_button.disabled = not enabled
 	if export_data_button:
 		export_data_button.disabled = not enabled
+
+func _on_beat_viewer_pressed() -> void:
+	if AudioManager:
+		AudioManager.play_click()
+	get_tree().change_scene_to_file("res://scenes/ui/BeatViewer.tscn")
+
 
 func _on_dev_stats_pressed() -> void:
 	if AudioManager:

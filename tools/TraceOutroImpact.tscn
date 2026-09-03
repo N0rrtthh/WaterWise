@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://btraceoutroimp1"]
+
+[ext_resource type="Script" path="res://tools/TraceOutroImpact.gd" id="1_trc"]
+
+[node name="TraceOutroImpact" type="Node"]
+script = ExtResource("1_trc")

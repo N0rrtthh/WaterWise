@@ -1,6 +1,33 @@
 extends Node2D
 
 ## ═══════════════════════════════════════════════════════════════════
+## STATUS: PROTOTYPE - IN NO ROSTER, NOT LAUNCHABLE
+## ═══════════════════════════════════════════════════════════════════
+## Which roster lists this scene? None: not GameManager.available_minigames, not
+## multiplayer_minigames, and no scripts/multiplayer/ entry. Nothing loads it. That is deliberate,
+## and it is cheaper to say so here than to have the next reader rediscover why:
+##
+##   * It extends Node2D, not MiniGameBase, so it has no HUD, no scoring hand-off, no adaptive
+##     difficulty hook-up and no cutscene tier. MiniGameBase._play_beat_outro() is never reached
+##     from here, which is why its three authored beat clips
+##     (scenes/ui/cutscenes/beats/RainwaterHarvesting{Intro,WinOutro,LoseOutro}.tscn) can never
+##     play - tools/CutsceneTierReport.tscn records them as a declared exception.
+##   * _ready() bails to the main menu unless GameManager.current_game_mode is MULTIPLAYER_COOP
+##     and NetworkManager is connected.
+##   * The only input path is _input()'s KEY_SPACE / KEY_E, behind the author's own
+##     "Simplified input for testing (replace with proper UI)" note. The shipping target is a
+##     touch-only Android device, so a player reaching this screen could not advance it at all;
+##     only _end_game_timeout() would end the round.
+##
+## Adding it to a roster would therefore put an unplayable screen in front of a player, which is
+## worse than its absence. Before it can ship it needs: touch input replacing the two debug keys,
+## either MiniGameBase inheritance or its own HUD/score/difficulty wiring, and a co-op sync pass
+## on _send_performance() / _on_partner_performance_received().
+##
+## The co-op design below (interdependent Collector and User roles) is intact and worth keeping -
+## it is the only two-role interdependent design in the project.
+
+## ═══════════════════════════════════════════════════════════════════
 ## RAINWATER HARVESTING - COOPERATIVE MINI-GAME
 ## ═══════════════════════════════════════════════════════════════════
 ## Player 1 (Collector): Position rainwater collection containers
@@ -116,15 +143,21 @@ func _apply_difficulty_parameters() -> void:
 		water_usage_scenarios = total_tasks
 
 func _show_role_instructions() -> void:
-	# Show instructions based on player role
+	# One localized line per role, not an English line stacked on a Filipino one.
+	#
+	# These two were the last hardcoded player-facing strings in the project, and the
+	# only ones VerifyLocalization criterion 7 could not see: its scan reads one physical
+	# line and the literal sat on the line after `task_label.text = (`. So the Filipino
+	# build showed English here whatever the language setting said.
+	#
+	# Being two lines was also a layout bug: TaskLabel is authored 46px tall at font 24,
+	# so the second line spilled to y=132 and ran through AccuracyLabel at y=118.
+	# tools/VisualSweepHard.tscn measured the pair overlapping by 61% of the smaller box.
+	# One line per language fixes the collision and the language at the same time.
 	if player_role == "Collector":
-		task_label.text = (
-				"YOUR TASK: Place rainwater containers under roof gutters\n"
-				+ "Kung saan dumadaloy ang tubig-ulan mula sa bubong")
+		task_label.text = Localization.get_text("rwh_task_collector")
 	elif player_role == "User":
-		task_label.text = (
-				"YOUR TASK: Use collected rainwater for toilet/plants\n"
-				+ "Gamitin ang tubig-ulan para sa inidoro at halaman")
+		task_label.text = Localization.get_text("rwh_task_user")
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # COUNTDOWN AND GAME START
@@ -134,12 +167,17 @@ func _start_countdown() -> void:
 	# 3-second countdown before game starts
 	countdown_label.visible = true
 	
+	# create_timer(t, false), not round_delay(): this scene extends Node2D, not
+	# MiniGameBase, so it has no round_delay() and the FIX-42 sweep left the file with
+	# a parse error. Nothing loads it at runtime (RainwaterHarvesting.tscn is in no
+	# roster), which is why no harness caught it. `false` is the pause_mode argument -
+	# the same pause-aware behaviour FIX 42 was after, spelled out locally.
 	for i in range(COUNTDOWN_TIME, 0, -1):
 		countdown_label.text = str(i)
-		await get_tree().create_timer(1.0).timeout
+		await get_tree().create_timer(1.0, false).timeout
 	
-	countdown_label.text = "GO! / SIMULAN!"
-	await get_tree().create_timer(0.5).timeout
+	countdown_label.text = Localization.get_text("hud_go")
+	await get_tree().create_timer(0.5, false).timeout
 	countdown_label.visible = false
 	
 	_start_game()
@@ -167,7 +205,7 @@ func _process(delta: float) -> void:
 	
 	# Update timer
 	time_remaining -= delta
-	timer_label.text = "Time: %.1fs" % max(0, time_remaining)
+	timer_label.text = Localization.get_text("hud_time_seconds") % max(0, time_remaining)
 	
 	# Check time out
 	if time_remaining <= 0:
@@ -176,8 +214,8 @@ func _process(delta: float) -> void:
 	# Update accuracy display
 	if total_tasks > 0:
 		accuracy = float(completed_tasks) / float(total_tasks)
-		accuracy_label.text = (
-				"Completed: %d/%d (%.0f%%)" % [completed_tasks, total_tasks, accuracy * 100])
+		accuracy_label.text = Localization.get_text("rwh_completed_count") % [
+				completed_tasks, total_tasks, accuracy * 100]
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # PLAYER 1 (COLLECTOR) GAME LOGIC
@@ -187,7 +225,7 @@ func _generate_collector_game() -> void:
 	# Generate container placement game for Player 1 (simplified implementation).
 	# Visual house/gutter layout and drag-and-drop placement are deferred to a
 	# future content pass; current version uses keyboard input for testing.
-	print("🪣 Collector game generated: Place %d containers" % containers_to_place)
+	print("🏺 Collector game generated: Place %d containers" % containers_to_place)
 
 func _on_container_placed(_position: Vector2, is_correct: bool) -> void:
 	# Called when Player 1 places a container
@@ -224,7 +262,7 @@ func _generate_user_game() -> void:
 	print("💧 User game generated: %d water usage scenarios" % water_usage_scenarios)
 	
 	# Wait to receive water volume from Player 1
-	partner_status_label.text = "Waiting for collector to gather water..."
+	partner_status_label.text = Localization.get_text("hud_waiting_collector")
 
 func _on_water_usage_selected(_scenario: String, is_correct: bool) -> void:
 	# Called when Player 2 selects a water usage
@@ -262,9 +300,13 @@ func _send_performance() -> void:
 	if is_instance_valid(NetworkManager):
 		NetworkManager.send_performance_data(performance)
 	
-	# Also submit to GameManager
-	if is_instance_valid(GameManager):
-		GameManager.submit_coop_performance(accuracy, completion_time, errors)
+	# The performance data reaches CoopAdaptation through
+	# NetworkManager.send_performance_data() above, which is the shipped path
+	# (MultiplayerMiniGameBase uses NetworkManager.report_player_completion()
+	# for the same purpose). A GameManager.submit_coop_performance() call sat
+	# here and no such method has ever existed, so this line raised
+	# "Invalid call. Nonexistent function" and aborted the rest of the
+	# function every time a round was submitted.
 	
 	print("📊 Performance sent - Accuracy: %.2f, Time: %.2fs, Errors: %d"
 			% [accuracy, completion_time, errors])
@@ -280,11 +322,14 @@ func _on_partner_performance_received(player_id: int, performance: Dictionary) -
 	print("✅ Partner completed - Accuracy: %.2f" % partner_accuracy)
 	
 	# Update partner status
-	partner_status_label.text = "Partner: COMPLETED (%.0f%%)" % (partner_accuracy * 100)
+	partner_status_label.text = Localization.get_text("hud_partner_completed") % (partner_accuracy * 100)
 	
-	# Notify GameManager
-	if is_instance_valid(GameManager):
-		GameManager.receive_partner_performance(player_id, performance)
+	# A GameManager.receive_partner_performance() call sat here. The method
+	# does not exist, so the error aborted this handler BEFORE the
+	# _show_team_results() call below — leaving both players parked on
+	# "Waiting for partner..." with no way forward. Nothing was lost by
+	# removing it: partner_completed / partner_accuracy are already stored
+	# above, and CoopAdaptation is fed from the sender side.
 	
 	# Check if both completed
 	if game_ended:
@@ -293,7 +338,7 @@ func _on_partner_performance_received(player_id: int, performance: Dictionary) -
 func _wait_for_partner() -> void:
 	# Wait for partner to complete
 	game_ended = true
-	partner_status_label.text = "Waiting for partner..."
+	partner_status_label.text = Localization.get_text("mp_waiting_partner")
 	
 	if partner_completed:
 		_show_team_results()

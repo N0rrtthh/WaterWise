@@ -50,14 +50,14 @@ func _populate_rows() -> void:
 		row.add_child(pos_label)
 
 		var tier_label = Label.new()
-		tier_label.text = "Tier %s" % rank
+		tier_label.text = _loc("leaderboard_tier", "Tier %s") % rank
 		tier_label.custom_minimum_size = Vector2(90, 0)
 		tier_label.add_theme_font_size_override("font_size", 22)
 		tier_label.add_theme_color_override("font_color", _rank_color(rank))
 		row.add_child(tier_label)
 
 		var score_label = Label.new()
-		score_label.text = "%d pts" % score_value
+		score_label.text = _loc("score_points", "%d pts") % score_value
 		score_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		score_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 		score_label.add_theme_font_size_override("font_size", 22)

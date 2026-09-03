@@ -107,7 +107,13 @@ var achievements: Dictionary = {
 
 # Settings
 var settings: Dictionary = {
-	"language": "en",
+	# NO "language" key here on purpose. Localization owns the language and persists it
+	# to user://settings.cfg as the Language enum; this dictionary used to carry a
+	# second "language": "en" that nothing read and nothing updated, so a build running
+	# in Filipino still shipped "language": "en" inside waterwise_settings.json --
+	# two stores disagreeing, with the dead one being the human-readable artifact.
+	# Existing save files keep the stale key (_load_settings copies unknown keys in),
+	# which is harmless because no call site asks for it. Use Localization instead.
 	"sfx_volume": 1.0,
 	"music_volume": 0.8,
 	"colorblind_mode": false,
@@ -129,7 +135,9 @@ var settings: Dictionary = {
 # Session tracking (not saved)
 var session_games_played: int = 0
 var win_streak: int = 0
-var session_start_time: int = 0
+var session_start_time: float = 0.0
+## Sub-second remainder of the play-time accounting (see _update_play_time).
+var _play_time_carry: float = 0.0
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # INITIALIZATION
@@ -138,13 +146,23 @@ var session_start_time: int = 0
 func _ready() -> void:
 	load_all_data()
 	_apply_fullscreen_setting()
-	session_start_time = int(Time.get_unix_time_from_system())
+	session_start_time = Time.get_unix_time_from_system()
 	_ensure_accessory_defaults()
-	
+
+	# Debounce timer for coalesced writes (see save_all_data).
+	_save_timer = Timer.new()
+	_save_timer.one_shot = true
+	_save_timer.wait_time = SAVE_DEBOUNCE_SEC
+	_save_timer.timeout.connect(_flush_save)
+	# Keep flushing while the tree is paused, otherwise a save requested just
+	# before the pause menu opens would sit unwritten until the game resumes.
+	_save_timer.process_mode = Node.PROCESS_MODE_ALWAYS
+	add_child(_save_timer)
+
 	# Set first play date if new player
 	if player_data.first_play_date == "":
 		player_data.first_play_date = Time.get_datetime_string_from_system()
-	
+
 	# Update last play date
 	player_data.last_play_date = Time.get_datetime_string_from_system()
 
@@ -152,18 +170,78 @@ func _notification(what: int) -> void:
 	# Auto-save when app closes
 	if what == NOTIFICATION_WM_CLOSE_REQUEST:
 		_update_play_time()
-		save_all_data()
+		save_now()
+	# Android does not send a close request when the user backgrounds the app —
+	# it sends APPLICATION_PAUSED, and the OS may kill the process afterwards
+	# without any further notification. Without this branch a coalesced save
+	# still sitting in the deferred queue would be lost along with the round the
+	# player just finished. Both paths write synchronously: a deferred call is
+	# not guaranteed to run once the process is going away.
+	elif what == NOTIFICATION_APPLICATION_PAUSED or what == NOTIFICATION_APPLICATION_FOCUS_OUT:
+		_update_play_time()
+		save_now()
+
+func _exit_tree() -> void:
+	# Last line of defence for the debounce window. Not every shutdown path
+	# raises a close request (a headless run or an explicit get_tree().quit()
+	# does not), and a queued write would otherwise die with the timer.
+	if _save_pending:
+		save_now()
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # SAVE/LOAD
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+## Set while a coalesced write is queued.
+var _save_pending: bool = false
+var _save_timer: Timer = null
+
+## How long to gather save requests before writing. A single round end fans out
+## into several requests (add_droplets → record_game_result → update_stat → …)
+## spread over consecutive frames, so a purely per-frame coalesce collapsed
+## almost nothing: a measured 8-round soak still performed 20 writes. Anything
+## the process might not survive (shutdown, Android pause) writes synchronously
+## via save_now(), so the worst case this window risks is losing under a second
+## of progress to a hard crash.
+const SAVE_DEBOUNCE_SEC: float = 1.0
+
+## Request a save. Requests within SAVE_DEBOUNCE_SEC collapse into one write.
+##
+## Around fifteen call sites inside this class each used to write immediately, so
+## finishing a single round wrote the whole save file two or three times over.
+## Each write is a pretty-printed JSON.stringify of the entire player record plus
+## a second write for settings — avoidable flash I/O and avoidable garbage on a
+## low-end Android device, and one interruption window per write.
+##
+## Semantics are unchanged for callers: the data is still saved, just once.
 func save_all_data() -> void:
+	_save_pending = true
+	if _save_timer:
+		# Restarting on each request is intentional: it batches a burst into one
+		# write at the end of the burst.
+		_save_timer.start()
+	else:
+		# Before _ready (or in a bare SceneTree harness) there is no timer to
+		# schedule against, so fall back to writing straight through rather than
+		# silently dropping the request.
+		save_now()
+
+func _flush_save() -> void:
+	if not _save_pending:
+		return
+	save_now()
+
+## Write immediately, bypassing coalescing. Use when the process may not survive
+## to the end of the debounce window.
+func save_now() -> void:
+	_save_pending = false
+	if _save_timer:
+		_save_timer.stop()
 	_update_play_time()
-	
+
 	# Always stamp current version before writing
 	player_data["save_version"] = SAVE_VERSION
-	
+
 	var save_data: Dictionary = {
 		"save_version": SAVE_VERSION,
 		"player": player_data,
@@ -172,7 +250,7 @@ func save_all_data() -> void:
 		"unlocked": unlocked_content,
 		"achievements": achievements
 	}
-	
+
 	var file = FileAccess.open(SAVE_PATH, FileAccess.WRITE)
 	if file:
 		file.store_string(JSON.stringify(save_data, "\t"))
@@ -181,7 +259,7 @@ func save_all_data() -> void:
 		data_saved.emit()
 	else:
 		push_error("Failed to save game data")
-	
+
 	# Save settings separately
 	_save_settings()
 
@@ -217,28 +295,124 @@ func _merge_data(data: Dictionary) -> void:
 	if file_version < SAVE_VERSION:
 		print("💾 Migrating save from v%d to v%d" % [file_version, SAVE_VERSION])
 		# Future migration logic goes here
-	
-	# Merge loaded data with defaults (handles missing keys from older saves).
+
+	# This function is a trust boundary: `data` is whatever was on disk, and the
+	# file is user-writable, hand-editable and may have been written by a build
+	# that shaped a field differently. Each field is therefore checked for SHAPE
+	# before it is installed, for two reasons measured in
+	# tools/VerifySavePersistence.tscn:
+	#
+	#   * The member vars are statically typed, so `high_scores = data.high_scores`
+	#     with an Array on the right does not merely store the wrong thing — it
+	#     raises "Trying to assign value of type 'Array' to a variable of type
+	#     'Dictionary'" and ABORTS THIS FUNCTION. Everything below the offending
+	#     line (session scores, unlocked content, achievements, and the accessory
+	#     back-fill) was then silently dropped while player_data, merged above,
+	#     was kept: a half-loaded profile, which is worse than either accepting or
+	#     rejecting the file.
+	#   * JSON has a single number type, so every integer round-trips as a float
+	#     (games_played 9 -> 9.0). total_play_time in particular feeds
+	#     get_play_time_formatted()'s `total % 3600`, and GDScript's `%` is
+	#     integer-only, so a loaded float armed a runtime error on that path.
+	#
+	# A rejected field falls back to its default and says so; it never takes the
+	# rest of the save down with it.
+
 	if data.has("player"):
-		for key in data.player:
-			player_data[key] = data.player[key]
-	
+		if data["player"] is Dictionary:
+			for key in data["player"]:
+				var value = data["player"][key]
+				if key in INT_PLAYER_FIELDS:
+					if value is float or value is int:
+						player_data[key] = int(value)
+					else:
+						_reject("player.%s" % key, value, "a number")
+					continue
+				player_data[key] = value
+		else:
+			_reject("player", data["player"], "a Dictionary")
+
 	if data.has("high_scores"):
-		high_scores = data.high_scores
+		if data["high_scores"] is Dictionary:
+			high_scores = _sanitized_high_scores(data["high_scores"])
+		else:
+			_reject("high_scores", data["high_scores"], "a Dictionary")
 
 	if data.has("sp_session_scores"):
-		sp_session_scores = data.sp_session_scores
-	
+		if data["sp_session_scores"] is Array:
+			sp_session_scores = _sanitized_session_scores(data["sp_session_scores"])
+		else:
+			_reject("sp_session_scores", data["sp_session_scores"], "an Array")
+
 	if data.has("unlocked"):
-		for key in data.unlocked:
-			unlocked_content[key] = data.unlocked[key]
-	
+		if data["unlocked"] is Dictionary:
+			for key in data["unlocked"]:
+				if data["unlocked"][key] is Array:
+					unlocked_content[key] = data["unlocked"][key]
+				else:
+					_reject("unlocked.%s" % key, data["unlocked"][key], "an Array")
+		else:
+			_reject("unlocked", data["unlocked"], "a Dictionary")
+
 	if data.has("achievements"):
-		for key in data.achievements:
-			if achievements.has(key):
-				achievements[key].unlocked = data.achievements[key].get("unlocked", false)
+		if data["achievements"] is Dictionary:
+			for key in data["achievements"]:
+				if not achievements.has(key):
+					continue  # an achievement this build no longer defines
+				var entry = data["achievements"][key]
+				if entry is Dictionary:
+					achievements[key].unlocked = bool(entry.get("unlocked", false))
+				else:
+					_reject("achievements.%s" % key, entry, "a Dictionary")
+		else:
+			_reject("achievements", data["achievements"], "a Dictionary")
 
 	_ensure_accessory_defaults()
+	_ensure_decoration_defaults()
+
+
+## Field names inside `player` that the rest of the code reads as ints:
+## total_play_time feeds an integer modulo, the others feed "%d" formatting and
+## int-typed getters. JSON hands all of them back as floats.
+const INT_PLAYER_FIELDS: PackedStringArray = [
+	"save_version", "water_droplets", "games_played", "total_play_time", "current_level"
+]
+
+
+func _reject(field: String, value: Variant, expected: String) -> void:
+	push_warning("💾 Save field \"%s\" is %s, expected %s — keeping the default"
+		% [field, type_string(typeof(value)), expected])
+
+
+## Drop malformed per-game records and put the numeric fields back on the types
+## their readers assume: score/times_played are counted and formatted as ints,
+## accuracy/best_time are compared as floats.
+func _sanitized_high_scores(raw: Dictionary) -> Dictionary:
+	var out: Dictionary = {}
+	for game_id in raw:
+		var record = raw[game_id]
+		if not record is Dictionary:
+			_reject("high_scores.%s" % str(game_id), record, "a Dictionary")
+			continue
+		out[str(game_id)] = {
+			"score": int(record.get("score", 0)),
+			"accuracy": float(record.get("accuracy", 0.0)),
+			"best_time": float(record.get("best_time", 999.0)),
+			"times_played": int(record.get("times_played", 0)),
+		}
+	return out
+
+
+## The leaderboard readers sort these and format them with "%d"; a non-numeric
+## entry would sort as 0 and render as a silent phantom run, so it is dropped.
+func _sanitized_session_scores(raw: Array) -> Array:
+	var out: Array = []
+	for score in raw:
+		if score is float or score is int:
+			out.append(int(score))
+		else:
+			_reject("sp_session_scores entry", score, "a number")
+	return out
 
 
 func _ensure_accessory_defaults() -> void:
@@ -278,11 +452,33 @@ func _load_settings() -> void:
 					for key in data:
 						settings[key] = data[key]
 
+## Bank the wall-clock time since the last call.
+##
+## Two things this has to get right. First, session_start_time is a FLOAT: it used
+## to be an int re-based with int(current_time) while the elapsed time was measured
+## from the un-truncated now, so every call re-charged frac(now) — mean 0.5 s of
+## play time that never happened, on every save_now() and on both _notification()
+## branches. tools/VerifySavePersistence.tscn measured 40 saves inside one frame
+## inventing 19.2 s.
+##
+## Second, total_play_time stays an INT: `int += float` retyped the field, and
+## get_play_time_formatted()'s `total % 3600` is GDScript's integer-only modulo, so
+## the first save of a session armed a runtime error there. Whole seconds are banked
+## and the sub-second remainder is carried, because repeated saves inside the same
+## second would otherwise each round down to zero and lose the time for good.
 func _update_play_time() -> void:
-	var current_time = Time.get_unix_time_from_system()
-	var session_duration = current_time - session_start_time
-	player_data.total_play_time += session_duration
-	session_start_time = int(current_time)
+	var current_time := Time.get_unix_time_from_system()
+	var session_duration := current_time - session_start_time
+	session_start_time = current_time
+	if session_duration <= 0.0:
+		# A backwards clock jump (NTP correction, or the player changing the device
+		# clock) must not subtract from a recorded total.
+		return
+	_play_time_carry += session_duration
+	var whole := int(_play_time_carry)
+	if whole > 0:
+		_play_time_carry -= float(whole)
+		player_data.total_play_time = int(player_data.get("total_play_time", 0)) + whole
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # HIGH SCORES
@@ -632,7 +828,7 @@ func get_total_games_played() -> int:
 	return player_data.games_played
 
 func get_total_play_time() -> int:
-	return player_data.total_play_time
+	return int(player_data.get("total_play_time", 0))
 
 func get_total_water_saved() -> float:
 	return player_data.total_water_saved
@@ -643,12 +839,16 @@ func get_session_games_played() -> int:
 func reset_session_stats() -> void:
 	session_games_played = 0
 	win_streak = 0
-	session_start_time = int(Time.get_unix_time_from_system())
+	session_start_time = Time.get_unix_time_from_system()
+	# The unbanked remainder belongs to the stretch being reset, not the next one.
+	_play_time_carry = 0.0
 
 func get_play_time_formatted() -> String:
-	var total = player_data.total_play_time
-	var hours = int(total / 3600)
-	var minutes = int((total % 3600) / 60)
+	# int() rather than trusting the stored type: GDScript % is integer-only, so a
+	# float total (an older save, or a future writer) is a runtime error here.
+	var total := int(player_data.get("total_play_time", 0))
+	var hours := total / 3600
+	var minutes := (total % 3600) / 60
 	return "%dh %dm" % [hours, minutes]
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -677,7 +877,10 @@ func reset_all_data() -> void:
 		"characters": ["droppy_blue"],
 		"minigames": ["catch_rain", "pipe_puzzle"],
 		"themes": ["default"],
-		"accessories": ["character_default"]
+		"accessories": ["character_default"],
+		# Kept in step with the declaration above: without it the first
+		# is_decoration_unlocked() call after a reset has no key to read.
+		"decorations": []
 	}
 	
 	for id in achievements:

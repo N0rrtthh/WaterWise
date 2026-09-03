@@ -46,38 +46,132 @@ func _ready() -> void:
 	var high = _get_sp_high_score()
 	var is_record = total >= high and total > 0
 	var rounds = GameManager.round_scores if GameManager else []
+	# All lives lost → this IS the game-over screen. Give it the dramatic
+	# treatment instead of the celebratory results look.
+	var is_game_over: bool = (
+		GameManager != null and GameManager.session_lives <= 0
+	)
 
 	_build_bg(is_record)
+	if is_game_over:
+		_apply_game_over_look()
 	_init_labels(total, high)
-	_build_mascot(total, rounds)
+	_build_mascot(total, rounds, is_game_over)
 	_build_round_breakdown(rounds)
 	_build_score_leaderboard()
 	_animate_entrance(total, is_record)
-	continue_btn.text = _loc("continue", "CONTINUE")
+	continue_btn.text = (
+		_loc("finalscore_main_menu", "MAIN MENU") if is_game_over
+		else _loc("continue", "CONTINUE")
+	)
 
-	new_record_label.visible = is_record
+	new_record_label.visible = is_record and not is_game_over
 	if is_record:
 		new_record_label.text = _loc("new_high_score", "NEW HIGH SCORE!")
 		_animate_record_label()
 		_spawn_confetti(12)
-	else:
+	elif not is_game_over:
 		_spawn_confetti(6)
+
+	if is_game_over:
+		_add_try_again_button()
 
 	continue_btn.pressed.connect(_on_continue)
 	continue_btn.pivot_offset = continue_btn.size * 0.5
 
-	# Multiplayer: add “Play Again” button so players can replay without
+	# Multiplayer: add "Play Again" button so players can replay without
 	# going back to the lobby. Also handles AutoPlay auto-restart.
 	if GameManager and GameManager.current_game_mode == GameManager.GameMode.MULTIPLAYER_COOP:
 		_add_mp_play_again_button()
 
 	if AudioManager:
 		AudioManager.play_music("results", 0.5)
-		await get_tree().create_timer(0.3).timeout
-		AudioManager.play_fanfare()
-		if is_record:
-			await get_tree().create_timer(0.5).timeout
-			AudioManager.play_bonus()
+		if not is_game_over:
+			await get_tree().create_timer(0.3).timeout
+			AudioManager.play_fanfare()
+			if is_record:
+				await get_tree().create_timer(0.5).timeout
+				AudioManager.play_bonus()
+
+
+# -- Game Over rehaul: dramatic look when all lives are lost --------------
+
+func _apply_game_over_look() -> void:
+	var bg = get_node_or_null("ColorRect")
+	if bg:
+		bg.color = Color(0.11, 0.03, 0.06)  # Deep drying-blood red-dark
+
+	var vbox = $CenterContainer/VBoxContainer
+	var title = Label.new()
+	title.text = _loc("game_over", "GAME OVER!")
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 72)
+	title.add_theme_color_override("font_color", Color(1.0, 0.25, 0.22))
+	title.add_theme_color_override("font_outline_color", Color.BLACK)
+	title.add_theme_constant_override("outline_size", 12)
+	vbox.add_child(title)
+	vbox.move_child(title, 0)
+
+	var sub = Label.new()
+	sub.text = _loc("finalscore_all_droplets_lost", "All your droplets evaporated...")
+	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	sub.add_theme_font_size_override("font_size", 22)
+	sub.add_theme_color_override("font_color", Color(0.85, 0.6, 0.6))
+	vbox.add_child(sub)
+	vbox.move_child(sub, 1)
+
+	# Slow ominous sway on the title.
+	title.pivot_offset = title.size * 0.5
+	var sway = create_tween().set_loops()
+	sway.tween_property(title, "rotation", 0.03, 1.1) \
+		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	sway.tween_property(title, "rotation", -0.03, 1.1) \
+		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+
+
+## Immediate retry: restarts the single-player session in place.
+func _add_try_again_button() -> void:
+	var vbox: VBoxContainer = $CenterContainer/VBoxContainer
+	_play_again_btn = Button.new()
+	_play_again_btn.text = _loc("finalscore_try_again", "TRY AGAIN")
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.85, 0.3, 0.25)
+	style.corner_radius_top_left = 14
+	style.corner_radius_top_right = 14
+	style.corner_radius_bottom_left = 14
+	style.corner_radius_bottom_right = 14
+	style.content_margin_left = 22
+	style.content_margin_right = 22
+	style.content_margin_top = 10
+	style.content_margin_bottom = 10
+	_play_again_btn.add_theme_stylebox_override("normal", style)
+	var hover_style = style.duplicate()
+	hover_style.bg_color = Color(1.0, 0.42, 0.36)
+	_play_again_btn.add_theme_stylebox_override("hover", hover_style)
+	_play_again_btn.add_theme_font_size_override("font_size", 22)
+	_play_again_btn.add_theme_color_override("font_color", Color.WHITE)
+	_play_again_btn.pressed.connect(_on_try_again)
+	# Insert above the Continue button. Node has no get_child_index(); the
+	# child reports its own position within its parent via get_index().
+	var idx: int = continue_btn.get_index()
+	vbox.add_child(_play_again_btn)
+	vbox.move_child(_play_again_btn, idx)
+	_play_again_btn.modulate.a = 0.0
+	var tw = create_tween()
+	tw.tween_interval(2.0)
+	tw.tween_property(_play_again_btn, "modulate:a", 1.0, 0.4)
+
+
+func _on_try_again() -> void:
+	if AudioManager:
+		AudioManager.play_click()
+	if _play_again_btn:
+		_play_again_btn.disabled = true
+	if GameManager:
+		GameManager.mark_welcome_shown()
+		GameManager.start_session(GameManager.GameMode.SINGLE_PLAYER)
+	else:
+		get_tree().change_scene_to_file("res://scenes/ui/InitialScreen.tscn")
 
 
 # ── Background ──────────────────────────────────────────────────────
@@ -199,7 +293,7 @@ func _spawn_confetti(count: int) -> void:
 
 # ── Mascot droplet ─────────────────────────────────────────────────
 
-func _build_mascot(total: int, _rounds: Array) -> void:
+func _build_mascot(total: int, _rounds: Array, force_sad: bool = false) -> void:
 	var vp = get_viewport_rect().size
 	_droplet = Node2D.new()
 	_droplet.position = Vector2(vp.x * 0.82, vp.y * 0.5)
@@ -208,7 +302,7 @@ func _build_mascot(total: int, _rounds: Array) -> void:
 	add_child(_droplet)
 
 	var rank = _compute_rank(total)
-	var happy = rank in ["S", "A", "B"]
+	var happy = rank in ["S", "A", "B"] and not force_sad
 
 	# Body
 	var body = Polygon2D.new()
@@ -331,20 +425,53 @@ func _build_round_breakdown(rounds: Array) -> void:
 	line.add_theme_color_override("font_color", Color(1, 0.9, 0.5))
 	vbox.add_child(line)
 
+	# Session stats strip: rounds, wins, best round, final adaptive difficulty.
+	var wins := 0
+	var best_round := 0
+	for r in rounds:
+		if float(r.get("accuracy", 0.0)) >= 0.5:
+			wins += 1
+		best_round = maxi(best_round, int(r.get("score", 0)))
+	var difficulty_txt := "—"
+	if AdaptiveDifficulty:
+		difficulty_txt = str(AdaptiveDifficulty.get_current_difficulty())
+	var stats = Label.new()
+	stats.text = "%s %d   |   %s %d/%d   |   %s %d   |   %s %s" % [
+		_loc("finalscore_rounds", "Rounds:"),
+		rounds.size(),
+		_loc("finalscore_wins", "Wins:"),
+		wins,
+		rounds.size(),
+		_loc("finalscore_best", "Best:"),
+		best_round,
+		_loc("finalscore_difficulty", "Difficulty:"),
+		difficulty_txt,
+	]
+	stats.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	stats.add_theme_font_size_override("font_size", 20)
+	stats.add_theme_color_override("font_color", Color(0.7, 0.95, 1.0))
+	vbox.add_child(stats)
+
 	# Round list (max 8 visible to avoid scroll overflow)
 	var show_count = mini(rounds.size(), 8)
 	for i in range(show_count):
 		var row = rounds[i]
+		var won: bool = float(row.get("accuracy", 0.0)) >= 0.5
+		var outcome := "WIN" if won else "LOSE"
 		var lbl = Label.new()
-		lbl.text = _fmt_loc("finalscore_round_row", "%d. %s | %d pts | x%d", [
+		lbl.text = _loc("finalscore_rank_row", "%d. %s — %s | %d pts | %d%%") % [
 			i + 1,
 			str(row.get("game", "?")),
+			outcome,
 			int(row.get("score", 0)),
-			int(row.get("combo", 0)),
-		])
+			int(float(row.get("accuracy", 0.0)) * 100.0),
+		]
 		lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		lbl.add_theme_font_size_override("font_size", 18)
-		lbl.add_theme_color_override("font_color", Color(0.85, 0.9, 1))
+		lbl.add_theme_color_override(
+			"font_color",
+			Color(0.55, 1.0, 0.65) if won else Color(1.0, 0.6, 0.6)
+		)
 		vbox.add_child(lbl)
 
 func _build_score_leaderboard() -> void:

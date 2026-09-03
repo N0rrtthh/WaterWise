@@ -102,7 +102,8 @@ func _create_autoplay_toggle() -> void:
 	var container := HBoxContainer.new()
 	container.name = "AutoPlayToggleContainer"
 	container.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
-	container.position = Vector2(24, -60)
+	# Placed by _position_autoplay_toggle() once the children exist, because the
+	# offset depends on the button height MobileUIManager resolves for this screen.
 	container.add_theme_constant_override("separation", 10)
 	add_child(container)
 
@@ -119,23 +120,64 @@ func _create_autoplay_toggle() -> void:
 	# Toggle button
 	var btn := Button.new()
 	btn.name = "AutoPlayToggleBtn"
-	btn.text = "🤖 Auto-Play: %s" % ("ON" if is_on else "OFF")
+	btn.text = Localization.get_text("menu_auto_play_toggle") % (Localization.get_text("toggle_on") if is_on else Localization.get_text("toggle_off"))
 	btn.add_theme_font_size_override("font_size", 16)
 	btn.custom_minimum_size = Vector2(190, 40)
-	btn.tooltip_text = "Enable automated gameplay for single-player performance testing"
+	btn.tooltip_text = Localization.get_text("menu_auto_play_tooltip")
 	container.add_child(btn)
+
+	_position_autoplay_toggle()
 
 	btn.pressed.connect(func():
 		if not AutoPlayManager:
 			return
 		var enabled: bool = not AutoPlayManager.is_auto_play_enabled()
 		AutoPlayManager.set_auto_play_enabled(enabled)
-		btn.text = "🤖 Auto-Play: %s" % ("ON" if enabled else "OFF")
+		btn.text = Localization.get_text("menu_auto_play_toggle") % (Localization.get_text("toggle_on") if enabled else Localization.get_text("toggle_off"))
 		dot.add_theme_color_override("font_color",
 			Color(0.2, 0.9, 0.3) if enabled else Color(0.55, 0.55, 0.55))
 		if AudioManager:
 			AudioManager.play_click()
 	)
+
+
+
+## Bottom-left placement derived from the toggle's own height rather than a
+## hardcoded offset.
+##
+## Both call sites used to write position = Vector2(24, -60 - safe_bottom), a -60
+## that silently assumed the 40-unit-tall button this scene authors. The button's
+## height is not a constant: MobileUIManager raises it to the 48dp touch minimum,
+## which measures 111-147 canvas units depending on screen density, and the old
+## offset put a 147-tall button 87 units below the bottom edge of the canvas on
+## every one of the five device profiles in tools/AuditMobileUI.tscn.
+func _position_autoplay_toggle() -> void:
+	var toggle := get_node_or_null("AutoPlayToggleContainer") as Control
+	if toggle == null:
+		return
+	var safe_bottom := 0.0
+	var safe_left := 0.0
+	if MobileUIManager and MobileUIManager.has_method("get_safe_area_margins"):
+		var safe: Dictionary = MobileUIManager.get_safe_area_margins()
+		safe_bottom = float(safe.get("bottom", 0.0))
+		# The LEFT inset matters as much as the bottom one. In sensor_landscape a
+		# punch-hole camera lands on the left edge, and this toggle is the only
+		# control anchored there - it sat under the cutout on every device profile
+		# the safe-area probe injects, at every stretch ratio.
+		safe_left = float(safe.get("left", 0.0))
+	# Offsets, not position. With PRESET_BOTTOM_LEFT the anchors are at the bottom,
+	# and Control.position converts to offsets using the CURRENT parent size - so
+	# the same value means different things before and after add_child. The original
+	# code got away with `position = Vector2(24, -60)` only because it ran while the
+	# parent size was still zero; calling it later placed the toggle at y = -239,
+	# off the top of the screen. Writing the offsets directly is unambiguous
+	# whenever this runs.
+	var h := maxf(toggle.size.y, toggle.get_combined_minimum_size().y)
+	toggle.offset_left = 24.0 + safe_left
+	toggle.offset_right = toggle.offset_left + maxf(toggle.size.x, toggle.get_combined_minimum_size().x)
+	toggle.offset_bottom = -(24.0 + safe_bottom)
+	toggle.offset_top = toggle.offset_bottom - h
+
 
 func _ensure_fullscreen_backdrop() -> void:
 	var backdrop = get_node_or_null("RuntimeBackdrop") as ColorRect
@@ -461,13 +503,14 @@ func _apply_mobile_ui_scaling() -> void:
 
 func _on_viewport_resized() -> void:
 	_place_main_character_in_view()
+	# The character's loops own position:y, and a running Tween writes its property every
+	# frame, so it outranks the write above: base_y was captured from the pre-resize
+	# viewport and the character snapped back to its old height on the next frame.
+	# _start_character_animation() opens with _kill_character_tweens() and re-reads
+	# base_y, so calling it again is all that is needed to rebase.
+	_start_character_animation()
 	if MobileUIManager and MobileUIManager.is_mobile_platform():
 		_apply_mobile_ui_scaling()
 
 	# Reposition autoplay dev toggle above bottom safe area.
-	var toggle = get_node_or_null("AutoPlayToggleContainer") as Control
-	if toggle:
-		var safe_bottom := 0.0
-		if MobileUIManager and MobileUIManager.has_method("get_safe_area_margins"):
-			safe_bottom = float(MobileUIManager.get_safe_area_margins().get("bottom", 0.0))
-		toggle.position = Vector2(24, -60 - safe_bottom)
+	_position_autoplay_toggle()

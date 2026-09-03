@@ -28,9 +28,12 @@ static func apply_transform(
 	
 	# Validate duration to prevent negative or zero values (Requirement 12.5)
 	if duration <= 0.0:
+		# NOTE: the operands were previously `"a " + "b" % duration`. `%` binds
+		# tighter than `+`, so the format was applied to the second literal,
+		# which has no placeholder — the warning text itself was malformed.
 		push_warning(
-			"[AnimationEngine] Invalid duration (%.2f), " +
-			"clamping to minimum 0.01s" % duration
+			"[AnimationEngine] Invalid duration (%.2f), clamping to minimum 0.01s"
+			% duration
 		)
 		duration = 0.01
 	
@@ -90,9 +93,10 @@ static func compose_transforms(
 	
 	# Validate duration to prevent negative or zero values (Requirement 12.5)
 	if duration <= 0.0:
+		# Same `+` / `%` precedence bug as in apply_transform(); see the note there.
 		push_warning(
-			"[AnimationEngine] Invalid duration (%.2f), " +
-			"clamping to minimum 0.01s" % duration
+			"[AnimationEngine] Invalid duration (%.2f), clamping to minimum 0.01s"
+			% duration
 		)
 		duration = 0.01
 	
@@ -152,8 +156,8 @@ static func animate(
 	# Validate duration to prevent negative or zero values (Requirement 12.5)
 	if total_duration <= 0.0:
 		push_warning(
-			"[AnimationEngine] Invalid total duration (%.2f), " +
-			"clamping to minimum 0.01s" % total_duration
+			"[AnimationEngine] Invalid total duration (%.2f), clamping to minimum 0.01s"
+			% total_duration
 		)
 		total_duration = 0.01
 	
@@ -183,60 +187,67 @@ static func animate(
 		# Get easing function for this keyframe
 		var easing_pair = _get_easing_function(keyframe.easing)
 		
-		# If this is not the first keyframe, set sequential mode
-		if i > 0:
-			tween.set_parallel(false)
+		# ────────────────────────────────────────────────────────────────
+		# Parallel WITHIN a keyframe, sequential BETWEEN keyframes.
+		# ────────────────────────────────────────────────────────────────
+		# The previous code called set_parallel(true) once per keyframe
+		# before adding any tweener, which put the keyframe's *first*
+		# tweener into the previous keyframe's step as well. Every keyframe
+		# therefore overlapped, and the sequence finished after its longest
+		# segment instead of the sum of them: a 4 s / 5-keyframe sequence
+		# completed in ~0.8 s. set_parallel is applied per tweener below, so
+		# the first transform of each keyframe opens a new sequential step
+		# and only the remaining transforms of that same keyframe join it.
+		var is_first_in_keyframe := true
 		
 		# Apply all transforms in this keyframe in parallel with error recovery
-		if not keyframe.transforms.is_empty():
-			tween.set_parallel(true)
+		for transform in keyframe.transforms:
+			tween.set_parallel(not is_first_in_keyframe)
+			var prop_tween: PropertyTweener = null
 			
-			for transform in keyframe.transforms:
-				match transform.type:
-					CutsceneTypes.TransformType.POSITION:
-						var target_pos = transform.value as Vector2
-						if transform.relative:
-							target_pos = target.position + target_pos
-						var prop_tween = tween.tween_property(
-							target,
-							"position",
-							target_pos,
-							segment_duration
-						)
-						if prop_tween:
-							prop_tween.set_ease(easing_pair[0])
-							prop_tween.set_trans(easing_pair[1])
-					
-					CutsceneTypes.TransformType.ROTATION:
-						var target_rot = transform.value as float
-						if transform.relative:
-							target_rot = target.rotation + target_rot
-						var prop_tween = tween.tween_property(
-							target,
-							"rotation",
-							target_rot,
-							segment_duration
-						)
-						if prop_tween:
-							prop_tween.set_ease(easing_pair[0])
-							prop_tween.set_trans(easing_pair[1])
-					
-					CutsceneTypes.TransformType.SCALE:
-						var target_scale = transform.value as Vector2
-						if transform.relative:
-							target_scale = target.scale * target_scale
-						# Clamp scale to prevent extreme values that could cause rendering issues
-						target_scale.x = clamp(target_scale.x, 0.01, 10.0)
-						target_scale.y = clamp(target_scale.y, 0.01, 10.0)
-						var prop_tween = tween.tween_property(
-							target,
-							"scale",
-							target_scale,
-							segment_duration
-						)
-						if prop_tween:
-							prop_tween.set_ease(easing_pair[0])
-							prop_tween.set_trans(easing_pair[1])
+			match transform.type:
+				CutsceneTypes.TransformType.POSITION:
+					var target_pos = transform.value as Vector2
+					if transform.relative:
+						target_pos = target.position + target_pos
+					prop_tween = tween.tween_property(
+						target,
+						"position",
+						target_pos,
+						segment_duration
+					)
+				
+				CutsceneTypes.TransformType.ROTATION:
+					var target_rot = transform.value as float
+					if transform.relative:
+						target_rot = target.rotation + target_rot
+					prop_tween = tween.tween_property(
+						target,
+						"rotation",
+						target_rot,
+						segment_duration
+					)
+				
+				CutsceneTypes.TransformType.SCALE:
+					var target_scale = transform.value as Vector2
+					if transform.relative:
+						target_scale = target.scale * target_scale
+					# Clamp scale to prevent extreme values that could cause rendering issues
+					target_scale.x = clamp(target_scale.x, 0.01, 10.0)
+					target_scale.y = clamp(target_scale.y, 0.01, 10.0)
+					prop_tween = tween.tween_property(
+						target,
+						"scale",
+						target_scale,
+						segment_duration
+					)
+			
+			if prop_tween:
+				prop_tween.set_ease(easing_pair[0])
+				prop_tween.set_trans(easing_pair[1])
+				# Only a tweener that was actually appended closes the "first"
+				# slot; an unrecognised transform type must not consume it.
+				is_first_in_keyframe = false
 		
 		prev_time = keyframe.time
 	

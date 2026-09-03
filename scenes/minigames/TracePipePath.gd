@@ -40,7 +40,10 @@ func _apply_difficulty_settings() -> void:
 		print("🔥 Progressive Lvl %d: %d paths, %.1f tolerance" % [progressive_level, target_paths, path_tolerance])
 
 func _ready():
-	game_name = "Trace Pipe Path"
+	# Localized: the title stayed English above the Filipino objective FIX 58
+	# authored. _loc() keeps the English literal as the fallback for the case
+	# where the table is not up yet (tools/SceneLoadCheck instantiates that way).
+	game_name = _loc("trace_pipe_path", "Trace Pipe Path")
 	game_instruction_text = Localization.get_text("trace_pipe_instructions") if Localization else "DRAW along the pipe to connect water!\nFollow the dotted line! 🔧"
 	game_duration = 30.0
 	game_mode = "quota"
@@ -165,7 +168,7 @@ func _handle_drawing():
 	if Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
 		if not is_drawing:
 			# Start drawing - must be near start point
-			if mouse_pos.distance_to(target_path[0]) < 60:
+			if mouse_pos.distance_to(target_path[0]) < 74:
 				is_drawing = true
 				path_points.clear()
 				player_line.clear_points()
@@ -236,7 +239,7 @@ func _complete_path():
 	if paths_completed >= target_paths:
 		end_game(true)
 	else:
-		await get_tree().create_timer(0.8).timeout
+		await round_delay(0.8)
 		if game_active:
 			_generate_path()
 
@@ -256,7 +259,7 @@ func _fail_path():
 	tw.tween_property(flash, "modulate:a", 0.0, 0.3)
 	tw.tween_callback(flash.queue_free)
 	
-	await get_tree().create_timer(0.5).timeout
+	await round_delay(0.5)
 	if game_active:
 		player_line.default_color = Color(0.3, 0.5, 0.8)
 		player_line.clear_points()

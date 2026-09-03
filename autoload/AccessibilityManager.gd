@@ -99,14 +99,22 @@ func _ready() -> void:
 
 func _load_settings() -> void:
 	var save_mgr = _get_save_manager()
-	if save_mgr:
-		colorblind_mode = save_mgr.get_setting("colorblind_mode", false)
-		large_touch_targets = save_mgr.get_setting("large_touch_targets", false)
-		audio_cues_enabled = save_mgr.get_setting("audio_cues", true)
-		reduced_motion = save_mgr.get_setting("reduced_motion", false)
-		high_contrast = save_mgr.get_setting("high_contrast", false)
-		particles_enabled = save_mgr.get_setting("particles", true)
-		screen_shake_enabled = save_mgr.get_setting("screen_shake", true)
+	# has_method() guard, not just a null check: /root/SaveManager can exist as a
+	# bare Node whose script failed to attach (this happens under
+	# tools/ParseCheckAll.gd, which reloads scripts with CACHE_MODE_IGNORE). The
+	# old code then called get_setting() on a plain Node and threw on every boot
+	# of that harness. Defaults already hold sensible values, so skipping the
+	# load is the correct fallback.
+	if save_mgr == null or not save_mgr.has_method("get_setting"):
+		return
+
+	colorblind_mode = save_mgr.get_setting("colorblind_mode", false)
+	large_touch_targets = save_mgr.get_setting("large_touch_targets", false)
+	audio_cues_enabled = save_mgr.get_setting("audio_cues", true)
+	reduced_motion = save_mgr.get_setting("reduced_motion", false)
+	high_contrast = save_mgr.get_setting("high_contrast", false)
+	particles_enabled = save_mgr.get_setting("particles", true)
+	screen_shake_enabled = save_mgr.get_setting("screen_shake", true)
 
 func _setup_audio_player() -> void:
 	audio_player = AudioStreamPlayer.new()

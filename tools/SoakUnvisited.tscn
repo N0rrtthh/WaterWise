@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://tools/SoakUnvisited.gd" id="1_soakunvisited"]
+
+[node name="SoakUnvisited" type="Node"]
+script = ExtResource("1_soakunvisited")

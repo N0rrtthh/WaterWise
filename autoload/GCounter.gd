@@ -42,7 +42,16 @@ var counter: Dictionary = {}
 ## Synchronization tracking (Paper: G-Counter Output Specification)
 var is_synchronized: bool = true
 var last_sync_timestamp: int = 0  # ms since last successful merge
-var network_latency: int = 0  # Round-trip time for sync (ms)
+## Wall-clock cost of the local merge() computation, in ms.
+##
+## NOT round-trip network time, which is what this was previously labelled: it is
+## measured entirely inside merge() from immediately before the element-wise max
+## to immediately after, so no part of it involves the network. Reporting it as
+## round-trip time would understate real sync latency by orders of magnitude —
+## the merge is an O(n) pass over a 2-element array and lands at 0 ms, while an
+## actual round trip over the paper's fault profile is 100–500 ms. Genuine
+## transport timing belongs to NetworkManager / NetworkFaultSimulator.
+var merge_compute_ms: int = 0
 
 ## Local peer identifier
 var local_peer_id: int = 0
@@ -217,22 +226,31 @@ func merge(remote_counter: Dictionary) -> void:
 			# Take the maximum (paper: element-wise max)
 			counter[pid] = max(counter[pid], remote_counter[pid])
 		else:
-			# New peer — adopt their counter
-			counter[pid] = remote_counter[pid]
+			# New peer — adopt their counter.
+			#
+			# Clamped at 0 because this is the only path into `counter` that does not
+			# go through increment(), which rejects negative amounts to keep the
+			# counter grow-only. An existing slot is already protected by the max()
+			# above, but a peer's FIRST merge lands here — and on the host that is
+			# every client's opening sync — so an out-of-range value would seed a
+			# negative slot and make query() report less than the team had already
+			# earned, with no later merge able to correct it. Honest values are never
+			# negative, so this changes nothing in normal operation.
+			counter[pid] = max(0, remote_counter[pid])
 	
 	# Update sync tracking
 	var merge_end = Time.get_ticks_msec()
-	network_latency = merge_end - merge_start
+	merge_compute_ms = merge_end - merge_start
 	last_sync_timestamp = merge_end
 	is_synchronized = true
-	
+
 	# Log merge event
 	merge_history.append({
 		"timestamp": merge_end,
 		"pre_merge": pre_merge_state,
 		"remote": remote_counter.duplicate(),
 		"post_merge": counter.duplicate(),
-		"latency_ms": network_latency
+		"merge_compute_ms": merge_compute_ms
 	})
 	total_merges += 1
 	if merge_history.size() > MAX_HISTORY_ENTRIES:
@@ -258,7 +276,7 @@ func get_output_specification() -> Dictionary:
 		"peer_id": local_peer_id,
 		"is_synchronized": is_synchronized,
 		"last_sync_timestamp": last_sync_timestamp,
-		"network_latency": network_latency
+		"merge_compute_ms": merge_compute_ms
 	}
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

@@ -34,7 +34,10 @@ func _apply_difficulty_settings() -> void:
 			game_duration = 15.0
 
 func _ready():
-	game_name = "Rice Wash Rescue"
+	# Localized: the title stayed English above the Filipino objective FIX 58
+	# authored. _loc() keeps the English literal as the fallback for the case
+	# where the table is not up yet (tools/SceneLoadCheck instantiates that way).
+	game_name = _loc("rice_wash_rescue", "Rice Wash Rescue")
 	var fallback_text = "FOLLOW the moving pot with the basin!\nCatch all the rice water! 🍚"
 	if Localization:
 		game_instruction_text = Localization.get_text("rice_wash_rescue_instructions")
@@ -67,7 +70,7 @@ func _ready():
 	# Simple catch counter (no percentage)
 	var catch_label = Label.new()
 	catch_label.name = "CatchLabel"
-	catch_label.text = "💧 Catches: 0"
+	catch_label.text = _loc("hud_catches", "💧 Catches: %d") % 0
 	catch_label.add_theme_font_size_override("font_size", 28)
 	catch_label.add_theme_color_override("font_color", Color.WHITE)
 	catch_label.add_theme_color_override("font_outline_color", Color.BLACK)
@@ -113,6 +116,7 @@ func _create_pot(screen_size: Vector2):
 	spout.add_theme_font_size_override("font_size", 32)
 	spout.position = Vector2(-18, 50)
 	spout.name = "Spout"
+	MiniGameAssets.outline_text(spout)
 	pot_node.add_child(spout)
 
 func _create_basin(screen_size: Vector2):
@@ -137,10 +141,11 @@ func _create_basin(screen_size: Vector2):
 	basin_node.add_child(rim)
 	
 	var indicator = Label.new()
-	indicator.text = "← FOLLOW →"
+	indicator.text = _loc("hud_follow", "← FOLLOW →")
 	indicator.add_theme_font_size_override("font_size", 20)
 	indicator.add_theme_color_override("font_color", Color.WHITE)
 	indicator.position = Vector2(-60, 55)
+	MiniGameAssets.outline_text(indicator)
 	basin_node.add_child(indicator)
 
 func _process(delta):
@@ -212,7 +217,7 @@ func _process(delta):
 		water_drops.erase(d)
 	
 	# Update catch counter
-	get_node("CatchLabel").text = "💧 Catches: %d" % correct_actions
+	get_node("CatchLabel").text = _loc("hud_catches", "💧 Catches: %d") % correct_actions
 
 func _spawn_drop():
 	var drop = Node2D.new()

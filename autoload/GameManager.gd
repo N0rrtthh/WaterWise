@@ -12,8 +12,11 @@ extends Node
 ## ═══════════════════════════════════════════════════════════════════
 
 signal game_state_changed(new_state: String)
-signal minigame_started(game_name: String)
-signal minigame_completed(game_name: String, results: Dictionary)
+## Both carry the SCENE BASENAME ("MudPieMaker"), so the pair is joinable: started
+## always did, and completed used to emit the display title, which for FixLeakV2 was
+## also language-dependent. results still carries "game_name" for display.
+signal minigame_started(game_id: String)
+signal minigame_completed(game_id: String, results: Dictionary)
 signal all_minigames_completed()
 signal team_life_lost(remaining_lives: int)
 signal team_won()
@@ -63,6 +66,10 @@ var round_scores: Array = []
 
 var g_counter: Dictionary = {}  # { peer_id: int_score }
 var current_minigame_quota: int = 20  # Points needed to win current minigame (set by each game)
+## True once the host has pushed the quota for the CURRENT round, so a client's
+## own late local call cannot overwrite the value the host scores against.
+## Cleared at the start of every multiplayer round (see set_minigame_quota).
+var _quota_from_host: bool = false
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # SUPPLEMENTARY SPAWN-SPEED SCALER (NOT the paper's Φ algorithm)
@@ -76,10 +83,23 @@ var current_minigame_quota: int = 20  # Points needed to win current minigame (s
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 var rolling_window: Array[float] = []  # Last 5 round times
+## Win/loss flag per entry in rolling_window, kept index-aligned with it so the
+## spawn pacer can tell a fast win from a fast loss.
+var rolling_window_success: Array[bool] = []
 const ROLLING_WINDOW_SIZE: int = 5  # Matches AdaptiveDifficulty and CoopAdaptation window size
 var difficulty_multiplier: float = 1.0
 const MIN_DIFFICULTY: float = 0.5
-# NO MAX_DIFFICULTY - Game gets faster infinitely!
+## Ceiling on the supplementary spawn pacer.
+##
+## This used to be unbounded ("game gets faster infinitely"), but the value is
+## consumed as `spawn_rate = base_rate / difficulty_multiplier` and
+## `fall_speed *= difficulty_multiplier`. Left to grow, the spawn interval tends
+## to zero — an unbounded entity flood, which is a memory/draw-call problem on a
+## <2 GB device — and falling objects eventually travel further per frame than
+## the catcher is tall, so they cannot be caught at all and the round becomes
+## unwinnable. 3.0 still gives a 6x span against MIN_DIFFICULTY and takes ten
+## consecutive fast wins to reach, so escalation stays meaningful.
+const MAX_DIFFICULTY: float = 3.0
 const FAST_THRESHOLD: float = 15.0  # seconds
 const SLOW_THRESHOLD: float = 30.0  # seconds
 
@@ -113,7 +133,14 @@ var completed_minigames: Array = []
 var current_minigame_index: int = 0
 var minigame_random_bag: Array[String] = []
 var pending_next_minigame_name: String = ""
-var force_full_singleplayer_pool: bool = true
+## Scene basename of the round currently loaded, recorded by
+## launch_pending_minigame(). replay_current_minigame() needs it because
+## round_scores stores the human-readable display name instead.
+var last_launched_minigame_name: String = ""
+## false in production: the playable pool is gated by SaveManager unlock
+## bundles (droplet purchases in UnlockablesScreen). Test tools may flip this
+## back to true to exercise every game without a fully-unlocked save.
+var force_full_singleplayer_pool: bool = false
 const ALL_SINGLEPLAYER_MINIGAMES: Array = [
 	"RiceWashRescue",
 	"VegetableBath",
@@ -177,6 +204,18 @@ func _ready() -> void:
 	_refresh_available_minigames()
 	_setup_transition_overlay()
 	_request_android_storage_permissions()
+	
+	# Android Back must not kill the app. SceneTree.quit_on_go_back defaults to true
+	# and NOT ONE script in the project handled NOTIFICATION_WM_GO_BACK_REQUEST -
+	# every hit for that constant was under .agents/skills/, which are reference
+	# templates and not part of the game. Measured by tools/ProbeBackButton.tscn:
+	# quit_on_go_back true, zero handlers. So the hardware/gesture Back button called
+	# SceneTree.quit() from anywhere - mid-round, mid-cutscene, over the tally screen -
+	# with no confirmation, no save of the round in progress and no way back.
+	#
+	# On a phone Back is the primary navigation gesture, so this was not an edge case:
+	# it was the single most reachable way to lose a session.
+	get_tree().quit_on_go_back = false
 	
 	# Connect signals from other autoloads
 	if has_node("/root/AdaptiveDifficulty"):
@@ -340,7 +379,10 @@ func join_game(ip: String, port: int = DEFAULT_PORT) -> bool:
 	
 	multiplayer.multiplayer_peer = peer
 	if NetworkManager:
-		NetworkManager.adopt_existing_peer(false)
+		# The address goes with the peer. This is the only join path the shipped UI has,
+		# so if it does not record where it dialled, NetworkManager._attempt_rejoin()
+		# has nothing to dial back and an in-round drop can never recover.
+		NetworkManager.adopt_existing_peer(false, ip, port)
 	is_host = false
 	local_player_num = 2
 	current_game_mode = GameMode.MULTIPLAYER_COOP
@@ -371,6 +413,7 @@ func disconnect_multiplayer() -> void:
 	multiplayer_game_index = 0
 	current_multiplayer_game_name = ""
 	_recorded_multiplayer_round_game = ""
+	_quota_from_host = false
 	print("🔌 Disconnected from multiplayer")
 
 func _connect_multiplayer_callbacks() -> void:
@@ -399,16 +442,61 @@ func _disconnect_multiplayer_callbacks() -> void:
 
 func _on_peer_connected(peer_id: int) -> void:
 	print("✅ Player connected: ", peer_id)
-	# Initialize their counter
-	g_counter[peer_id] = 0
-	# Sync current state to new player
+	# Seed the slot ONLY if it is new. `g_counter[peer_id] = 0` is an unconditional
+	# write, and on a slot that already holds a score that is a DOWNWARD write —
+	# the one thing a grow-only counter may never do. It is reachable in ordinary
+	# play, not just in edge cases: Godot delivers peer_connected to a joining
+	# client for every peer already in the session, so on a rejoin the client ran
+	# this line for the host and zeroed the host's accumulated contribution.
+	# Measured before this guard existed (tools/logs/rj_client.log, first run):
+	# the client's slot went 5 → 0 and the team total 12 → 0.
+	if not g_counter.has(peer_id):
+		g_counter[peer_id] = 0
+	# Sync current state to new player (thesis Event 4: state re-synchronisation)
 	if is_host:
 		rpc_id(peer_id, "_sync_game_state", g_counter, team_lives, difficulty_multiplier)
 
 func _on_peer_disconnected(peer_id: int) -> void:
 	print("❌ Player disconnected: ", peer_id)
-	g_counter.erase(peer_id)
+	# The departed player's slot is deliberately KEPT.
+	#
+	# This used to be `g_counter.erase(peer_id)`, which is the single operation a
+	# G-Counter may never perform: the team total is a join over a grow-only
+	# lattice, so removing a slot decreases the total by exactly that player's
+	# contribution. Reproduced with tools/VerifyMultiplayerReconnect.tscn — the
+	# host went from {1:7, C:5} = 12 to {1:7} = 7 the instant the partner left,
+	# and because the host is the ONLY peer that evaluates _check_win_condition()
+	# the team's quota progress silently rolled backwards ("Still need 8 more
+	# points" → "Still need 13 more points").
+	#
+	# It also diverged the two replicas permanently. _sync_game_state merges with
+	# element-wise MAX, so it can never restore a value the host has forgotten:
+	# after the partner rejoined, the host held 7 and the client held 12 and no
+	# further message could reconcile them. The standalone GCounter singleton has
+	# no erase path at all and reported 12 throughout the same run, which is the
+	# control proving the loss was this dictionary's and not the network's.
+	#
+	# Keeping the slot costs one integer per rejoin and makes the rejoin converge.
 	if current_game_mode == GameMode.MULTIPLAYER_COOP and session_active:
+		# Stand down while a live round is being held open for this same peer.
+		#
+		# This is a genuine race, not defensive padding: this handler and
+		# NetworkManager._on_player_disconnected() are BOTH connected to
+		# multiplayer.peer_disconnected, they run in the same frame, and the order
+		# between them is not specified. Whichever runs first, only one of the two may
+		# decide the round's fate, and the decision belongs to NetworkManager because
+		# that is where the hold timers and the rejoin retry live. Routing to the lobby
+		# from here would tear down the very round the hold exists to preserve, and
+		# would do it before the peer has had a single retry.
+		#
+		# NetworkManager.game_in_progress is the discriminator, and it is checked rather
+		# than is_reconnect_hold_active() so that this side stands down whichever handler
+		# won the race: if NetworkManager has not opened its hold yet, the flag is still
+		# true and it is about to. On a deliberate teardown game_in_progress is already
+		# false, so the old immediate return still happens.
+		if NetworkManager and NetworkManager.game_in_progress:
+			print("  ...round is being held for a reconnect; NetworkManager owns the outcome")
+			return
 		session_active = false
 		push_warning("Multiplayer peer disconnected during session. Returning to lobby.")
 		call_deferred("return_to_multiplayer_lobby")
@@ -416,8 +504,19 @@ func _on_peer_disconnected(peer_id: int) -> void:
 func _on_connected_to_server() -> void:
 	print("✅ Connected to server!")
 	is_multiplayer_connected = true
-	# Initialize our counter
-	g_counter[multiplayer.get_unique_id()] = 0
+	# A rejoin inside a reconnect hold is dialled by NetworkManager.join_server(), which
+	# owns the new ENetMultiplayerPeer. This side's `peer` was left null by whatever
+	# handled the drop, so re-point it at the live peer instead of leaving the two halves
+	# of the session disagreeing about which object is current.
+	if peer == null and multiplayer.multiplayer_peer != null:
+		peer = multiplayer.multiplayer_peer
+	# Same grow-only guard as _on_peer_connected: seed the slot, never reset it.
+	# A rejoin gets a fresh peer id so the honest path is unaffected, but a
+	# re-delivered connected_to_server would otherwise zero this replica's own
+	# accumulated contribution.
+	var my_id: int = multiplayer.get_unique_id()
+	if not g_counter.has(my_id):
+		g_counter[my_id] = 0
 
 func _on_connection_failed() -> void:
 	print("❌ Connection failed!")
@@ -430,6 +529,23 @@ func _on_connection_failed() -> void:
 
 func _on_server_disconnected() -> void:
 	print("⚠️ Server disconnected!")
+	# Stand down while a live round is being held open for this same host, for the same
+	# reason _on_peer_disconnected() does - and this handler had to learn it the hard
+	# way. On a client BOTH multiplayer.peer_disconnected (for peer 1) and
+	# multiplayer.server_disconnected arrive for one drop, so this ran ~one signal after
+	# NetworkManager had already opened the hold, and it did three fatal things to it:
+	# nulled multiplayer_peer out from under the pending rejoin, cleared session_active,
+	# and deferred return_to_multiplayer_lobby() -> disconnect_multiplayer(), which
+	# silently dropped the hold with no reconnect_hold_ended emitted. Measured with
+	# tools/VerifyInRoundReconnect.tscn: the client reached the lobby 0.1 s into a 6 s
+	# hold, its recorded hold ends were `[]`, and the host sat out the full window and
+	# resolved as `ends=[false]`.
+	#
+	# game_in_progress is the discriminator rather than is_reconnect_hold_active() so
+	# this side stands down whichever handler won the race to run first.
+	if NetworkManager and NetworkManager.game_in_progress:
+		print("  ...round is being held for a reconnect; NetworkManager owns the outcome")
+		return
 	is_multiplayer_connected = false
 	peer = null
 	if multiplayer.multiplayer_peer:
@@ -466,7 +582,20 @@ func submit_score(points: int) -> void:
 	var sender_id: int = multiplayer.get_remote_sender_id()
 	if sender_id == 0:
 		sender_id = multiplayer.get_unique_id()
-	
+
+	# A G-Counter is GROW-ONLY. This RPC is "any_peer", so a malformed or
+	# hostile payload could otherwise drive a counter downward and break the
+	# monotonicity the paper's convergence proof rests on. The GCounter
+	# singleton already refuses negatives (GCounter.increment), so accepting
+	# them here would also silently DIVERGE this dictionary from the singleton
+	# that the thesis exports. Reject at the boundary instead.
+	if points <= 0:
+		push_warning(
+			"GameManager.submit_score: rejected non-positive increment %d from peer %d"
+			% [points, sender_id]
+		)
+		return
+
 	# Increment sender's counter (G-Counter only increments)
 	if not g_counter.has(sender_id):
 		g_counter[sender_id] = 0
@@ -518,18 +647,35 @@ func _announce_team_won() -> void:
 
 @rpc("any_peer", "call_local", "reliable")
 func set_minigame_quota(quota: int) -> void:
-	# Set the quota for current minigame (synced to clients)
-	current_minigame_quota = quota
-	print("🎯 Minigame quota set to: ", quota)
-	
-	# If we're the caller, broadcast to all clients
-	var sender_id = multiplayer.get_remote_sender_id()
-	if sender_id == 0:  # Local call
-		# Broadcast to all clients
-		if is_host:
-			for peer_id in g_counter.keys():
-				if peer_id != multiplayer.get_unique_id():
-					rpc_id(peer_id, "set_minigame_quota", quota)
+	## Set the quota for the current minigame.
+	##
+	## Both peers run the same minigame script and each calls this locally, so
+	## the values normally agree. They can disagree when a peer's adaptive
+	## settings drift, and only the host evaluates _check_win_condition() — so
+	## the host's value is canonical and must not be overwritten by a client's
+	## locally computed one arriving afterwards.
+	var from_remote: bool = multiplayer.get_remote_sender_id() != 0
+
+	if from_remote or is_host or not _quota_from_host:
+		current_minigame_quota = quota
+		if from_remote:
+			_quota_from_host = true
+		print("🎯 Minigame quota set to: ", quota)
+	else:
+		print("🎯 Minigame quota kept at host value %d (ignored local %d)"
+			% [current_minigame_quota, quota])
+
+	# Push the host's quota to every connected peer.
+	#
+	# This previously iterated g_counter.keys() while skipping the host's own
+	# id. Immediately after reset_multiplayer_game()/_load_next_multiplayer_
+	# minigame() those keys are the connected peer ids, but on the very first
+	# round of a session g_counter holds only the host — so the loop broadcast
+	# to nobody and the client was left running on whatever quota it computed
+	# itself. multiplayer.get_peers() is the actual peer list.
+	if is_host and not from_remote:
+		for peer_id in multiplayer.get_peers():
+			rpc_id(peer_id, "set_minigame_quota", quota)
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # MULTIPLAYER PERFORMANCE TRACKING (For CoopAdaptation)
@@ -578,26 +724,34 @@ func _check_both_players_done() -> void:
 	# Check if both players submitted, then apply CoopAdaptation
 	if pending_mp_performance.size() < 2:
 		return
-	
-	# Both players have reported - apply CoopAdaptation algorithm
-	var p1_perf: Dictionary = {}
-	var p2_perf: Dictionary = {}
-	var idx = 0
-	
-	for peer_id in pending_mp_performance:
-		if idx == 0:
-			p1_perf = pending_mp_performance[peer_id]
-		else:
-			p2_perf = pending_mp_performance[peer_id]
-		idx += 1
-	
-	# Determine team success (both players succeeded if global score increased)
-	var team_success = get_global_score() > 0
-	
+
+	# Assign P1/P2 by SORTED peer id, not dictionary insertion order.
+	# Insertion order here is "whoever reported first", so the same round could
+	# label the same human P1 on one evaluation and P2 on the next, making
+	# CoopAdaptation's per-player history non-reproducible run to run. Peer id
+	# is stable for the whole session, so sorting makes the mapping fixed.
+	var ordered_ids: Array = pending_mp_performance.keys()
+	ordered_ids.sort()
+	var p1_perf: Dictionary = pending_mp_performance[ordered_ids[0]]
+	var p2_perf: Dictionary = pending_mp_performance[ordered_ids[1]]
+
+	# Team success = the round's quota was actually met.
+	#
+	# This used to be `get_global_score() > 0`, which reports success as soon as
+	# either player scores a single point — so a round that ended 1/20 fed
+	# CoopAdaptation a win and the co-op difficulty could only ever ratchet up.
+	# Matches the criterion _apply_multiplayer_round_result already uses.
+	var team_success: bool = (
+		current_minigame_quota <= 0 or get_global_score() >= current_minigame_quota
+	)
+
 	if CoopAdaptation:
 		CoopAdaptation.add_game_result(p1_perf, p2_perf, team_success)
-		print("🎮 [MP] CoopAdaptation updated with both players' performance")
-	
+		print("🎮 [MP] CoopAdaptation updated (P%d/P%d, team_success=%s, %d/%d)" % [
+			ordered_ids[0], ordered_ids[1], team_success,
+			get_global_score(), current_minigame_quota
+		])
+
 	# Clear for next game
 	pending_mp_performance.clear()
 
@@ -634,24 +788,37 @@ func _announce_team_lost() -> void:
 	print("☠️ Game Over! Team ran out of lives!")
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# ROLLING WINDOW: ADAPTIVE DIFFICULTY
+# SUPPLEMENTARY SPAWN PACER (not the paper's Φ adaptive difficulty)
+#
+# The thesis algorithm — Rule-Based Rolling Window, Φ = WMA - CP, selecting
+# Easy/Medium/Hard — lives in autoload/AdaptiveDifficulty.gd. Everything below
+# only stretches or squeezes in-round spawn INTERVALS so a round feels paced.
+# It never chooses a difficulty tier and is not reported as thesis output.
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-func add_round_time(round_time: float) -> void:
+func add_round_time(round_time: float, was_successful: bool = true) -> void:
 	## Add a round completion time to the rolling window.
 	## Window size = 5, calculates average and adjusts difficulty.
+	##
+	## was_successful matters: a round that ended in 0.5s because the player
+	## FAILED instantly is not evidence of speed. A real soak produced the window
+	## [0.49, 12.04, 3.179, 25.114, 3.669] — average 8.9s, read as "too fast" —
+	## and ratcheted spawn pacing up on a player who was losing.
 	rolling_window.append(round_time)
-	
-	# Keep only last 5 entries
+	rolling_window_success.append(was_successful)
+
+	# Keep only last 5 entries (both windows stay index-aligned)
 	while rolling_window.size() > ROLLING_WINDOW_SIZE:
 		rolling_window.pop_front()
-	
+	while rolling_window_success.size() > ROLLING_WINDOW_SIZE:
+		rolling_window_success.pop_front()
+
 	# Only adjust after we have enough data
 	if rolling_window.size() >= ROLLING_WINDOW_SIZE:
 		_calculate_difficulty_adjustment()
-	
-	print("📊 Rolling Window: ", rolling_window)
-	print("   Difficulty Multiplier: ", difficulty_multiplier)
+
+	print("📊 Spawn Pacer Window: ", rolling_window)
+	print("   Spawn Pacer Multiplier: ", difficulty_multiplier)
 
 func _calculate_difficulty_adjustment() -> void:
 	## SUPPLEMENTARY speed scaler for spawn intervals (NOT the paper's Φ algorithm).
@@ -659,27 +826,32 @@ func _calculate_difficulty_adjustment() -> void:
 	## AdaptiveDifficulty.gd, which determines Easy/Medium/Hard difficulty.
 	##
 	## This method only adjusts difficulty_multiplier for in-round spawn pacing:
-	##   AvgTime < 15s → multiplier += 0.2 (speed up spawns)
-	##   AvgTime > 30s → multiplier -= 0.1 (slow down spawns)
+	##   AvgTime < 15s AND player is winning → multiplier += 0.2 (speed up spawns)
+	##   AvgTime > 30s OR player is losing   → multiplier -= 0.1 (slow down spawns)
 	var sum: float = 0.0
 	for time in rolling_window:
 		sum += time
-	
-	var avg_time: float = sum / float(ROLLING_WINDOW_SIZE)
-	print("📈 Average Round Time: ", avg_time, "s")
-	
-	if avg_time < FAST_THRESHOLD:
-		# Too fast - make it harder (NO CEILING!)
+
+	var avg_time: float = sum / float(rolling_window.size())
+	print("📈 Spawn Pacer: Average Round Time: ", avg_time, "s")
+
+	# Count failures in the window. Speeding up is only justified when the fast
+	# times came from wins.
+	var failures: int = 0
+	for ok in rolling_window_success:
+		if not ok:
+			failures += 1
+	var mostly_winning: bool = failures <= 1
+
+	if avg_time < FAST_THRESHOLD and mostly_winning:
 		difficulty_multiplier += 0.2
-		print("⬆️ Increasing difficulty (too fast) - Multiplier: %.2f" % difficulty_multiplier)
-	elif avg_time > SLOW_THRESHOLD:
-		# Too slow - make it easier (but keep minimum)
+		print("⬆️ Spawn Pacer: faster spawns (fast wins) - Multiplier: %.2f" % difficulty_multiplier)
+	elif avg_time > SLOW_THRESHOLD or failures >= 2:
 		difficulty_multiplier -= 0.1
-		print("⬇️ Decreasing difficulty (too slow) - Multiplier: %.2f" % difficulty_multiplier)
-	
-	# Only enforce minimum difficulty (no maximum!)
-	difficulty_multiplier = max(difficulty_multiplier, MIN_DIFFICULTY)
-	
+		print("⬇️ Spawn Pacer: slower spawns (slow or losing) - Multiplier: %.2f" % difficulty_multiplier)
+
+	difficulty_multiplier = clampf(difficulty_multiplier, MIN_DIFFICULTY, MAX_DIFFICULTY)
+
 	# Sync to clients if host
 	if is_host and is_multiplayer_connected:
 		rpc("_sync_difficulty", difficulty_multiplier)
@@ -688,11 +860,23 @@ func _calculate_difficulty_adjustment() -> void:
 func _sync_difficulty(new_multiplier: float) -> void:
 	# Sync difficulty multiplier from host to clients
 	difficulty_multiplier = new_multiplier
-	print("📡 Difficulty synced: ", difficulty_multiplier)
+	print("📡 Spawn Pacer multiplier synced: ", difficulty_multiplier)
 
 func get_spawn_interval(base_interval: float) -> float:
 	# Get adjusted spawn interval: base_time / difficulty_multiplier
 	return base_interval / difficulty_multiplier
+
+func reset_spawn_pacer() -> void:
+	## Clear the supplementary spawn pacer back to its cold-start state.
+	##
+	## rolling_window and rolling_window_success are index-aligned by contract
+	## (see add_round_time). Clearing one without the other leaves _calculate_
+	## difficulty_adjustment counting failures from the PREVIOUS session against
+	## this session's times, so a new player can be pace-punished for rounds they
+	## never played. Both windows and the multiplier must reset together.
+	rolling_window.clear()
+	rolling_window_success.clear()
+	difficulty_multiplier = 1.0
 
 func reset_multiplayer_game() -> void:
 	# Reset state for a new multiplayer round
@@ -701,8 +885,7 @@ func reset_multiplayer_game() -> void:
 		g_counter[multiplayer.get_unique_id()] = 0
 	team_lives = MAX_TEAM_LIVES
 	session_lives = MAX_TEAM_LIVES
-	rolling_window.clear()
-	difficulty_multiplier = 1.0
+	reset_spawn_pacer()
 	minigames_played_this_session = 0
 	session_score = 0
 	session_droplets_earned = 0
@@ -713,6 +896,7 @@ func reset_multiplayer_game() -> void:
 	player_modes.clear()
 	current_multiplayer_game_name = ""
 	_recorded_multiplayer_round_game = ""
+	_quota_from_host = false
 	_play_again_pending = false
 	
 	if is_host:
@@ -745,7 +929,7 @@ func _play_again_multiplayer_rpc() -> void:
 	_play_again_pending = true
 	print("🔄 [Multiplayer] Play Again — restarting session!")
 	start_new_session(GameMode.MULTIPLAYER_COOP)
-	_load_next_multiplayer_minigame()
+	advance_multiplayer_round()
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # MULTIPLAYER MINIGAME PROGRESSION
@@ -773,24 +957,58 @@ var multiplayer_game_index: int = 0
 # Mode assignment for current game (randomized each game)
 var player_modes: Dictionary = {}  # {peer_id: int (1 or 2)}
 
-func assign_random_modes() -> void:
-	# Randomly assign Mode 1 or Mode 2 to each player
-	player_modes.clear()
+## Decide who plays which of the two co-op modes for the next round.
+##
+## Returns the mapping instead of writing player_modes directly, because the choice
+## is RANDOM and must be made once, by the host, then shipped to every peer. See
+## advance_multiplayer_round().
+func _decide_player_modes() -> Dictionary:
+	var modes: Dictionary = {}
 	var peer_ids: Array[int] = get_connected_multiplayer_peer_ids()
 	if peer_ids.is_empty():
-		return
+		return modes
 
 	# If only one peer is present (debug/testing), force mode 1.
 	if peer_ids.size() == 1:
-		player_modes[peer_ids[0]] = 1
-		return
+		modes[peer_ids[0]] = 1
+		return modes
 
 	# Shuffle and assign alternating roles
 	peer_ids.shuffle()
 	for i in range(peer_ids.size()):
-		player_modes[peer_ids[i]] = (i % 2) + 1  # Alternates between 1 and 2
-	
-	print("🎲 Mode assignments: ", player_modes)
+		modes[peer_ids[i]] = (i % 2) + 1  # Alternates between 1 and 2
+
+	return modes
+
+## Host-only entry point for the multiplayer round advance. Decides WHICH game and
+## WHICH mode assignment the next round uses, then broadcasts the decision.
+##
+## The decision has to be made exactly once, on one peer. It used to be made inside
+## _load_next_multiplayer_minigame() itself — which runs on every peer via
+## @rpc("call_local") — so each peer shuffled multiplayer_game_order with its own
+## unseeded RNG and then indexed into a different list. Measured on the real network
+## (tools/VerifyRoundAdvance.tscn): on the first round advance the host loaded
+## MP_MopFloor while the client loaded MP_FillAquarium. The same applied to the
+## random mode assignment, which decides each player's role inside the round.
+##
+## This is the pattern NetworkManager._load_next_round() already uses for the
+## LevelSets path: the host picks, the pick travels as an RPC argument.
+func advance_multiplayer_round() -> void:
+	if not is_host:
+		return
+
+	# If we've played all games in current shuffle, reshuffle
+	if multiplayer_game_order.is_empty() or multiplayer_game_index >= multiplayer_game_order.size():
+		multiplayer_game_order = multiplayer_minigames.duplicate()
+		multiplayer_game_order.shuffle()
+		multiplayer_game_index = 0
+		print("🔀 Shuffled multiplayer minigame order: ", multiplayer_game_order)
+
+	var game_name: String = multiplayer_game_order[multiplayer_game_index]
+	multiplayer_game_index += 1
+
+	rpc("_load_next_multiplayer_minigame", game_name, _decide_player_modes())
+
 
 func get_my_player_mode() -> int:
 	# Get my assigned mode (1 or 2)
@@ -848,7 +1066,10 @@ func _apply_multiplayer_round_result(
 	if current_minigame_quota > 0:
 		accuracy = clampf(float(clamped_score) / float(current_minigame_quota), 0.0, 1.0)
 
-	add_round_time(clamped_time)
+	# Quota met == the round was a win. With no quota declared there is nothing
+	# to have failed, so the round counts as successful.
+	var mp_successful: bool = current_minigame_quota <= 0 or clamped_score >= current_minigame_quota
+	add_round_time(clamped_time, mp_successful)
 
 	if not resolved_game_name in completed_minigames:
 		completed_minigames.append(resolved_game_name)
@@ -878,8 +1099,9 @@ func _apply_multiplayer_round_result(
 		})
 
 @rpc("authority", "call_local", "reliable")
-func _load_next_multiplayer_minigame() -> void:
-	# Load next random multiplayer minigame (loop until lives depleted)
+func _load_next_multiplayer_minigame(game_name: String, modes: Dictionary) -> void:
+	# Load the next multiplayer minigame (loop until lives depleted).
+	# `game_name` and `modes` are the host's decision — see advance_multiplayer_round().
 	if multiplayer.multiplayer_peer == null or not is_multiplayer_connected:
 		push_warning("Multiplayer connection is not active. Returning to lobby.")
 		return_to_multiplayer_lobby()
@@ -903,23 +1125,32 @@ func _load_next_multiplayer_minigame() -> void:
 	
 	# Reset quota to 0 so new game can set it
 	current_minigame_quota = 0
+	_quota_from_host = false
 	_recorded_multiplayer_round_game = ""
-	
-	# Randomly assign modes for the next game
-	assign_random_modes()
-	
-	# If we've played all games in current shuffle, reshuffle
-	if multiplayer_game_order.is_empty() or multiplayer_game_index >= multiplayer_game_order.size():
-		multiplayer_game_order = multiplayer_minigames.duplicate()
-		multiplayer_game_order.shuffle()
-		multiplayer_game_index = 0
-		print("🔀 Shuffled multiplayer minigame order: ", multiplayer_game_order)
-	
-	# Get next game
-	var game_name: String = multiplayer_game_order[multiplayer_game_index]
-	multiplayer_game_index += 1
+
+	# Clear last round's performance reports. Only the host consumes these
+	# (_check_both_players_done runs host-side), so on the client the entry it
+	# stored for itself was never cleared and stayed live for the whole session.
+	pending_mp_performance.clear()
+
+	# Clear NetworkManager's per-round state too. This function IS the shipped round
+	# advance and runs on every peer (@rpc "call_local"), but it used to reset only
+	# GameManager's half: _ready_signal_emitted, _countdown_started_this_round and
+	# players[peer]["ready"] stayed latched from round 1, so from round 2 on the
+	# "both players ready" route returned early and the countdown arrived only via
+	# MultiplayerMiniGameBase's 6 s fallback — a stall before every later round.
+	# Called directly, not by rpc(): each peer is already executing this function
+	# locally, so a broadcast here would fire the reset N times per round.
+	if NetworkManager and NetworkManager.has_method("reset_round_status"):
+		NetworkManager.reset_round_status()
+
+	# Apply the host's mode assignment for this round. Every peer gets the same
+	# dictionary, so get_my_player_mode() agrees across the session.
+	player_modes = modes.duplicate()
+	print("🎲 Mode assignments: ", player_modes)
+
 	current_multiplayer_game_name = game_name
-	
+
 	print("🎯 Next game: ", game_name)
 	print("❤️ Team Lives: ", team_lives)
 	print("⚡ Difficulty Multiplier: %.2f" % difficulty_multiplier)
@@ -979,6 +1210,31 @@ func start_new_session(mode: GameMode = GameMode.SINGLE_PLAYER) -> void:
 	_story_transition_active = false
 	var save_mgr = get_node_or_null("/root/SaveManager")
 	
+	# The adaptive algorithm is cleared when a session BEGINS, not when one ends.
+	# It used to be cleared inside _finalize_session_for_logging() instead, two lines
+	# above SessionLogger.export_session() - so every AdaptiveDifficulty-derived field
+	# in every exported session log was read AFTER the wipe. Measured over the 54
+	# session logs in user://: final_difficulty read "Easy" in 52 and "Medium" in 2 and
+	# "Hard" in none (Hard was actually played in 9 of them), and final_phi read exactly
+	# 0.0 in 49 - the _initialize_session() defaults, not measurements. FinalScore.gd:437
+	# read it post-wipe too, so the end-of-session screen printed "Difficulty: Easy" no
+	# matter how the session had gone. That is the artifact behind the report "many games
+	# but I only got to Medium and it did not get harder".
+	# Resetting here instead keeps the finished session's state readable by every
+	# end-of-session consumer while still guaranteeing a clean start, and it now covers
+	# BOTH modes: a co-op session opened after a single-player one used to inherit the
+	# previous player's window because only the SINGLE_PLAYER branch reset it.
+	if has_node("/root/AdaptiveDifficulty"):
+		AdaptiveDifficulty.reset()
+	# Same contract for the co-op algorithm, which had no session boundary at all:
+	# CoopAdaptation.reset_session() existed and was called from nowhere in the
+	# project, so a second co-op session in the same process kept the previous team's
+	# per-player windows, proficiencies, sync history and skill_gap. A pair who had
+	# just been classified Hard/Medium started their next match already there, and the
+	# mp_algorithm block of the next session log reported the earlier team's numbers.
+	if has_node("/root/CoopAdaptation") and CoopAdaptation.has_method("reset_session"):
+		CoopAdaptation.reset_session()
+
 	if mode == GameMode.SINGLE_PLAYER:
 		# Hard reset any multiplayer remnants so single-player never hijacks flow.
 		if is_multiplayer_connected or multiplayer.multiplayer_peer:
@@ -986,13 +1242,12 @@ func start_new_session(mode: GameMode = GameMode.SINGLE_PLAYER) -> void:
 			session_active = true  # Restore: disconnect_multiplayer() resets this flag
 		if save_mgr and save_mgr.has_method("reset_session_stats"):
 			save_mgr.reset_session_stats()
+		reset_spawn_pacer()
 		_refresh_available_minigames()
 		_rebuild_minigame_random_bag()
 		_load_saved_data()
 		if save_mgr and save_mgr.has_method("get_droplets"):
 			water_droplets = int(save_mgr.get_droplets())
-		if has_node("/root/AdaptiveDifficulty"):
-			AdaptiveDifficulty.reset()
 		if PerformanceProfiler:
 			PerformanceProfiler.clear_session_events()
 			PerformanceProfiler.log_event("session_start", {"mode": "single_player"})
@@ -1010,7 +1265,7 @@ func start_next_minigame() -> void:
 
 	if current_game_mode == GameMode.MULTIPLAYER_COOP:
 		if is_host:
-			rpc("_load_next_multiplayer_minigame")
+			advance_multiplayer_round()
 		return
 
 	if current_game_mode != GameMode.SINGLE_PLAYER:
@@ -1128,11 +1383,33 @@ func launch_pending_minigame() -> void:
 	pending_next_minigame_name = ""
 	var game_path: String = "res://scenes/minigames/%s.tscn" % game_name
 	if ResourceLoader.exists(game_path):
+		# Remember the SCENE basename, which is the only form that can be
+		# reloaded. round_scores records the DISPLAY name ("Water Plant"),
+		# so it cannot be used to build a scene path.
+		last_launched_minigame_name = game_name
 		get_tree().change_scene_to_file(game_path)
 	else:
 		push_warning("Mini-game not found: ", game_path)
 		# Try the next one immediately if one entry is stale.
 		start_next_minigame()
+
+## Replay the round that is loaded right now, without advancing the roster.
+##
+## MiniGameResults RETRY has called this since that screen was authored and
+## the method never existed anywhere in the project, so pressing RETRY raised
+## "Invalid call. Nonexistent function 'replay_current_minigame' in base
+## GameManager" and left the player on the results screen. Deliberately does
+## NOT touch lives, session_score or the random bag: a replay repeats one
+## round, it does not rewind the run.
+func replay_current_minigame() -> void:
+	if last_launched_minigame_name.is_empty():
+		# Nothing has been launched through launch_pending_minigame() yet
+		# (a round entered directly, e.g. from a tool). Advancing is the only
+		# honest option; silently doing nothing would strand the player.
+		start_next_minigame()
+		return
+	pending_next_minigame_name = last_launched_minigame_name
+	launch_pending_minigame()
 
 func _refresh_available_minigames() -> void:
 	# Build single-player pool from SaveManager unlock bundles.
@@ -1153,6 +1430,10 @@ func _refresh_available_minigames() -> void:
 				for game_name in UNLOCK_ID_TO_MINIGAMES[unlock_id]:
 					if game_name not in filtered:
 						filtered.append(game_name)
+			elif unlock_id in ALL_SINGLEPLAYER_MINIGAMES:
+				# Per-game store purchases use the minigame name as the id.
+				if unlock_id not in filtered:
+					filtered.append(unlock_id)
 
 	# Keep only scenes that exist to prevent runtime scene load errors.
 	available_minigames.clear()
@@ -1170,15 +1451,33 @@ func _rebuild_minigame_random_bag() -> void:
 
 func refresh_available_minigames() -> void:
 	_refresh_available_minigames()
+	# Rebuild the random bag so newly-purchased bundles enter the rotation
+	# immediately instead of waiting for the stale bag to drain.
+	_rebuild_minigame_random_bag()
 
+## `game_name` is the DISPLAY title ("Mud Pie Maker", and for FixLeakV2 the title in
+## whatever language is set), so it cannot be an identity. `game_id` is the scene
+## basename MiniGameBase._get_minigame_key() returns ("MudPieMaker", "FixLeak"), and
+## it is what everything that has to MATCH rows uses below: the completed set, the
+## per-game high-score record (SaveManager's parameter is literally called game_id),
+## the algorithm's log, the thesis export, and the minigame_completed signal — which
+## pairs with minigame_started, and started has always carried the scene id, so the
+## two were not joinable. A Filipino session used to log "Ayusin ang Tagas" and an
+## English one "Fix Leak" for the same game, in the same save file.
+## Defaults to the display title so the older 7-argument call form still works.
 func complete_minigame(
 	game_name: String, accuracy: float,
 	reaction_time: int, mistakes: int,
 	round_score_override: int = -1,
-	best_combo: int = 0
+	best_combo: int = 0,
+	was_successful: bool = true,
+	game_id: String = ""
 ) -> void:
-	if not game_name in completed_minigames:
-		completed_minigames.append(game_name)
+	var gid: String = game_id.strip_edges()
+	if gid.is_empty():
+		gid = game_name
+	if not gid in completed_minigames:
+		completed_minigames.append(gid)
 	
 	minigames_played_this_session += 1
 	
@@ -1199,14 +1498,14 @@ func complete_minigame(
 
 	var save_mgr = get_node_or_null("/root/SaveManager")
 	if save_mgr and save_mgr.has_method("record_game_result"):
-		save_mgr.record_game_result(game_name, round_score, accuracy, round_time_seconds)
+		save_mgr.record_game_result(gid, round_score, accuracy, round_time_seconds)
 		# Note: droplets for SP games are awarded by MiniGameBase.end_game().
 		# Droplets for MP games are awarded by NetworkManager._check_both_completed().
 		if save_mgr.has_method("get_droplets"):
 			water_droplets = int(save_mgr.get_droplets())
 	
 	# Add to rolling window for difficulty adjustment
-	add_round_time(round_time_seconds)
+	add_round_time(round_time_seconds, was_successful)
 	
 	# ═══════════════════════════════════════════════════════════════════════
 	# Apply adaptive difficulty algorithms based on game mode
@@ -1228,24 +1527,29 @@ func complete_minigame(
 		# Single-player uses AdaptiveDifficulty (Φ = WMA - CP algorithm)
 		# This is the RULE-BASED ROLLING WINDOW ALGORITHM in action!
 		if AdaptiveDifficulty:
-			AdaptiveDifficulty.add_performance(accuracy, reaction_time, mistakes, game_name)
+			AdaptiveDifficulty.add_performance(accuracy, reaction_time, mistakes, gid)
 		# Log SP game to SessionLogger for thesis defence export
 		var _session_logger = get_node_or_null("/root/SessionLogger")
 		if _session_logger and _session_logger.has_method("record_sp_game"):
 			var _sp_diff = AdaptiveDifficulty.get_current_difficulty() if AdaptiveDifficulty else "Unknown"
 			var _logged_droplets := int(_session_logger.get("total_droplets_earned"))
 			var _droplets_this_round: int = max(0, session_droplets_earned - _logged_droplets)
-			_session_logger.record_sp_game(game_name, round_score, accuracy, reaction_time, mistakes, _sp_diff, _droplets_this_round)
+			# reaction_time here is the value the ALGORITHM consumed (per-action
+			# latency, or round duration when the round graded no discrete actions).
+			# The log has to carry the same number the algorithm saw, or the exported
+			# sigma cannot be recomputed from the log.
+			_session_logger.record_sp_game(gid, round_score, accuracy, reaction_time, mistakes, _sp_diff, _droplets_this_round)
 	else:
 		# Multiplayer uses CoopAdaptation (per-player difficulty with sync scoring)
 		# Note: In multiplayer, performance is tracked via submit_score RPC
 		# CoopAdaptation.add_game_result() should be called after BOTH players complete
 		if CoopAdaptation and is_host:
 			# Store this player's performance temporarily
-			_store_multiplayer_performance(game_name, accuracy, reaction_time, mistakes)
+			_store_multiplayer_performance(gid, accuracy, reaction_time, mistakes)
 	
 	var results: Dictionary = {
 		"game_name": game_name,
+		"game_id": gid,
 		"accuracy": accuracy,
 		"reaction_time": reaction_time,
 		"mistakes": mistakes,
@@ -1256,6 +1560,7 @@ func complete_minigame(
 	if PerformanceProfiler:
 		PerformanceProfiler.log_event("minigame_complete", {
 			"game_name": game_name,
+			"game_id": gid,
 			"accuracy": accuracy,
 			"reaction_time_ms": reaction_time,
 			"mistakes": mistakes,
@@ -1266,7 +1571,7 @@ func complete_minigame(
 			"difficulty_multiplier": difficulty_multiplier,
 		})
 	
-	minigame_completed.emit(game_name, results)
+	minigame_completed.emit(gid, results)
 	change_state(GameState.MINIGAME_RESULTS)
 	current_minigame_index += 1
 
@@ -1304,6 +1609,40 @@ func return_to_main_menu() -> void:
 	get_tree().paused = false
 	
 	get_tree().change_scene_to_file("res://scenes/ui/InitialScreen.tscn")
+
+
+# ── Multiplayer departure notice ──────────────────────────────────────────────────
+#
+# Holds a LOCALIZATION KEY, never a sentence, so a language switch between the queueing
+# and the reading still renders the right language — each consumer resolves it through
+# its own translation table.
+#
+# This channel shipped with a consumer and no producer: scenes/ui/MultiplayerMenu.gd:12
+# has always called consume_multiplayer_notice() behind a has_method() guard, and no such
+# method existed anywhere in the project, so the guard swallowed it and a player yanked
+# out of a round arrived at a screen that said nothing about why the round vanished. The
+# producers are the three involuntary exits in NetworkManager: the server went away, the
+# partner went away, and the reconnect window expired with nobody back.
+var _multiplayer_notice: String = ""
+
+
+## Queue a reason for the next multiplayer screen to show. FIRST writer wins.
+##
+## One departure fires several handlers in the same frame — peer_disconnected reaches
+## NetworkManager._on_player_disconnected() about 30 ms before server_disconnected reaches
+## _on_server_disconnected() (measured in tools/VerifyHostDeparture.gd) — and the earliest
+## one describes the event most specifically, so later, vaguer writers must not overwrite it.
+func set_multiplayer_notice(key: String) -> void:
+	if _multiplayer_notice.is_empty():
+		_multiplayer_notice = key
+
+
+## Read and clear. Clearing on read is what stops a stale reason from surfacing two screens
+## later, out of context, next time the player opens multiplayer.
+func consume_multiplayer_notice() -> String:
+	var key: String = _multiplayer_notice
+	_multiplayer_notice = ""
+	return key
 
 func return_to_multiplayer_lobby() -> void:
 	get_tree().paused = false
@@ -1353,8 +1692,13 @@ func _finalize_session_for_logging() -> void:
 	if AdaptiveDifficulty:
 		if AdaptiveDifficulty.has_method("export_to_json_file"):
 			AdaptiveDifficulty.export_to_json_file()
-		if AdaptiveDifficulty.has_method("reset"):
-			AdaptiveDifficulty.reset()
+		# No reset() here. This function is the session's LAST READER of the algorithm,
+		# not its owner: the case study above, SessionLogger.export_session() below and
+		# the FinalScore screen this call returns into all read the finished session's
+		# tier, Phi, WMA, CP and progressive_level. Clearing them here silently zeroed
+		# every one of those consumers - the ordering held only for whichever export
+		# happened to sit above the call. The clear now happens in start_new_session(),
+		# where a session actually begins.
 
 	# Export SessionLogger data - ensures session is saved even if app is killed
 	# via Home button on Android (NOTIFICATION_WM_CLOSE_REQUEST may not fire)
@@ -1413,3 +1757,52 @@ func reset_all_data() -> void:
 		save_mgr.reset_all()
 	
 	print("🔄 All data reset to defaults")
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ANDROID BACK BUTTON
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+## Routed here because quit_on_go_back is turned off in _ready(). See there for what
+## the behaviour was before: an unconditional SceneTree.quit() from any screen.
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_GO_BACK_REQUEST:
+		handle_back_request()
+
+
+## Where Back goes from the screen that is currently loaded.
+##
+## Deliberately NOT a path-to-path route table. A table has to be kept in step with
+## every screen that is ever added and rots silently when it is not, and it cannot
+## know that a minigame's Back means "pause" rather than "leave". Instead each screen
+## that needs its own answer implements on_back_requested() and returns true to say
+## it handled it; everything else falls through to the hub, which is never a dead end.
+##
+## Returns what it did, so tools/VerifyBackButton.tscn can assert on it rather than
+## on a print.
+func handle_back_request() -> String:
+	var scene := get_tree().current_scene
+	if scene == null:
+		return "no_scene"
+
+	# 1. The screen's own answer wins. MiniGameBase and MultiplayerMiniGameBase
+	#    implement this as a pause toggle, because a round in progress must not be
+	#    silently discarded by a stray gesture - the round has real score, lives and
+	#    algorithm data attached to it.
+	if scene.has_method("on_back_requested"):
+		if scene.on_back_requested() == true:
+			return "handled_by_scene"
+
+	# 2. The title screen and the hub are the top of the stack. Back from the top of
+	#    an Android activity stack closes the app, which is what a player expects
+	#    there and nowhere else.
+	var path: String = scene.scene_file_path
+	if path == "res://scenes/ui/InitialScreen.tscn" \
+			or path == "res://scenes/ui/MainMenu.tscn":
+		get_tree().quit()
+		return "quit_from_root"
+
+	# 3. Anything else goes to the hub. A default rather than an enumeration, so a
+	#    screen added later gets sane Back behaviour for free instead of inheriting
+	#    "kill the app".
+	return_to_main_menu()
+	return "returned_to_hub"

@@ -12,6 +12,7 @@ extends Control
 
 @onready var lobby_container = $MarginContainer/VBoxContainer
 @onready var title_label = $MarginContainer/VBoxContainer/TitleLabel
+@onready var subtitle_label = $MarginContainer/VBoxContainer/SubtitleLabel
 @onready var mode_selection_panel = $MarginContainer/VBoxContainer/ModeSelectionPanel
 @onready var host_button = (
 	$MarginContainer/VBoxContainer/ModeSelectionPanel/VBoxContainer/HostButton
@@ -67,6 +68,10 @@ var leaderboard_panel: Control = null
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 var current_language: String = "en"  # "en" or "tl" (Tagalog)
+## A localization KEY queued by NetworkManager through GameManager.set_multiplayer_notice(),
+## empty when the last round ended normally. Rendered through _t() like the rest of this
+## screen so a language switch re-renders it.
+var _pending_notice_key: String = ""
 var is_ready: bool = false
 var ready_status_by_peer: Dictionary = {}
 
@@ -97,7 +102,16 @@ var translations = {
 		"need_two_players": "Need 2 players connected!",
 		"both_players_ready": "Both players must be ready!",
 		"you": "YOU",
-		"your_role": "Your Role: %s"
+		"your_role": "Your Role: %s",
+		# The tagline the scene hardcoded in English on SubtitleLabel, now translated like
+		# everything else on this screen — and the fallback the departure notices replace.
+		"subtitle": "Team up to save water together!",
+		# Rendered from the key NetworkManager queues through GameManager.set_multiplayer_notice().
+		# Duplicated from autoload/Localization.gd on purpose: this screen has always carried its
+		# own table (see "host"/"join"/"back" above) and _t() reads only from here.
+		"notice_host_left": "The host left the game. Round cancelled.",
+		"notice_partner_left": "Your partner left the game. Round cancelled.",
+		"notice_partner_no_return": "Your partner never came back. Round cancelled."
 	},
 	"tl": {
 		"title": "Multiplayer Co-op Mode\nPangkat sa Pagtitipid ng Tubig",
@@ -124,7 +138,11 @@ var translations = {
 		"need_two_players": "Kailangan ng 2 maglalaro!",
 		"both_players_ready": "Dapat handa ang parehong player!",
 		"you": "IKAW",
-		"your_role": "Iyong Papel: %s"
+		"your_role": "Iyong Papel: %s",
+		"subtitle": "Sabay tayong magtipid ng tubig!",
+		"notice_host_left": "Umalis ang host. Kanselado ang round.",
+		"notice_partner_left": "Umalis ang kapareha mo. Kanselado ang round.",
+		"notice_partner_no_return": "Hindi na bumalik ang kapareha mo. Kanselado ang round."
 	}
 }
 
@@ -137,6 +155,11 @@ func _ready() -> void:
 	if Localization:
 		current_language = "tl" if Localization.get_language_code() == "tl" else "en"
 	
+	# Why the reason is read HERE and not only on MultiplayerMenu: every involuntary exit lands
+	# in this scene, not that one (GameManager.return_to_multiplayer_lobby()), so a notice read
+	# only by the menu would go unseen and then surface out of context on some later visit.
+	# Reading it clears it, so whichever screen comes up first is the one that explains.
+	_pending_notice_key = GameManager.consume_multiplayer_notice()
 	_update_translations()
 	_connect_button_signals()
 	_connect_multiplayer_signals()
@@ -168,7 +191,7 @@ func _create_leaderboard_button() -> void:
 		return
 	leaderboard_button = Button.new()
 	leaderboard_button.name = "LeaderboardButton"
-	leaderboard_button.text = "📊 Session Leaderboard"
+	leaderboard_button.text = Localization.get_text("mp_session_leaderboard")
 	leaderboard_button.custom_minimum_size = Vector2(0, 50)
 	leaderboard_button.add_theme_font_size_override("font_size", 18)
 	leaderboard_button.pressed.connect(_on_leaderboard_pressed)
@@ -185,7 +208,7 @@ func _create_mp_duration_row() -> void:
 	mp_duration_row.visible = false  # Hidden until AutoPlay is enabled
 
 	var lbl = Label.new()
-	lbl.text = "Duration:"
+	lbl.text = Localization.get_text("mp_duration_label")
 	lbl.add_theme_font_size_override("font_size", 18)
 	mp_duration_row.add_child(lbl)
 
@@ -287,7 +310,8 @@ func _update_start_button_state() -> void:
 		start_game_button.visible = true
 		start_game_button.disabled = true
 		start_game_button.text = "⏳ " + (
-			"Waiting for host to start..." if all_ready else "Waiting for all players..."
+			Localization.get_text("mp_waiting_host_start") if all_ready
+			else Localization.get_text("mp_waiting_all_players")
 		)
 
 func _sync_local_ready(ready_value: bool) -> void:
@@ -397,10 +421,10 @@ func _sync_auto_play_state(enabled: bool) -> void:
 	if auto_play_button:
 		auto_play_button.set_pressed_no_signal(enabled)
 		if enabled:
-			auto_play_button.text = "🤖 AUTO PLAY ON"
+			auto_play_button.text = Localization.get_text("mp_auto_play_on")
 			auto_play_button.modulate = Color(1.2, 1.0, 0.4)
 		else:
-			auto_play_button.text = "🤖 AUTO PLAY"
+			auto_play_button.text = Localization.get_text("mp_auto_play")
 			auto_play_button.modulate = Color.WHITE
 	if mp_duration_row:
 		mp_duration_row.visible = enabled
@@ -491,7 +515,7 @@ func _on_disconnect_pressed() -> void:
 	ready_checkbox.set_pressed_no_signal(false)
 	if auto_play_button:
 		auto_play_button.button_pressed = false
-		auto_play_button.text = "🤖 AUTO PLAY"
+		auto_play_button.text = Localization.get_text("mp_auto_play")
 		auto_play_button.modulate = Color.WHITE
 	if mp_duration_row:
 		mp_duration_row.visible = false
@@ -560,7 +584,7 @@ func _build_leaderboard_panel() -> void:
 
 	var hdr_lbl = Label.new()
 	hdr_lbl.name = "LeaderboardTitle"
-	hdr_lbl.text = "📊  Session Leaderboard"
+	hdr_lbl.text = Localization.get_text("mp_session_leaderboard")
 	hdr_lbl.add_theme_font_size_override("font_size", 28)
 	hdr_lbl.add_theme_color_override("font_color", Color(0.4, 0.9, 1.0))
 	hdr_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -582,7 +606,15 @@ func _build_leaderboard_panel() -> void:
 	col_hdr.add_theme_constant_override("separation", 0)
 	vbox.add_child(col_hdr)
 
-	for col in [["Round", 80], ["Player 1", 130], ["Player 2", 130], ["Team", 110], ["Result", 80]]:
+	# Header captions come from the shared table like the rest of this panel (the screen's
+	# own translations dict covers the connect/ready chrome above, not the leaderboard).
+	for col in [
+		[Localization.get_text("round"), 80],
+		[Localization.get_text("mp_lb_col_p1"), 130],
+		[Localization.get_text("mp_lb_col_p2"), 130],
+		[Localization.get_text("mp_lb_col_team"), 110],
+		[Localization.get_text("mp_lb_col_result"), 80]
+	]:
 		var lbl = Label.new()
 		lbl.text = col[0]
 		lbl.custom_minimum_size = Vector2(col[1], 0)
@@ -619,7 +651,7 @@ func _build_leaderboard_panel() -> void:
 
 	var export_note = Label.new()
 	export_note.name = "ExportNote"
-	export_note.text = "Recorded in session log — exported on app quit"
+	export_note.text = Localization.get_text("mp_session_log_note")
 	export_note.add_theme_font_size_override("font_size", 13)
 	export_note.add_theme_color_override("font_color", Color(0.6, 0.6, 0.6))
 	export_note.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -649,7 +681,7 @@ func _refresh_leaderboard_panel() -> void:
 
 	if leaderboard.is_empty() or (leaderboard.size() == 1 and leaderboard[0].get("round_num", 0) == -1):
 		var empty_lbl = Label.new()
-		empty_lbl.text = "No rounds played yet this session."
+		empty_lbl.text = Localization.get_text("mp_no_rounds_yet")
 		empty_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		empty_lbl.add_theme_color_override("font_color", Color(0.6, 0.6, 0.6))
 		rows_vbox.add_child(empty_lbl)
@@ -673,11 +705,12 @@ func _refresh_leaderboard_panel() -> void:
 		var success: bool = row.get("team_success", false)
 		var row_color := Color(0.9, 1.0, 0.9) if success else Color(1.0, 0.8, 0.8)
 
+		var pts := Localization.get_text("score_points")
 		for col in [
-			["Round %d" % row.get("round_num", 0), 80],
-			["%d pts" % row.get("p1_score", 0), 130],
-			["%d pts" % row.get("p2_score", 0), 130],
-			["%d pts" % row.get("team_score", 0), 110],
+			[Localization.get_text("mp_lb_round_num") % row.get("round_num", 0), 80],
+			[pts % row.get("p1_score", 0), 130],
+			[pts % row.get("p2_score", 0), 130],
+			[pts % row.get("team_score", 0), 110],
 			["✅" if success else "❌", 80]
 		]:
 			var lbl = Label.new()
@@ -690,11 +723,12 @@ func _refresh_leaderboard_panel() -> void:
 
 	# Totals row
 	if totals_hbox and not totals_data.is_empty():
+		var pts_fmt := Localization.get_text("score_points")
 		for col in [
-			["TOTAL", 80],
-			["%d pts" % totals_data.get("p1_score", 0), 130],
-			["%d pts" % totals_data.get("p2_score", 0), 130],
-			["%d pts" % totals_data.get("team_score", 0), 110],
+			[Localization.get_text("mp_lb_total"), 80],
+			[pts_fmt % totals_data.get("p1_score", 0), 130],
+			[pts_fmt % totals_data.get("p2_score", 0), 130],
+			[pts_fmt % totals_data.get("team_score", 0), 110],
 			["", 80]
 		]:
 			var lbl = Label.new()
@@ -798,9 +832,10 @@ func _load_level_set_games(level_set: Dictionary) -> void:
 		_show_error("P2 game scene not found!")
 		return
 	
-	# Use NetworkManager to load DIFFERENT scenes for each player
+	# The set travels with the two scene paths: it is what names the pair of roles the HUD
+	# shows, and passing only the paths is what left round 1 on the placeholder pair.
 	if NetworkManager:
-		NetworkManager.start_multiplayer_game_pair(p1_scene, p2_scene)
+		NetworkManager.start_multiplayer_game_pair(p1_scene, p2_scene, level_set)
 	else:
 		push_error("❌ NetworkManager not available!")
 		_show_error("Network error!")
@@ -911,3 +946,12 @@ func _update_translations() -> void:
 	ready_checkbox.text = _t("ready_checkbox")
 	start_game_button.text = _t("start_game")
 	disconnect_button.text = _t("disconnect")
+	# The subtitle carries either the tagline or the reason the last round ended. It sits above
+	# all three panels, so it is the one label that is visible on the mode-selection view a
+	# dropped-out player actually lands on — the waiting panel's StatusLabel is hidden there.
+	if _pending_notice_key.is_empty():
+		subtitle_label.text = _t("subtitle")
+		subtitle_label.add_theme_color_override("font_color", Color(0.9, 0.95, 1.0, 1.0))
+	else:
+		subtitle_label.text = _t(_pending_notice_key)
+		subtitle_label.add_theme_color_override("font_color", Color(1.0, 0.42, 0.42, 1.0))

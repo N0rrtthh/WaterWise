@@ -3,19 +3,21 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://bkwq37gravs6f"
-path="res://.godot/imported/waves_3.png-d5f8060bc35c0f865d92607f29d7b296.ctex"
+path.s3tc="res://.godot/imported/waves_3.png-d5f8060bc35c0f865d92607f29d7b296.s3tc.ctex"
+path.etc2="res://.godot/imported/waves_3.png-d5f8060bc35c0f865d92607f29d7b296.etc2.ctex"
 metadata={
-"vram_texture": false
+"imported_formats": ["s3tc_bptc", "etc2_astc"],
+"vram_texture": true
 }
 
 [deps]
 
 source_file="res://assets/bg_layers/waves_3.png"
-dest_files=["res://.godot/imported/waves_3.png-d5f8060bc35c0f865d92607f29d7b296.ctex"]
+dest_files=["res://.godot/imported/waves_3.png-d5f8060bc35c0f865d92607f29d7b296.s3tc.ctex", "res://.godot/imported/waves_3.png-d5f8060bc35c0f865d92607f29d7b296.etc2.ctex"]
 
 [params]
 
-compress/mode=0
+compress/mode=2
 compress/high_quality=false
 compress/lossy_quality=0.7
 compress/uastc_level=0

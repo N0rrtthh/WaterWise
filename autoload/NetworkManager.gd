@@ -17,6 +17,17 @@ signal player_disconnected(peer_id: int)
 signal connection_succeeded()
 signal connection_failed()
 signal server_disconnected()
+## The reconnection window closed with the peer still absent. Distinct from
+## server_disconnected, which fires the instant the link drops: this one means the
+## grace period is over and the round cannot be resumed. See _cancel_grace_period().
+signal reconnect_failed()
+## A live round has been frozen because a peer dropped, and is being held open for
+## `seconds` while that peer is given a chance to come back. The round scene shows the
+## overlay and pauses the tree; the clock and the retries live here.
+signal reconnect_hold_started(seconds: float)
+## The hold closed. `rejoined` true means the peer is back and the round resumes;
+## false means the round is over and the scene routes out as it always did.
+signal reconnect_hold_ended(rejoined: bool)
 signal both_players_ready()
 signal player_ready_changed(peer_id: int, ready: bool)
 signal game_started(scenario_id: String, roles: Dictionary)
@@ -34,6 +45,16 @@ signal round_completed(p1_score: int, p2_score: int, team_total: int)
 const DEFAULT_PORT: int = 7777  # UDP Port 7777 (Paper: P2P UDP Port 7777)
 const MAX_PLAYERS: int = 2
 const RECONNECT_GRACE_PERIOD: float = 30.0  # 30 seconds
+## How long a LIVE ROUND is held open for a peer that just dropped, before the round is
+## resolved the way it always was (notice + lobby). Deliberately far shorter than the
+## grace window above, which serves a peer rejoining from the lobby: a player staring at
+## a frozen round needs an answer quickly, and tools/VerifyHostDeparture.tscn asserts the
+## client is out of a dead round within 12 s, so the hold plus one scene load must fit
+## inside that.
+const RECONNECT_HOLD_SECONDS: float = 6.0
+## Spacing of the client's rejoin attempts inside the hold: four tries, at 0.0 s (issued
+## immediately), 1.5 s, 3.0 s and 4.5 s.
+const RECONNECT_RETRY_INTERVAL: float = 1.5
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # STATE VARIABLES
@@ -53,10 +74,37 @@ var connection_active: bool = false
 var disconnection_timer: Timer = null
 var grace_period_active: bool = false
 
+# In-round reconnect hold. Distinct from the grace window above: this one freezes a
+# round that is still on screen, the other one keeps a finished-with session claimable
+# from the lobby.
+var reconnect_hold_active: bool = false
+var _reconnect_hold_timer: Timer = null
+var _reconnect_retry_timer: Timer = null
+var _reconnect_hold_as_host: bool = false
+## The address this peer last joined, so a dropped client can dial the same host again.
+## join_server() used to take these as arguments and forget them, which is why in-round
+## reconnect could not be implemented without them.
+var _last_join_ip: String = ""
+var _last_join_port: int = DEFAULT_PORT
+
 # Game session
 var current_scenario_id: String = ""
 var game_in_progress: bool = false
 var _ready_signal_emitted: bool = false
+
+## True from the moment start_countdown() puts a 3-2-1 chain on the wire until the
+## next _reset_round_status(). Two independent callers ask for the round's countdown
+## — _check_all_players_ready() on the normal "both ready" route, and
+## MultiplayerMiniGameBase's 6 s "partner ready timeout" fallback — and only the
+## first was guarded (`if _ready_signal_emitted: return`). The fallback's own guard
+## is `if not game_active`, which cannot help, because game_active turns true a full
+## second AFTER the GO tick (_on_countdown_tick(0) awaits 1.0 s before calling
+## _on_countdown_complete()); a countdown that began 2–6 s after the host dismissed
+## instructions has not reached start_game() when the fallback checks. Measured: the
+## partner becoming ready inside that window produced two overlapping chains, 8
+## round_starting emissions, two GO ticks, two start_game() calls and two live
+## ui_timer children on the round node. tools/VerifyCountdownOnce.tscn locks this in.
+var _countdown_started_this_round: bool = false
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # G-COUNTER CRDT (Conflict-Free Replicated Data Type)
@@ -92,10 +140,39 @@ func _ready() -> void:
 	disconnection_timer.one_shot = true
 	disconnection_timer.timeout.connect(_on_grace_period_timeout)
 	add_child(disconnection_timer)
+
+	# Both hold timers run while the tree is PAUSED, because the round scene pauses the
+	# tree for the duration of the hold. A timer left on the inherited process mode
+	# would freeze with it and the hold would never end.
+	_reconnect_hold_timer = Timer.new()
+	_reconnect_hold_timer.wait_time = RECONNECT_HOLD_SECONDS
+	_reconnect_hold_timer.one_shot = true
+	_reconnect_hold_timer.process_mode = Node.PROCESS_MODE_ALWAYS
+	_reconnect_hold_timer.timeout.connect(_on_reconnect_hold_timeout)
+	add_child(_reconnect_hold_timer)
+
+	_reconnect_retry_timer = Timer.new()
+	_reconnect_retry_timer.wait_time = RECONNECT_RETRY_INTERVAL
+	_reconnect_retry_timer.one_shot = false
+	_reconnect_retry_timer.process_mode = Node.PROCESS_MODE_ALWAYS
+	_reconnect_retry_timer.timeout.connect(_attempt_rejoin)
+	add_child(_reconnect_retry_timer)
 	
 	_log("NetworkManager initialized")
 
-func adopt_existing_peer(as_host: bool) -> bool:
+## Adopt a peer somebody else created, and remember where it dialled.
+##
+## `ip`/`port` are not decoration. GameManager.join_game() is the ONLY join path the
+## shipped UI uses (scenes/ui/MultiplayerLobby.gd:394 and scenes/ui/DebugMultiplayer.gd:92
+## both call it), and it builds its own ENetMultiplayerPeer and hands it here -
+## join_server(), the function that used to be the only place _last_join_ip was written,
+## is never reached in production. So without these two arguments _attempt_rejoin() read
+## an empty _last_join_ip and returned on its first line, and the client half of the
+## in-round reconnect was unreachable code in the real game while still passing any test
+## that drove NetworkManager directly. Measured with tools/VerifyInRoundReconnect.tscn:
+## the client logged no rejoin attempt at all and the host's hold expired as
+## `ends=[false]`.
+func adopt_existing_peer(as_host: bool, ip: String = "", port: int = 0) -> bool:
 	# Adopt an already-created multiplayer peer (e.g. from GameManager).
 	var existing_peer = multiplayer.multiplayer_peer
 	if existing_peer == null:
@@ -108,6 +185,9 @@ func adopt_existing_peer(as_host: bool) -> bool:
 	network = existing_peer
 	is_host = as_host
 	local_player_id = 1 if as_host else 2
+	if not as_host and ip != "":
+		_last_join_ip = ip
+		_last_join_port = port if port > 0 else DEFAULT_PORT
 
 	# Server is active immediately; client will flip on connect signal.
 	if not as_host and network.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED:
@@ -117,6 +197,7 @@ func adopt_existing_peer(as_host: bool) -> bool:
 
 	remote_player_id = 0
 	_ready_signal_emitted = false
+	_countdown_started_this_round = false
 
 	# Ensure multiplayer signals are connected.
 	if not multiplayer.peer_connected.is_connected(_on_player_connected):
@@ -240,9 +321,79 @@ func set_local_player_ready() -> void:
 		rpc("_sync_player_ready", my_id, true)
 		_check_all_players_ready()
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# RPC SENDER IDENTITY
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+## Reject an RPC whose identity argument does not belong to the caller.
+##
+## Six handlers in this file are declared @rpc("any_peer") and receive the peer they
+## describe as a PARAMETER instead of deriving it from the transport. That is the
+## ordinary Godot idiom right up to the point where the parameter is used as a
+## dictionary KEY into shared state — which is exactly what these do, for lobby ready
+## flags, G-Counter slots and per-round completion reports. Nothing checked that the
+## sender and the claimed peer were the same peer, so peer 2 could write peer 1's
+## record: mark the host ready and force start_countdown(), or file a completion
+## report in the host's name that then feeds _apply_rolling_window_adjustment() and
+## CoopAdaptation. On the G-Counter the damage is permanent, because merge takes MAX
+## and an inflated slot can never be brought back down.
+##
+## Every one of the six is only ever CALLED with the sender's own id (see the rpc()
+## call sites), so validating here changes no honest behaviour.
+##
+## Accepted callers:
+##   sender == 0         local invocation — there is no remote identity to disagree.
+##   sender == claimed   a peer describing itself; the normal and only real case.
+##   sender == 1 and allow_host_relay
+##                       the host forwarding a claim it already accepted.
+##                       _sync_ready_status() re-broadcasts with the ORIGINAL peer id
+##                       (see the rpc() inside it), so that one relay is legitimate
+##                       and has to stay allowed. Opt-in rather than blanket: letting
+##                       the host write any G-Counter slot would break the CRDT's
+##                       one-writer-per-slot invariant for no benefit, since nothing
+##                       relays counters.
+func _sender_owns(claimed_peer_id: int, what: String, allow_host_relay: bool = false) -> bool:
+	var sender := multiplayer.get_remote_sender_id()
+	if sender == 0 or sender == claimed_peer_id:
+		return true
+	if allow_host_relay and sender == 1:
+		return true
+	# _log rather than push_warning: a rejected packet is a spoof or a stale relay,
+	# not an engine error, and NetworkFaultSimulator deliberately injects duplicate
+	# and invalid messages — routing those to the warning channel would bury real
+	# warnings under simulated traffic.
+	_log("🛑 %s rejected: peer %d claimed to be peer %d" % [what, sender, claimed_peer_id])
+	return false
+
+
+## Same check for the two RPCs that identify the player by player NUMBER (1/2)
+## rather than by peer id — mark_task() and send_resource() both send
+## _get_player_num(...), so the claim has to be mapped back through the player table
+## before it can be compared to the sender.
+##
+## An unknown mapping is ACCEPTED, not rejected: _get_player_num() returns 0 for a
+## peer this side has no entry for, which means the player table has not synced yet
+## rather than that the sender lied. Both of these RPCs only emit a presentation
+## signal, so dropping a legitimate task mark over a table race would cost more than
+## the spoof it prevents. A sender with a KNOWN and different number is still
+## rejected, which is the actual attack.
+func _sender_is_player_num(claimed_num: int, what: String) -> bool:
+	var sender := multiplayer.get_remote_sender_id()
+	if sender == 0:
+		return true
+	var actual := _get_player_num(sender)
+	if actual == 0 or actual == claimed_num:
+		return true
+	_log("🛑 %s rejected: peer %d is player %d, not player %d"
+		% [what, sender, actual, claimed_num])
+	return false
+
+
 @rpc("any_peer", "reliable")
 func _sync_player_ready(peer_id: int, is_ready: bool) -> void:
 	# Sync player ready status
+	if not _sender_owns(peer_id, "_sync_player_ready"):
+		return
 	if players.has(peer_id):
 		players[peer_id]["ready"] = is_ready
 		player_ready_changed.emit(peer_id, is_ready)
@@ -309,6 +460,9 @@ func join_server(ip: String, port: int = DEFAULT_PORT) -> bool:
 	is_host = false
 	connection_active = true
 	local_player_id = 2
+	# Remembered so _attempt_rejoin() can dial the same host again after a drop.
+	_last_join_ip = ip
+	_last_join_port = port
 	
 	# Disconnect existing signals to prevent duplicates
 	if multiplayer.connected_to_server.is_connected(_on_connected_to_server):
@@ -332,6 +486,16 @@ func _on_connected_to_server() -> void:
 	_log("🎮 You are Player 2 (User)")
 	connection_active = true
 	
+	# The peer came back. Close the window it opened, otherwise the timer that was
+	# waiting for this reconnect fires 30 s later and clears game_in_progress on the
+	# round now in progress.
+	_cancel_grace_period("client reconnected")
+	# ...and release the round if one was being held open for exactly this. The host
+	# re-broadcasts _sync_game_state() from GameManager._on_peer_connected(), so the
+	# score, lives and difficulty this side resumes with are the host's, merged with
+	# element-wise max, not the stale locals from before the drop.
+	_end_reconnect_hold(true)
+	
 	# Register self with server
 	rpc_id(1, "_register_player", multiplayer.get_unique_id(), "Player 2 (Client)")
 	connection_succeeded.emit()
@@ -340,12 +504,31 @@ func _on_connection_failed() -> void:
 	# Called when client fails to connect
 	_log("❌ Connection failed!")
 	connection_active = false
+	if reconnect_hold_active:
+		# One rejoin attempt inside the hold failing is expected, not a session error:
+		# the retry timer tries again until the hold expires, and emitting here would
+		# surface a "connection failed" dialog over a round that is still recoverable.
+		return
 	connection_failed.emit()
 
 func _on_server_disconnected() -> void:
 	# Called when server disconnects (client side)
 	_log("⚠️ Server disconnected!")
+	# Queue the reason BEFORE the teardown: the lobby this peer is about to be dropped into
+	# reads it in its _ready(). A key, not a sentence — see GameManager.set_multiplayer_notice().
+	#
+	# Gated on game_in_progress so the DELIBERATE group return stays silent. Nobody needs to be
+	# told the host left when they watched the host press the button: _execute_return_to_lobby()
+	# clears the flag and changes scene first, and its deliberately deferred teardown can still
+	# fault this handler a frame later, which would leave an unread notice to surface out of
+	# context the next time the player opened multiplayer. On the involuntary path
+	# _on_player_disconnected() has normally queued the same key ~30 ms earlier and first writer
+	# wins; this is the fallback for a peer that only ever sees server_disconnected.
+	# The notice is queued by _resolve_lost_peer() now, not here: it is only true once the
+	# hold has expired with nobody back, and a notice queued on a drop that then RECOVERS
+	# is exactly the unread-notice-out-of-context problem described above.
 	_start_grace_period()
+	_begin_reconnect_hold(false)
 	server_disconnected.emit()
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -359,6 +542,11 @@ func _on_player_connected(peer_id: int) -> void:
 		network.disconnect_peer(peer_id)
 		return
 	
+	# Host side of the same thing: the partner is back, so the window that was
+	# counting down for their absence has to close, and a held round resumes.
+	_cancel_grace_period("peer rejoined")
+	_end_reconnect_hold(true)
+
 	remote_player_id = peer_id
 	_log("✅ Player connected (Peer ID: " + str(peer_id) + ")")
 
@@ -367,7 +555,9 @@ func _register_player(peer_id: int, player_name: String) -> void:
 	# Register a new player (called by client, executed on server)
 	if not is_host:
 		return
-	
+	if not _sender_owns(peer_id, "_register_player"):
+		return
+
 	players[peer_id] = {
 		"player_num": 2,
 		"ready": false,
@@ -391,20 +581,176 @@ func _on_player_disconnected(peer_id: int) -> void:
 	if players.has(peer_id):
 		var _player_num = players[peer_id]["player_num"]
 		players.erase(peer_id)
-		player_disconnected.emit(peer_id)
 		
-		# If game is in progress and we're the client, force return to lobby
-		if game_in_progress:
-			if not is_host:
-				_log("🔌 Host disconnected during game, returning to lobby...")
-				game_in_progress = false
-				# Use call_deferred to avoid issues with scene tree
-				var lobby = "res://scenes/ui/MultiplayerLobby.tscn"
-				get_tree().call_deferred(
-					"change_scene_to_file", lobby)
-			else:
-				# Host continues, but mark game as ended
-				game_in_progress = false
+		# DECIDE FIRST, ANNOUNCE SECOND.
+		#
+		# A live round is held open for a bounded window instead of being emptied on the
+		# spot; _resolve_lost_peer() below is what used to run here, and still runs, when
+		# the hold expires with the peer still gone.
+		#
+		# This call has to precede the emit, and the first run of
+		# tools/VerifyInRoundReconnect.tscn is why. With the emit first, the host's log read:
+		#   ⚠️ Player disconnected (Peer ID: …)
+		#   [Catch Rain for Aquarium P1]  Player left session - terminating for all players
+		#   ⏳ Holding the round open for 6s for the peer to return
+		# MultiplayerMiniGameBase._on_player_left_session() is connected to this signal, and
+		# it asks is_reconnect_hold_active() before tearing the round down — which was still
+		# false, because the hold had not been opened yet. It set game_active = false, showed
+		# "session terminated" and routed to the lobby 2 s later, so the hold was protecting
+		# a round that had already been ended by one of its own listeners.
+		#
+		# With no round in progress this is unchanged: _begin_reconnect_hold() falls straight
+		# through to _resolve_lost_peer(), which returns without doing anything when
+		# game_in_progress is false, and the scene change on the live path is deferred, so
+		# every listener still runs in this frame either way.
+		_begin_reconnect_hold(is_host)
+		player_disconnected.emit(peer_id)
+
+## True while a live round is frozen waiting for a dropped peer.
+##
+## Every other handler that used to empty the round on a disconnect checks this and
+## stands down: GameManager._on_peer_disconnected(), MultiplayerMiniGameBase's
+## _on_server_disconnected() and _on_player_left_session(). All of them fire in the same
+## frame as _on_player_disconnected() and in an unspecified order, so the decision has to
+## live in one place rather than in whichever handler happens to run first.
+func is_reconnect_hold_active() -> bool:
+	return reconnect_hold_active
+
+
+## Freeze a live round for RECONNECT_HOLD_SECONDS and try to get the peer back.
+##
+## Before this existed, every disconnect path emptied the round immediately, so a client
+## whose wifi blipped for two seconds lost the round outright — the case
+## _on_grace_period_timeout() documents as "in-round reconnect is a gap". The host holds
+## its authoritative round open and waits; the client also retries the join, because it is
+## the side that has to dial back in. On expiry the round is resolved exactly as it was
+## before, so the failure path is unchanged and only the success path is new.
+func _begin_reconnect_hold(as_host: bool) -> void:
+	if reconnect_hold_active:
+		# Second handler for the same drop. The first one owns it.
+		return
+	if not game_in_progress:
+		# No live round to hold open — resolve immediately, as before.
+		_resolve_lost_peer(as_host)
+		return
+	reconnect_hold_active = true
+	_reconnect_hold_as_host = as_host
+	_reconnect_hold_timer.start()
+	if not as_host:
+		_reconnect_retry_timer.start()
+		# DEFERRED, not called here. This runs inside the emission of
+		# multiplayer.peer_disconnected, i.e. inside the ENet peer's own poll, and
+		# _attempt_rejoin() closes that peer and replaces multiplayer_peer. Swapping the
+		# object whose poll is currently on the stack is how you get a crash instead of a
+		# reconnect; one frame later it is an ordinary call.
+		call_deferred("_attempt_rejoin")
+	_log("⏳ Holding the round open for %.0fs for the peer to return" % RECONNECT_HOLD_SECONDS)
+	reconnect_hold_started.emit(RECONNECT_HOLD_SECONDS)
+
+
+func _end_reconnect_hold(rejoined: bool) -> void:
+	if not reconnect_hold_active:
+		return
+	reconnect_hold_active = false
+	_reconnect_hold_timer.stop()
+	_reconnect_retry_timer.stop()
+	var as_host: bool = _reconnect_hold_as_host
+	_log("⏳ Reconnect hold ended (%s)" % ("peer returned" if rejoined else "expired"))
+	# Emitted BEFORE the round is resolved so the scene can drop its overlay and unpause
+	# first: _resolve_lost_peer() changes scene, and a scene freed while still paused
+	# leaves the tree paused behind the lobby.
+	reconnect_hold_ended.emit(rejoined)
+	if not rejoined:
+		_resolve_lost_peer(as_host)
+
+
+func _on_reconnect_hold_timeout() -> void:
+	_end_reconnect_hold(false)
+
+
+## One rejoin attempt. Client side only — the host has nothing to dial.
+func _attempt_rejoin() -> void:
+	if is_host or _last_join_ip == "":
+		return
+	# The dead peer has to go first: create_client() on a live multiplayer_peer would
+	# leave two peers behind, and join_server()'s own connection_active guard would
+	# refuse the call outright.
+	if network:
+		network.close()
+		network = null
+	multiplayer.multiplayer_peer = null
+	connection_active = false
+	_log("🔄 Rejoin attempt → %s:%d" % [_last_join_ip, _last_join_port])
+	join_server(_last_join_ip, _last_join_port)
+
+
+## End a round whose peer did not come back, and route this side out of it.
+##
+## This is verbatim what _on_player_disconnected() used to do inline, now reached only
+## after _begin_reconnect_hold() has waited RECONNECT_HOLD_SECONDS, or immediately when
+## there was no live round to hold. `had_round` reproduces the old `if game_in_progress:`
+## gate: with no round in progress this is a deliberate teardown, which must not queue a
+## notice and must not change scene.
+func _resolve_lost_peer(as_host: bool) -> void:
+	var had_round: bool = game_in_progress
+	if not had_round:
+		return
+	var is_host_role: bool = as_host
+	if not is_host_role:
+		_log("🔌 Host disconnected during game, returning to lobby...")
+		GameManager.set_multiplayer_notice("notice_host_left")
+		# Route out through GameManager rather than changing scenes here.
+		#
+		# Raw change_scene_to_file() bypasses transition_to_scene()'s _is_transitioning
+		# guard, and this is no longer the only handler that fires: peer_disconnected
+		# reaches GameManager._on_peer_disconnected() (which already defers
+		# return_to_multiplayer_lobby()) and MultiplayerMiniGameBase's own handler in the
+		# same frame, ~30 ms before server_disconnected. Measured with
+		# tools/VerifyHostDeparture.tscn. Two unguarded loads would also leave
+		# NetworkManager's half of the session (players, connection_active, the peer)
+		# populated behind a lobby that reads it as live; return_to_multiplayer_lobby()
+		# unpauses, tears both halves down and transitions once.
+		game_in_progress = false
+		GameManager.call_deferred("return_to_multiplayer_lobby")
+	else:
+		# Host: the only other player is gone, so there is no round left to
+		# finish. Nothing else resolved this — the results overlay in
+		# MultiplayerMiniGameBase advances ONLY on both_players_completed,
+		# which needs a second entry in round_completion_status that can now
+		# never arrive, so the host sat on "waiting for partner" forever with
+		# game_in_progress already false. _start_grace_period() is not wired
+		# to this path either; it is only called from _on_server_disconnected,
+		# which is the client side.
+		#
+		# Leaving for the lobby is the same resolution the client above gets
+		# when the host vanishes, and the host is still the server so the
+		# lobby stays valid for a reconnect. The alternative — force-completing
+		# the round by marking the departed peer failed — was rejected: it
+		# would feed a fabricated accuracy and reaction time for a player who
+		# never played into _apply_rolling_window_adjustment() and
+		# CoopAdaptation, corrupting the adaptive-difficulty window with
+		# synthetic data.
+		game_in_progress = false
+		round_completion_status.clear()
+		round_in_progress = false
+		_log("🔌 Partner left during game, returning to lobby...")
+		GameManager.set_multiplayer_notice("notice_partner_left")
+		var host_lobby = "res://scenes/ui/MultiplayerLobby.tscn"
+		# Unfreeze before leaving. This branch changes scene RAW - deliberately, because
+		# unlike the client above the host is still the server and must keep listening so
+		# the lobby stays claimable, which return_to_multiplayer_lobby() would tear down.
+		# The cost of going raw is that nothing else clears get_tree().paused, and since
+		# _begin_reconnect_hold() the round IS paused when this runs:
+		# MultiplayerMiniGameBase._on_reconnect_hold_ended(false) deliberately leaves the
+		# freeze in place because the round is about to be thrown away. `paused` lives on
+		# the SceneTree, not on the scene, so it survives change_scene_to_file() -
+		# measured with tools/VerifyInRoundReconnect.tscn, which found the host sitting in
+		# a fully frozen lobby (paused=true, lobbies=1) with every button, tween and timer
+		# in it dead.
+		get_tree().paused = false
+		get_tree().call_deferred(
+			"change_scene_to_file", host_lobby)
+
 
 func _start_grace_period() -> void:
 	# Start reconnection grace period
@@ -415,18 +761,81 @@ func _start_grace_period() -> void:
 	disconnection_timer.start()
 	_log("⏱️ Reconnection grace period started (" + str(RECONNECT_GRACE_PERIOD) + " seconds)")
 
-func _on_grace_period_timeout() -> void:
-	# Called when grace period expires
+
+## Close the reconnection window without treating it as an expiry.
+##
+## The window used to have no cancel path at all: "disconnection_timer.stop()" did
+## not appear anywhere in this file, and grace_period_active was cleared only inside
+## _on_grace_period_timeout(). A one_shot 30 s timer that nothing can stop outlives
+## the session that opened it, and the timeout clears game_in_progress, so it landed
+## on whatever session happened to be running 30 s later. Three ways that bit:
+##   - teardown: the client leaves for the lobby immediately on server_disconnected,
+##     so pressing HOST again inside 30 s marked the NEW round not-in-progress;
+##   - reconnect: a peer back at t=5s was still torn down at t=30s by the very timer
+##     that had been waiting for it - the one case the window exists to serve;
+##   - a second disconnect inside the window hit the "already active" guard in
+##     _start_grace_period() and inherited the remainder of a dead session window.
+##
+## Covered by tools/VerifyGracePeriodLifecycle.tscn (cases 2 to 6).
+func _cancel_grace_period(reason: String) -> void:
+	if not grace_period_active and disconnection_timer.is_stopped():
+		return
+	disconnection_timer.stop()
 	grace_period_active = false
-	_log("⏰ Grace period expired - game failed")
+	_log("⏱️ Reconnection grace period cancelled (" + reason + ")")
+
+func _on_grace_period_timeout() -> void:
+	# The reconnection window closed with the peer still gone.
+	grace_period_active = false
+	_log("⏰ Grace period expired - peer did not return")
 	
-	if game_in_progress:
-		# Auto-fail the game
-		game_in_progress = false
-		# Trigger game failure (implement in game scene)
+	if not game_in_progress:
+		# Nothing left to resolve: the round already ended, or the session was torn
+		# down and the window cancelled. Arriving here with no round is not an error.
+		return
+	
+	# The round can no longer be finished, so it is ENDED rather than scored. The
+	# results overlay in MultiplayerMiniGameBase advances only on
+	# both_players_completed, and the second entry in round_completion_status can
+	# never arrive from a peer that is gone.
+	#
+	# Deliberately NOT force-completing the round on behalf of the absent player:
+	# that would feed a fabricated accuracy and reaction time for someone who never
+	# played into _apply_rolling_window_adjustment() and CoopAdaptation, corrupting
+	# the adaptive-difficulty window with synthetic data. This is the same trade-off
+	# the partner-left branch of _on_player_disconnected() already rejected.
+	game_in_progress = false
+	# The window closed with nobody back, so the next multiplayer screen says so.
+	GameManager.set_multiplayer_notice("notice_partner_no_return")
+	round_completion_status.clear()
+	round_in_progress = false
+	# Routing is left to the scene rather than done here, matching how
+	# server_disconnected is consumed (MultiplayerMiniGameBase connects it and calls
+	# GameManager.return_to_multiplayer_lobby). An autoload that changes scenes on
+	# its own would also free whatever is mid-transition.
+	#
+	# REACHABILITY, STATED PLAINLY: still not reached on the paths that ship, and now
+	# for a different reason. In-round reconnect IS implemented — see
+	# _begin_reconnect_hold() — but it holds the round for RECONNECT_HOLD_SECONDS (6 s),
+	# not for this 30 s window, and on expiry it resolves the round itself and routes
+	# out, whose teardown cancels this window. This handler remains the correct
+	# resolution for any future scene that holds a session open for the full window.
+	reconnect_failed.emit()
 
 func disconnect_multiplayer() -> void:
 	# Disconnect from multiplayer session
+	# Ahead of the connection_active guard on purpose: a session being torn down must
+	# never leave a live reconnection window behind it, and some callers reach here
+	# with connection_active already false. _cancel_grace_period() is a no-op when no
+	# window is open, so running it first costs nothing.
+	_cancel_grace_period("session torn down")
+	# Same reasoning for the in-round hold: its timers are PROCESS_MODE_ALWAYS, so one
+	# left running would outlive the session that opened it and resolve a later round.
+	if reconnect_hold_active:
+		reconnect_hold_active = false
+		_reconnect_hold_timer.stop()
+		_reconnect_retry_timer.stop()
+	
 	if not connection_active:
 		return
 	
@@ -458,6 +867,7 @@ func disconnect_multiplayer() -> void:
 	local_player_id = 0
 	remote_player_id = 0
 	_ready_signal_emitted = false
+	_countdown_started_this_round = false
 	
 	_log("🔌 Disconnected from multiplayer")
 
@@ -485,6 +895,9 @@ func set_ready(is_ready: bool) -> void:
 @rpc("any_peer", "reliable")
 func _sync_ready_status(peer_id: int, is_ready: bool) -> void:
 	# Sync ready status across network
+	# Host relay allowed: the rpc() below re-broadcasts with the original peer id.
+	if not _sender_owns(peer_id, "_sync_ready_status", true):
+		return
 	if players.has(peer_id):
 		players[peer_id]["ready"] = is_ready
 		
@@ -577,6 +990,20 @@ func _load_game_scene(scene_path: String) -> void:
 		_log("❌ Failed to load scene: " + scene_path)
 		return
 	
+	# Every peer that loads a round scene is in a round, INCLUDING the client.
+	#
+	# This flag used to be written only by the host, in start_multiplayer_game() and
+	# start_multiplayer_game_pair(), plus by _receive_game_start() on the start_game()
+	# scenario path. The pair path — the one MultiplayerLobby.gd:803 actually ships —
+	# sends only _reset_round_status and _load_game_scene, neither of which touched it,
+	# so a client played a whole round with game_in_progress == false. That made two
+	# guards below read the wrong answer on the client: the host-vanished fallback in
+	# _on_player_disconnected() and the round resolution in _on_grace_period_timeout().
+	# Setting it here fixes both start paths on both sides at once, because this RPC is
+	# the single call every peer runs to enter a round. Idempotent on the host, which
+	# has already set it a few lines up.
+	game_in_progress = true
+	
 	var result = get_tree().change_scene_to_packed(packed_scene)
 	if result != OK:
 		_log("❌ Failed to change scene, error code: " + str(result))
@@ -587,12 +1014,39 @@ func _reset_round_status() -> void:
 	round_completion_status.clear()
 	round_in_progress = false
 	_ready_signal_emitted = false
+	_countdown_started_this_round = false
 	for peer_id in players.keys():
 		players[peer_id]["ready"] = false
 		player_ready_changed.emit(peer_id, false)
 	_log("🔄 Round status reset")
 
-func start_multiplayer_game_pair(p1_scene: String, p2_scene: String) -> void:
+## Public entry point for the per-round reset, for callers outside NetworkManager.
+##
+## The reset itself keeps its underscore name because it IS an @rpc: the existing
+## rpc("_reset_round_status") broadcasts in start_multiplayer_game_pair() and
+## _load_next_round() address it by that name, so renaming it would break them.
+## GameManager's round advance is itself @rpc("call_local") and therefore already
+## running on every peer, so what it needs is the LOCAL call rather than a second
+## broadcast — this wrapper gives it one without reaching through the underscore.
+func reset_round_status() -> void:
+	_reset_round_status()
+
+## The one place a round's roles are decided. LevelSets.get_random_level_set() has already
+## swapped the pair for this round number, so the set is read as authored. Both round-start
+## paths call this — the lobby hand-off below and the round-transition RPC body — which is
+## what makes the two peers agree about who is holding the bucket.
+func assign_round_roles(level_set: Dictionary) -> void:
+	var p1: String = str(level_set.get("player1_role", "")).strip_edges()
+	var p2: String = str(level_set.get("player2_role", "")).strip_edges()
+	if p1 == "" or p2 == "":
+		return
+	player_roles = {1: p1, 2: p2}
+
+## The lobby holds the level set and knows both role names; before FIX 75 it passed only the
+## two scene paths, so round 1 ran on the {Collector, User} placeholder that connect() sets
+## and all ten authored flavour names were unreachable. The set is optional so the two legacy
+## callers below keep working unchanged.
+func start_multiplayer_game_pair(p1_scene: String, p2_scene: String, level_set: Dictionary = {}) -> void:
 	# Start multiplayer game with DIFFERENT scenes for each player (host only)
 	if not is_host:
 		_log("❌ Only host can start the game")
@@ -603,6 +1057,13 @@ func start_multiplayer_game_pair(p1_scene: String, p2_scene: String) -> void:
 		return
 	
 	game_in_progress = true
+	
+	# Hand out this round's roles, then tell the client the same pair. _receive_game_start is
+	# the function that already existed for exactly this and had no shipping caller: its own
+	# assignment of player_roles is what makes the client agree with the host from round 1.
+	if not level_set.is_empty():
+		assign_round_roles(level_set)
+		rpc("_receive_game_start", str(level_set.get("id", "")), player_roles)
 	
 	# Reset round completion state on ALL peers before loading new scenes
 	rpc("_reset_round_status")
@@ -663,6 +1124,14 @@ func increment_local(amount: int) -> void:
 func _merge_counter(peer_id: int, value: int) -> void:
 	# Merge counter value from remote peer (CRDT merge operation)
 	# Takes MAX of existing and new value to ensure monotonic growth
+	#
+	# Identity is enforced here and nowhere else: a G-Counter is only correct while
+	# each replica writes ONLY its own slot, and because merge is MAX an inflated slot
+	# is permanent — no later message can bring it down. increment_local() is the sole
+	# caller and always sends multiplayer.get_unique_id(), so the honest path is
+	# unaffected. Host relay is deliberately NOT allowed: nothing forwards counters.
+	if not _sender_owns(peer_id, "_merge_counter"):
+		return
 	var old_value = g_counter.get(peer_id, 0)
 	g_counter[peer_id] = max(old_value, value)
 	
@@ -775,6 +1244,15 @@ func _relay_game_event(event_type: String, data: Dictionary) -> void:
 	# or broadcasts to others.
 	# Since we are 2 players, if client sends to host, host receives it.
 	# We need to make sure the host's local game instance gets it.
+	# Host-only by contract: this is the path a CLIENT uses to reach the host
+	# (send_game_event does rpc_id(1, "_relay_game_event", ...)). It is annotated
+	# any_peer, so without this check the host could push an event straight into a
+	# client through the relay entry point instead of the broadcast one, bypassing
+	# the single route every other peer sees. Nothing legitimate sends it downward.
+	if not is_host:
+		if multiplayer.get_remote_sender_id() != 0:
+			_log("⚠️ _relay_game_event ignored: relay is a host-side entry point")
+			return
 	_receive_game_event(event_type, data)
 
 @rpc("any_peer", "reliable")
@@ -782,7 +1260,13 @@ func _receive_game_event(event_type: String, data: Dictionary) -> void:
 	# Receive game event
 	# Find the current active minigame and notify it
 	var current_scene = get_tree().current_scene
-	if current_scene.has_method("on_partner_event"):
+	# current_scene is null for the window between change_scene_to_file() freeing the old
+	# scene and the new one entering the tree — exactly when round-boundary events are
+	# still in flight. This is @rpc("any_peer"), so the partner can land a call inside
+	# that window. The five sibling handlers in this file (_receive_water_for_consumption,
+	# _execute_pause, _execute_resume, sync_pause_state, _show_game_over) all guard it;
+	# this one did not, and faulted with "Attempt to call has_method on a null instance".
+	if current_scene and current_scene.has_method("on_partner_event"):
 		current_scene.on_partner_event(event_type, data)
 
 func return_to_lobby() -> void:
@@ -806,7 +1290,33 @@ func _execute_return_to_lobby() -> void:
 	if get_tree().paused:
 		get_tree().paused = false
 	get_tree().change_scene_to_file("res://scenes/ui/MultiplayerLobby.tscn")
-	call_deferred("disconnect_multiplayer")
+
+	# The teardown stays DEFERRED, and the deferral is load-bearing: this method is
+	# call_local, so on the host it runs inside the same call stack as the rpc()
+	# that queued the message for the client. Closing the ENet peer there would
+	# discard the still-queued reliable packet — ENetMultiplayerPeer::close()
+	# disconnects each peer with enet_peer_disconnect_now(), whose first act is
+	# enet_peer_reset_queues() — and the client would never be told to leave the
+	# round; it would fall through to _on_server_disconnected() and sit in the
+	# finished minigame for the whole 30 s grace period.
+	# tools/VerifyReturnToLobby.tscn asserts from the CLIENT process that it really
+	# does land in the lobby, so this ordering is measured, not assumed.
+	#
+	# Routed through GameManager rather than calling disconnect_multiplayer() on
+	# this node: GameManager.disconnect_multiplayer() calls ours and additionally
+	# clears the mirror the lobby UI actually reads — is_multiplayer_connected,
+	# is_host, peer, g_counter, session_active, multiplayer_game_order and
+	# multiplayer_game_index. Clearing only our half left GameManager believing a
+	# session was still live, and because get_next_multiplayer_game() reshuffles
+	# only when multiplayer_game_order is empty or exhausted, the NEXT hosted
+	# session resumed the previous session's shuffle at its old index instead of
+	# starting a fresh one. MultiplayerLobby._on_disconnect_pressed() already pairs
+	# the two teardowns this way; this path was the one that did not.
+	var gm := get_node_or_null("/root/GameManager")
+	if gm and gm.has_method("disconnect_multiplayer"):
+		gm.call_deferred("disconnect_multiplayer")
+	else:
+		call_deferred("disconnect_multiplayer")
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # RPC FUNCTIONS - PERFORMANCE DATA
@@ -845,7 +1355,14 @@ func _broadcast_performance(player_num: int, performance: Dictionary) -> void:
 
 @rpc("any_peer", "reliable")
 func sync_game_state(state: Dictionary) -> void:
-	# Sync game state across network
+	# UNWIRED. game_state_synced has no listeners anywhere in the project (grep:
+	# only the signal declaration and these two emits), so nothing consumes `state`
+	# and there is no schema to validate it against. Left in place rather than
+	# invented into: the relay discipline below is already correct — only the host
+	# re-broadcasts, and only for a genuinely remote sender — and the payload stays
+	# untrusted data that goes no further than an unheard signal. If a consumer is
+	# ever added, it must validate the dictionary before reading it, exactly as
+	# _water_payload_valid does for the water pipeline.
 	_log("🔄 Game state synced")
 	game_state_synced.emit(state)
 	
@@ -866,13 +1383,34 @@ func _broadcast_game_state(state: Dictionary) -> void:
 
 @rpc("any_peer", "reliable")
 func notify_game_end(team_result: Dictionary) -> void:
-	# Notify all players that game has ended
+	# Ending the game is a HOST decision.
+	#
+	# This used to write `game_in_progress = false` on the FIRST line, before any
+	# authority check, and it is @rpc("any_peer") — so any peer could end the round
+	# for the whole team by calling it, and on the host that write also stopped the
+	# host from broadcasting a later, legitimate end. A client reaching this handler
+	# is making a REQUEST at most; it learns the outcome from _broadcast_game_end like
+	# every other peer, which is @rpc("authority") and so is enforced by Godot itself.
+	# A remote sender is refused outright rather than forwarded as a request: the live
+	# end-of-round decision belongs to the host's own completion bookkeeping, and
+	# forwarding would only relabel the same hole.
+	#
+	# The handler currently has no callers in the project (the live end-of-round path
+	# is _sync_player_completion → _load_next_round / _show_game_over), but it is
+	# network-reachable regardless of whether any local code calls it, which is
+	# exactly why the guard belongs here and not at the call sites.
+	var sender_id: int = multiplayer.get_remote_sender_id()
+	if sender_id != 0:
+		_log("⚠️ notify_game_end ignored: ending the game is a local host decision,"
+			+ " peer %d cannot request it" % sender_id)
+		return
+	if not is_host:
+		_log("⚠️ notify_game_end ignored: only the host may end the game")
+		return
+
 	game_in_progress = false
 	_log("🏁 Game ended - Team " + ("Success" if team_result.get("success", false) else "Failed"))
-	
-	# If host, broadcast to all clients
-	if is_host:
-		rpc("_broadcast_game_end", team_result)
+	rpc("_broadcast_game_end", team_result)
 
 @rpc("authority", "reliable")
 func _broadcast_game_end(team_result: Dictionary) -> void:
@@ -928,6 +1466,17 @@ const BASE_TRANSFER_TIME: float = 2.0  # Base time for water to travel
 
 # Water Queue (The Bounded Buffer)
 var water_queue: Array[Dictionary] = []
+## Monotonic per-producer unit id. Time.get_ticks_msec() cannot identify a unit:
+## the overflow probe produced five units inside the same millisecond, so two
+## distinct units shared a timestamp and _sync_water_consumed would remove the
+## wrong one. This counter is what (producer_id, seq) dedupe and removal key on.
+var water_seq: int = 0
+## Highest seq accepted from each remote producer. seq is monotonic per producer,
+## so anything at or below the watermark is a re-delivery and is dropped. One entry
+## per peer, so this cannot grow without bound, and it is deliberately NOT cleared
+## by reset_producer_consumer(): water_seq is never reset either, so a packet still
+## in flight when a round ends cannot collide with a new unit in the next round.
+var water_seq_seen: Dictionary = {}
 var transfer_timers: Array[Timer] = []
 
 # Rolling Window Integration
@@ -974,11 +1523,13 @@ func produce_water(water_type: String, quality: float = 1.0) -> bool:
 			rpc("_notify_buffer_overflow")
 		return false
 	
+	water_seq += 1
 	var water_data = {
 		"type": water_type,        # "clean", "dirty", "soapy"
 		"quality": quality,         # 0.0 - 1.0 (affects P2's task)
 		"timestamp": Time.get_ticks_msec(),
-		"producer_id": local_player_id
+		"producer_id": local_player_id,
+		"seq": water_seq,
 	}
 	
 	water_queue.append(water_data)
@@ -1066,20 +1617,56 @@ func consume_water(success: bool) -> Dictionary:
 	
 	return water_data
 
+## Shape check for a water unit arriving over the wire. Both sync handlers are
+## @rpc("any_peer"), so the partner — or NetworkFaultSimulator's deliberate invalid
+## message injection — can hand us anything. The old handlers read water_data.producer_id
+## as a property, which on a Dictionary without that key is a hard runtime error, not a
+## null: sending {} was enough to fault the other side. Validate, log, drop.
+func _water_payload_valid(water_data: Dictionary, where: String) -> bool:
+	for key in ["type", "quality", "producer_id", "seq"]:
+		if not water_data.has(key):
+			_log("⚠️ %s: dropped malformed water payload (missing '%s')" % [where, key])
+			return false
+	if typeof(water_data["producer_id"]) != TYPE_INT or typeof(water_data["seq"]) != TYPE_INT:
+		_log("⚠️ %s: dropped water payload with non-integer identity" % where)
+		return false
+	return true
+
 @rpc("any_peer", "reliable")
 func _sync_water_produced(water_data: Dictionary) -> void:
 	# RPC: Sync water production to other player
-	if local_player_id != water_data.producer_id:
-		water_queue.append(water_data)
-		water_produced.emit(water_data)
-		_log("📡 Received water production sync")
+	if not _water_payload_valid(water_data, "_sync_water_produced"):
+		return
+	if local_player_id == water_data["producer_id"]:
+		return  # our own unit echoing back; it is already in our queue
+	# The G-Counter tolerates re-delivery because merge takes MAX. This queue APPENDS, so
+	# it has no such property: a re-delivered production sync consumed a slot in the
+	# 5-slot bounded buffer that the producer never filled, and overflow is a fail state,
+	# so the duplicate could push the team into a loss they did not cause. Verified:
+	# re-sending one identical sync took the consumer's queue from 1 to 2.
+	var producer: int = water_data["producer_id"]
+	var seq: int = water_data["seq"]
+	if seq <= int(water_seq_seen.get(producer, 0)):
+		_log("📡 Duplicate water production sync ignored (producer %d seq %d)" % [producer, seq])
+		return
+	water_seq_seen[producer] = seq
+	water_queue.append(water_data)
+	water_produced.emit(water_data)
+	_log("📡 Received water production sync")
 
 @rpc("any_peer", "reliable")
 func _sync_water_consumed(water_data: Dictionary, success: bool) -> void:
 	# RPC: Sync water consumption to other player
-	# Remove from queue if we have it
+	if not _water_payload_valid(water_data, "_sync_water_consumed"):
+		return
+	# Remove from queue if we have it. Matched on (producer_id, seq), not timestamp:
+	# Time.get_ticks_msec() is not unique — five units were observed sharing one
+	# millisecond — so a timestamp match could remove a different unit than the one
+	# actually consumed, silently corrupting the buffer contents.
 	for i in range(water_queue.size()):
-		if water_queue[i].timestamp == water_data.timestamp:
+		var unit: Dictionary = water_queue[i]
+		if unit.get("producer_id", -1) == water_data["producer_id"] \
+				and unit.get("seq", -1) == water_data["seq"]:
 			water_queue.remove_at(i)
 			break
 	
@@ -1231,7 +1818,19 @@ func start_countdown() -> void:
 	# Start synchronized countdown (3-2-1-GO!) before round (host only)
 	if not is_host:
 		return
-	
+
+	# One chain per round. Both legitimate callers ask for the same countdown — the
+	# "both players ready" route and MultiplayerMiniGameBase's 6 s partner-ready
+	# timeout fallback — and the fallback cannot tell that the first already fired,
+	# because it tests game_active, which only turns true a second after the GO tick.
+	# Suppressing here rather than removing the fallback: the fallback still does its
+	# job when the client's ready RPC really is lost, since nothing set this flag.
+	# Cleared per round by _reset_round_status().
+	if _countdown_started_this_round:
+		_log("⏱️ Countdown already started for this round — duplicate request ignored")
+		return
+	_countdown_started_this_round = true
+
 	_log("⏱️ Starting countdown...")
 	rpc("_execute_countdown", 3)
 
@@ -1292,10 +1891,12 @@ func _show_round_results(p1_score: int, p2_score: int, team_total: int, rounds: 
 	mp_session_p2_score = session_p2_total
 	# Show round results on all clients
 	round_completed.emit(p1_score, p2_score, team_total)
-	_log("📊 Round %d results - Your score: %d | Partner: %d | Team: %d | Session P1: %d | Session P2: %d" % [
+	var my_total: int = g_counter.get(multiplayer.get_unique_id(), 0)
+	_log(("📊 Round %d results - Your score: %d | Partner: %d | Team: %d"
+			+ " | Session P1: %d | Session P2: %d") % [
 		rounds,
-		g_counter.get(multiplayer.get_unique_id(), 0),
-		team_total - g_counter.get(multiplayer.get_unique_id(), 0),
+		my_total,
+		team_total - my_total,
 		team_total,
 		session_p1_total,
 		session_p2_total
@@ -1322,6 +1923,8 @@ func _receive_resource(
 	amount: int, quality: float
 ) -> void:
 	# Receive resource from partner
+	if not _sender_is_player_num(from_player, "_receive_resource"):
+		return
 	resource_sent.emit(from_player, resource_type, amount, quality)
 	_log("📥 Received resource: %s (x%d) from P%d" % [resource_type, amount, from_player])
 
@@ -1334,6 +1937,8 @@ func mark_task(task_id: int, task_position: Vector2) -> void:
 @rpc("any_peer", "reliable")
 func _receive_task_mark(from_player: int, task_id: int, position: Vector2) -> void:
 	# Receive task mark from partner
+	if not _sender_is_player_num(from_player, "_receive_task_mark"):
+		return
 	task_marked.emit(from_player, task_id, position)
 	_log("📍 Task #%d marked by P%d at %s" % [task_id, from_player, position])
 
@@ -1359,7 +1964,8 @@ func start_round() -> void:
 	round_completion_status.clear()
 	_log("🎮 Round started")
 
-func report_player_completion(success: bool, score: int, accuracy: float = -1.0, reaction_time_ms: int = -1) -> void:
+func report_player_completion(success: bool, score: int, accuracy: float = -1.0,
+		reaction_time_ms: int = -1) -> void:
 	# Report that local player has completed their game
 	if not round_in_progress:
 		round_in_progress = true
@@ -1383,8 +1989,15 @@ func report_player_completion(success: bool, score: int, accuracy: float = -1.0,
 	_check_both_completed()
 
 @rpc("any_peer", "reliable")
-func _sync_player_completion(peer_id: int, success: bool, score: int, accuracy: float = -1.0, reaction_time_ms: int = -1) -> void:
+func _sync_player_completion(peer_id: int, success: bool, score: int,
+		accuracy: float = -1.0, reaction_time_ms: int = -1) -> void:
 	# Receive completion report from remote player
+	# Identity enforced: this dictionary is what _check_both_completed() reads to
+	# decide life loss, and what feeds _apply_rolling_window_adjustment() and
+	# CoopAdaptation. A report filed under someone else's peer id would corrupt the
+	# adaptive-difficulty input with performance that player never produced.
+	if not _sender_owns(peer_id, "_sync_player_completion"):
+		return
 	round_completion_status[peer_id] = {
 		"success": success,
 		"score": score,
@@ -1551,11 +2164,9 @@ func _transition_to_next_round() -> void:
 	
 	var level_set = LevelSets.get_random_level_set()
 	
-	# Update roles
-	player_roles = {
-		1: level_set["player1_role"],
-		2: level_set["player2_role"]
-	}
+	# Roles are assigned inside the _load_next_round() body below instead of here: that body is
+	# call_local, so the same assignment runs on the host and on the client from one place. The
+	# host-only version this replaces left the client on the connect-time placeholder all session.
 	
 	# Reset G-Counter for next round
 	reset_g_counter()
@@ -1568,6 +2179,10 @@ func _load_next_round(level_set: Dictionary, _total_score: int, lives: int, roun
 	# Load next round for all players
 	# Clear stale round completion and ready state BEFORE changing scenes
 	_reset_round_status()
+	# Both peers run this body, so this is where the round's roles land — the host's own copy
+	# included. LevelSets swapped the pair for this round number before it was broadcast.
+	assign_round_roles(level_set)
+	
 
 	var my_player_num = get_local_player_num()
 	var my_game_scene: String

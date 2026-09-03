@@ -140,26 +140,42 @@ func _load_volume_settings() -> void:
 # MUSIC CONTROL
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+## Generation counter for music requests.
+##
+## play_music() awaits a cross-fade partway through, so a stop_music() or a newer
+## play_music() arriving during that await used to lose: the older coroutine
+## resumed afterwards and called music_player.play() regardless, restarting a track
+## whose stop had already been requested. The scoring track surviving into the next
+## screen was this race. Each request claims an id; on resuming, a coroutine that
+## no longer holds the current id abandons itself.
+var _music_request_id: int = 0
+
 func play_music(music_id: String, fade_duration: float = 1.0) -> void:
 	# Play background music with crossfade.
 	if music_id == current_music and music_player.playing:
 		return
-	
+
+	_music_request_id += 1
+	var my_request: int = _music_request_id
 	current_music = music_id
-	
+
 	# Fade out current music
 	if music_player.playing:
 		var fade_out_tween = create_tween()
 		fade_out_tween.tween_property(music_player, "volume_db", -40.0, fade_duration / 2)
 		await fade_out_tween.finished
-	
+		# Superseded while cross-fading — whoever holds the current id owns the
+		# player now, so do not start a track over the top of their decision.
+		if my_request != _music_request_id or not is_instance_valid(music_player):
+			return
+
 	# Load and play new music (placeholder - would load from file)
 	# For now, generate procedural ambient music
 	var music_stream = _generate_ambient_music(music_id)
 	music_player.stream = music_stream
 	music_player.volume_db = -40.0
 	music_player.play()
-	
+
 	# Fade in
 	var fade_in_tween = create_tween()
 	fade_in_tween.tween_property(
@@ -168,13 +184,17 @@ func play_music(music_id: String, fade_duration: float = 1.0) -> void:
 
 func stop_music(fade_duration: float = 1.0) -> void:
 	# Stop music with fade out.
+	# Claims the request id first, so a play_music() currently parked on its
+	# cross-fade abandons itself instead of resuming into play() after this stop.
+	_music_request_id += 1
+	current_music = ""
+
 	if not music_player.playing:
 		return
-	
+
 	var tween = create_tween()
 	tween.tween_property(music_player, "volume_db", -40.0, fade_duration)
 	tween.tween_callback(music_player.stop)
-	current_music = ""
 
 func _exit_tree() -> void:
 	## Release procedurally generated audio before the engine tears down the

@@ -200,17 +200,32 @@ func spawn_particles(effect_type: CutsceneTypes.ParticleType, duration: float = 
 		particles.emitting = true
 		particles.one_shot = (duration <= 0.0)
 		
-		# Auto-cleanup after duration
+		# Auto-cleanup after duration, scheduled WITHOUT awaiting here.
+		#
+		# This function used to await the duration before returning, which made
+		# it a coroutine. Every caller then had to `await spawn_particles(...)`
+		# or fail to parse — and three test suites did exactly that, taking
+		# themselves out of the run entirely. A spawn function should hand back
+		# the node immediately; the timed teardown runs on its own.
 		if duration > 0.0:
-			await get_tree().create_timer(duration).timeout
-			if is_instance_valid(particles):
-				particles.emitting = false
-				# Wait for particles to finish, then remove
-				await get_tree().create_timer(particles.lifetime).timeout
-				if is_instance_valid(particles):
-					particles.queue_free()
+			_expire_particles(particles, duration)
 	
 	return particles
+
+
+## Turns emission off after `duration`, then frees the node once the last
+## particle has lived out its lifetime. Runs detached from spawn_particles() so
+## that function stays synchronous.
+func _expire_particles(particles: GPUParticles2D, duration: float) -> void:
+	await get_tree().create_timer(duration).timeout
+	if not is_instance_valid(particles):
+		return
+
+	particles.emitting = false
+	# Wait for in-flight particles to finish before removing the emitter.
+	await get_tree().create_timer(particles.lifetime).timeout
+	if is_instance_valid(particles):
+		particles.queue_free()
 
 
 ## Reset character to default state

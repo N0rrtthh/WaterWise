@@ -13,7 +13,10 @@ var spawn_delay: float = 0.8
 
 func _ready():
 	# Set game properties BEFORE calling super._ready()
-	game_name = "Swipe The Soap"
+	# Localized: the title stayed English above the Filipino objective FIX 58
+	# authored. _loc() keeps the English literal as the fallback for the case
+	# where the table is not up yet (tools/SceneLoadCheck instantiates that way).
+	game_name = _loc("swipe_the_soap", "Swipe The Soap")
 	game_instruction_text = Localization.get_text("swipe_soap_instructions") if Localization else "SWIPE in the direction shown!\nQuick rinse saves water! 🧼"
 	game_duration = 15.0  # Shorter default timer for challenge
 	game_mode = "quota"
@@ -127,6 +130,7 @@ func _spawn_soap():
 	arrow.name = "Arrow"
 	arrow.add_theme_font_size_override("font_size", 50)
 	arrow.position = Vector2(-25, -30)
+	MiniGameAssets.outline_text(arrow)
 	
 	match dir:
 		"UP":
@@ -218,7 +222,7 @@ func _correct_swipe():
 	if soaps_cleaned >= target_soaps:
 		end_game(true)
 	else:
-		await get_tree().create_timer(spawn_delay).timeout
+		await round_delay(spawn_delay)
 		if game_active:
 			_spawn_soap()
 
@@ -235,6 +239,6 @@ func _wrong_swipe():
 	
 	# Flash red
 	current_soap.modulate = Color(1, 0.5, 0.5)
-	await get_tree().create_timer(0.2).timeout
+	await round_delay(0.2)
 	if current_soap:
 		current_soap.modulate = Color.WHITE

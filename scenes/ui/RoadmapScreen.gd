@@ -46,7 +46,7 @@ const STAGE_TEMPLATE: Array[Dictionary] = [
 	},
 	{
 		"unlock_id": "bucket_relay",
-		"name": "🪣 Bucket Relay Park",
+		"name": "🏺 Bucket Relay Park",
 		"desc": "Teamwork and timing save every drop",
 		"minigames": ["BucketBrigade", "TimingTap"]
 	},
@@ -130,6 +130,12 @@ var scroll_start: int = 0
 
 # Touch scrolling
 var touch_velocity: float = 0.0
+## Which contact owns the roadmap scroll. Without an index check a second finger
+## re-anchored drag_start_y to itself and its lift cleared is_dragging, killing
+## the flick the first finger was mid-way through - and the momentum handoff in
+## _process() then coasted from whatever velocity the thumb happened to leave.
+const NO_TOUCH_INDEX: int = -1
+var _roadmap_touch_index: int = NO_TOUCH_INDEX
 var last_touch_y: float = 0.0
 var touch_time: float = 0.0
 var back_button: Button
@@ -171,7 +177,7 @@ const MP_STAGE_TEMPLATE: Array[Dictionary] = [
 		"unlock_id": "mp_stage_4",
 	},
 	{
-		"name": "🪣 Bucket Brigade Challenge",
+		"name": "🏺 Bucket Brigade Challenge",
 		"desc": "Pass buckets and time taps in sync",
 		"minigames": ["BucketBrigade", "TimingTap"],
 		"players": 2,
@@ -714,7 +720,7 @@ func _build_how_to_play_preview(preview: Control, stage: Dictionary, preview_wid
 	preview.add_child(actor)
 
 	var target = Label.new()
-	target.text = "🪣"
+	target.text = "🏺"
 	target.add_theme_font_size_override("font_size", 42)
 	preview.add_child(target)
 
@@ -841,7 +847,7 @@ func _start_preview_animation(state: Dictionary, mode: String) -> void:
 
 	match mode:
 		"drag":
-			target.text = "🪣"
+			target.text = "🏺"
 			anim.tween_property(actor, "position:x", right_x - 46.0, 0.9)
 			anim.tween_property(actor, "position:x", left_x, 0.9)
 		"swipe":
@@ -1386,16 +1392,27 @@ func _input(event):
 	# Touch scrolling with momentum
 	if event is InputEventScreenTouch:
 		if event.pressed:
+			if _roadmap_touch_index != NO_TOUCH_INDEX:
+				return
+			# A drag has to START inside the list, as it does on the other two
+			# scrolling screens. Without this a swipe beginning on the fixed chrome
+			# below the viewport still scrolled the roadmap.
+			if not scroll_container.get_global_rect().has_point(event.position):
+				return
+			_roadmap_touch_index = event.index
 			is_dragging = true
 			drag_start_y = event.position.y
 			scroll_start = scroll_container.scroll_vertical
 			touch_velocity = 0
 			last_touch_y = event.position.y
 			touch_time = Time.get_ticks_msec()
-		else:
+		elif event.index == _roadmap_touch_index:
+			_roadmap_touch_index = NO_TOUCH_INDEX
 			is_dragging = false
 	
 	elif event is InputEventScreenDrag and is_dragging:
+		if event.index != _roadmap_touch_index:
+			return
 		var delta = drag_start_y - event.position.y
 		scroll_container.scroll_vertical = int(scroll_start + int(delta))
 		

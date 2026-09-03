@@ -26,8 +26,15 @@ func _apply_difficulty_settings() -> void:
 			game_duration = 8.0
 
 func _ready():
-	game_name = "Wring It Out"
-	game_instruction_text = "TAP FAST to wring out the clothes!\nSave the water!"
+	# Localized: the title stayed English above the Filipino objective FIX 58
+	# authored. _loc() keeps the English literal as the fallback for the case
+	# where the table is not up yet (tools/SceneLoadCheck instantiates that way).
+	game_name = _loc("wring_it_out", "Wring It Out")
+	# Was hardcoded English; wring_instruction already had both languages and says the
+	# same thing (tap fast, fill the bucket).
+	game_instruction_text = _loc(
+		"wring_instruction", "TAP FAST to wring out the clothes!\nSave the water!"
+	)
 	game_duration = 12.0
 	game_mode = "quota"  # Must fill progress bar!
 	
@@ -91,7 +98,7 @@ func _ready():
 	
 	# Tap instruction
 	var tap_label = Label.new()
-	tap_label.text = "👆 TAP ANYWHERE! 👆"
+	tap_label.text = _loc("hud_tap_anywhere", "👆 TAP ANYWHERE! 👆")
 	tap_label.add_theme_font_size_override("font_size", 36)
 	tap_label.add_theme_color_override("font_color", Color(0.2, 0.5, 0.8))
 	tap_label.position = Vector2(screen_size.x / 2 - 180, screen_size.y - 130)

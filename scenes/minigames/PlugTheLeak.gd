@@ -38,7 +38,10 @@ func _apply_difficulty_settings() -> void:
 		game_duration = max(14.0, game_duration - 1.5)
 
 func _ready():
-	game_name = "Plug The Leak"
+	# Localized: the title stayed English above the Filipino objective FIX 58
+	# authored. _loc() keeps the English literal as the fallback for the case
+	# where the table is not up yet (tools/SceneLoadCheck instantiates that way).
+	game_name = _loc("plug_the_leak", "Plug The Leak")
 	game_instruction_text = (
 		Localization.get_text("plug_the_leak_instructions")
 		if Localization
@@ -73,7 +76,7 @@ func _ready():
 	# Water waste meter
 	var waste_label = Label.new()
 	waste_label.name = "WasteLabel"
-	waste_label.text = "💧 Water Wasted: 0%"
+	waste_label.text = _loc("hud_water_wasted", "💧 Water Wasted: %.0f%%") % 0.0
 	waste_label.add_theme_font_size_override("font_size", 28)
 	waste_label.add_theme_color_override("font_color", Color.WHITE)
 	waste_label.add_theme_color_override("font_outline_color", Color.BLACK)
@@ -91,7 +94,7 @@ func _ready():
 
 func _on_game_start() -> void:
 	# Start first leak after delay
-	await get_tree().create_timer(1.0).timeout
+	await round_delay(1.0)
 	if game_active:
 		_start_random_leak()
 
@@ -181,7 +184,7 @@ func _process(delta):
 		
 		if is_leaking:
 			# Check if player is holding on this pipe
-			var pipe_rect = Rect2(pipe.position - Vector2(50, 50), Vector2(100, 100))
+			var pipe_rect = Rect2(pipe.position - Vector2(75, 75), Vector2(150, 150))
 			
 			if is_holding and pipe_rect.has_point(hold_pos):
 				# Plugging the leak
@@ -201,11 +204,21 @@ func _process(delta):
 					plug_bar.visible = false
 					pipe.get_node("Joint").color = Color(0.3, 0.7, 0.3)
 					record_action(true)
-					
-					# Start new leak after delay
-					await get_tree().create_timer(randf_range(0.5, 1.5)).timeout
-					if game_active:
-						_start_random_leak()
+
+					# Schedule the next leak on a timer rather than awaiting here.
+					#
+					# An await inside _process parks this call mid-`for pipe in pipes`
+					# for up to 1.5s while fresh _process calls keep starting from the
+					# top, so several instances of the same function overlap. When the
+					# parked one resumes it finishes its loop using the delta,
+					# is_holding and hold_pos it read a second earlier, double-counting
+					# a frame of plug progress and wasted water on every pipe after
+					# this one, and re-running the failure test at the bottom. A timer
+					# callback keeps _process a single non-yielding pass; Godot drops
+					# the connection automatically if this node is freed first.
+					round_delay(randf_range(0.5, 1.5)).connect(
+						_start_next_leak
+					)
 			else:
 				# Not plugging - leak continues
 				water_wasted += leak_rate * delta
@@ -220,7 +233,7 @@ func _process(delta):
 	
 	# Update waste display
 	var waste_pct = (water_wasted / max_water_waste) * 100.0
-	get_node("WasteLabel").text = "💧 Water Wasted: %.0f%%" % waste_pct
+	get_node("WasteLabel").text = _loc("hud_water_wasted", "💧 Water Wasted: %.0f%%") % waste_pct
 	
 	# Check for failure
 	if water_wasted >= max_water_waste:
@@ -245,6 +258,15 @@ func _input(event: InputEvent) -> void:
 		var drag = event as InputEventScreenDrag
 		if drag.index == _touch_index:
 			_touch_position = drag.position
+
+func _start_next_leak() -> void:
+	## Timer target for the post-fix respawn delay — see _process.
+	##
+	## A named method rather than a lambda so the connection is a plain
+	## object-bound Callable, which Godot severs when this node is freed.
+	if game_active:
+		_start_random_leak()
+
 
 func _start_random_leak():
 	if not game_active: return

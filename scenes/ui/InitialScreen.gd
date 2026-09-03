@@ -31,6 +31,16 @@ extends Control
 # Pool of running tweens so we can kill them on exit
 var _tweens: Array[Tween] = []
 
+## The subset of the pool that drives position, so a resize can restart just these from
+## the freshly written layout. Kept separate because _tweens also holds the title,
+## entrance and button animations, which must survive a resize untouched.
+var _ambient_tweens: Array[Tween] = []
+
+## Where the boat decoration sits, as a fraction of the viewport. A named constant because
+## the resize handler has to re-derive it: _spawn_decorations() also builds the node, so
+## it cannot simply be re-run.
+const BOAT_POS_RATIO: Vector2 = Vector2(0.72, 0.78)
+
 var _is_loading_game: bool = false
 var _loading_overlay: Control
 var _loading_bar: ProgressBar
@@ -60,10 +70,7 @@ const _WAVE_CFG: Array = [
 	[0.09, 4.0, 0.50, 2.8],   # Waves3 — front, slightly livelier
 ]
 var _cloud_nodes: Array = []
-var _psd_scale: float = 1.0
-var _psd_offset: Vector2 = Vector2.ZERO
 var _signboard_label: Label
-const PSD_SIZE := Vector2(2360, 1640)
 
 # Crowd characters on the platform
 var _characters: Array[Node2D] = []
@@ -73,6 +80,10 @@ var _crowd_left_bound: float = 0.0
 var _crowd_right_bound: float = 0.0
 var _crowd_idle_started: bool = false
 const MAX_CROWD_CHARS := 10
+## How many crowd members get the extra role-specific flourish animation.
+## Kept well below MAX_CROWD_CHARS so the menu stays inside its frame budget on
+## the thesis target hardware; the rest still walk, bob and swing their arms.
+const PERSONALITY_ANIM_LIMIT := 4
 # Persists across scene reloads — skip drop-in on return visits
 static var _has_been_shown: bool = false
 
@@ -96,7 +107,7 @@ const MAIN_CHARACTER_PRESETS: Dictionary = {
 	"lavvy": {"color": Color(0.8, 0.6, 1.0), "hat": "✨", "name": "Lavvy", "trait": "waver"},
 	"peachy": {"color": Color(1.0, 0.8, 0.7), "hat": "🍑", "name": "Peachy", "trait": "spinner"},
 	"cyanny": {"color": Color(0.4, 1.0, 1.0), "hat": "🌊", "name": "Cyanny", "trait": "bouncer"},
-	"coral": {"color": Color(1.0, 0.5, 0.5), "hat": "🪸", "name": "Coral", "trait": "cheerer"},
+	"coral": {"color": Color(1.0, 0.5, 0.5), "hat": "🌺", "name": "Coral", "trait": "cheerer"},
 }
 const BG_CHARACTER_ROLES: Array[String] = [
 	"dancer", "musician", "baller", "cheerer",
@@ -115,7 +126,10 @@ func _ready() -> void:
 	_setup_signboard_highscore()
 	_bind_highscore_updates()
 	_apply_responsive_layout()
-	if is_instance_valid(top_right_panel):
+	# Guard the node being mutated, not a sibling: this read top_right_panel
+	# while writing top_left_panel, so a missing right panel left the droplet
+	# counter visible and a missing left panel crashed on the assignment.
+	if is_instance_valid(top_left_panel):
 		top_left_panel.visible = false
 	_animate_entrance()
 	_animate_waves()
@@ -311,15 +325,15 @@ func _apply_responsive_layout() -> void:
 		top_left_panel.offset_left = safe_left + 14.0
 		top_left_panel.offset_top = safe_top + 12.0
 
-		top_right_panel.offset_left = -((420.0 if portrait else 472.0) + safe_right)
+	# Previously nested inside the `if top_left_panel:` block above, so the whole
+	# right-hand panel silently kept its desktop offsets whenever the left panel
+	# was missing — and dereferenced top_right_panel without checking it.
+	if top_right_panel:
 		top_right_panel.offset_top = safe_top + 10.0
 		top_right_panel.offset_bottom = top_right_panel.offset_top + (66.0 if portrait else 70.0)
 		top_right_panel.offset_right = -safe_right - 12.0
 		top_right_panel.offset_left = -((380.0 if portrait else 430.0) + safe_right)
 		top_right_panel.add_theme_constant_override("separation", 8 if portrait else 12)
-	if leaderboard_button:
-		leaderboard_button.custom_minimum_size = Vector2(64, 64) if portrait else Vector2(70, 70)
-		leaderboard_button.add_theme_font_size_override("font_size", 30 if portrait else 34)
 
 	if store_button:
 		store_button.custom_minimum_size = Vector2(64, 64) if portrait else Vector2(70, 70)
@@ -380,6 +394,47 @@ func _on_viewport_resized() -> void:
 	# Re-apply mobile layout adjustments
 	_apply_responsive_layout()
 
+	# The ambient loops own position:x / position:y and a running Tween writes its
+	# property every frame, so it outranks the direct writes above: their targets were
+	# captured from the pre-resize viewport, and without this the layout is undone on the
+	# next frame. Godot cannot retarget a running Tweener, so they are killed and
+	# restarted from the new layout - the same kill-and-rebase MainMenu already does for
+	# its character in _start_character_animation().
+	_rebase_ambient_animations()
+
+
+## Restarts every position-owning ambient loop against the layout that was just written.
+## Only _ambient_tweens are killed: _tweens also holds the title, entrance and button
+## animations, and killing those wholesale would leave whatever they were mid-way through
+## frozen at that value.
+func _rebase_ambient_animations() -> void:
+	for tw in _ambient_tweens:
+		if tw and tw.is_valid():
+			tw.kill()
+	_ambient_tweens.clear()
+
+	var vp = get_viewport_rect().size
+	_layout_clouds_for_viewport(vp)
+	_animate_clouds()
+	_layout_boat_for_viewport(vp)
+	_start_boat_loops()
+
+	# The crowd and the hero only get theirs once the entrance has handed over to the
+	# idle loops. Before that the entrance tweens still own the crowd's position, and
+	# starting the idle bobs early would have two tweens writing one position:y.
+	if not _crowd_idle_started:
+		return
+	for i in range(_characters.size()):
+		var ch = _characters[i]
+		if not is_instance_valid(ch):
+			continue
+		_start_crowd_bob(
+			ch, i,
+			float(ch.get_meta("depth_scale", 1.0)),
+			str(ch.get_meta("role", "idle"))
+		)
+	_start_hero_body_loops()
+
 
 func _go_to_scene(scene_candidates: Array[String]) -> void:
 	for scene_path in scene_candidates:
@@ -424,12 +479,11 @@ func _build_background() -> void:
 	var vp = get_viewport_rect().size
 
 	# BGLayers are placed in the .tscn as TextureRect nodes for editor visibility.
-	# Compute PSD→viewport scale for signboard label positioning.
-	var scale_x = vp.x / PSD_SIZE.x
-	var scale_y = vp.y / PSD_SIZE.y
-	_psd_scale = max(scale_x, scale_y)
-	_psd_offset = (vp - PSD_SIZE * _psd_scale) * 0.5
-
+	# A PSD→viewport scale and letterbox offset used to be computed and stored here
+	# "for signboard label positioning". Nothing ever read either member: the
+	# signboard label is placed at fixed PSD-space coordinates (255, 95) and the
+	# BGLayers TextureRects are scaled by the .tscn, so the const they were derived
+	# from went with them.
 	# Gather the wave TextureRect nodes for animation.
 	var bg_layers = get_node_or_null("BGLayers")
 	if bg_layers:
@@ -453,18 +507,24 @@ func _spawn_clouds(vp: Vector2) -> void:
 	cloud_container.z_index = 7  # Above highscore post, still behind characters
 	_bg_layer.add_child(cloud_container)
 
+	# rx/ry are the fractions of the viewport each cloud sits at. They are kept as metas
+	# on the node so _layout_clouds_for_viewport() can re-derive the position exactly
+	# after a resize; only the absolute was stored before, and nothing in the resize path
+	# touched the clouds, so they stayed at their pre-resize spot.
 	var cloud_data = [
-		{"x": vp.x * 0.10, "y": vp.y * 0.06, "w": 240, "h": 78, "speed": 12.0, "alpha": 0.55},
-		{"x": vp.x * 0.35, "y": vp.y * 0.12, "w": 300, "h": 90, "speed": 8.0, "alpha": 0.50},
-		{"x": vp.x * 0.62, "y": vp.y * 0.04, "w": 220, "h": 66, "speed": 15.0, "alpha": 0.50},
-		{"x": vp.x * 0.85, "y": vp.y * 0.10, "w": 260, "h": 82, "speed": 10.0, "alpha": 0.45},
+		{"rx": 0.10, "ry": 0.06, "w": 240, "h": 78, "speed": 12.0, "alpha": 0.55},
+		{"rx": 0.35, "ry": 0.12, "w": 300, "h": 90, "speed": 8.0, "alpha": 0.50},
+		{"rx": 0.62, "ry": 0.04, "w": 220, "h": 66, "speed": 15.0, "alpha": 0.50},
+		{"rx": 0.85, "ry": 0.10, "w": 260, "h": 82, "speed": 10.0, "alpha": 0.45},
 	]
 
 	for cd in cloud_data:
 		var cloud = Node2D.new()
-		cloud.position = Vector2(cd.x, cd.y)
+		cloud.position = Vector2(vp.x * cd.rx, vp.y * cd.ry)
 		cloud.set_meta("speed", cd.speed)
-		cloud.set_meta("base_x", cd.x)
+		cloud.set_meta("base_x", cloud.position.x)
+		cloud.set_meta("base_rx", cd.rx)
+		cloud.set_meta("base_ry", cd.ry)
 
 		# Build cloud from overlapping ovals
 		for j in range(3):
@@ -497,6 +557,19 @@ func _animate_waves() -> void:
 		spr.texture_repeat = CanvasItem.TEXTURE_REPEAT_MIRROR
 
 
+## Re-derives every cloud's position from the fractions stored at spawn, and refreshes
+## the base_x meta the drift tweens read their targets from. Called before the loops are
+## restarted, so the new targets are centred on the new position.
+func _layout_clouds_for_viewport(vp: Vector2) -> void:
+	for cloud in _cloud_nodes:
+		if not is_instance_valid(cloud):
+			continue
+		var rx = float(cloud.get_meta("base_rx", 0.5))
+		var ry = float(cloud.get_meta("base_ry", 0.1))
+		cloud.position = Vector2(vp.x * rx, vp.y * ry)
+		cloud.set_meta("base_x", cloud.position.x)
+
+
 func _animate_clouds() -> void:
 	var vp = get_viewport_rect().size
 	for cloud in _cloud_nodes:
@@ -505,7 +578,7 @@ func _animate_clouds() -> void:
 		var drift_range = vp.x * 0.08
 
 		var cloud_tw = create_tween().set_loops()
-		_tweens.append(cloud_tw)
+		_ambient_tweens.append(cloud_tw)
 		cloud_tw.tween_property(
 			cloud, "position:x", base_x + drift_range, speed
 		).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
@@ -518,7 +591,7 @@ func _animate_clouds() -> void:
 
 		# Gentle vertical bob
 		var cloud_bob = create_tween().set_loops()
-		_tweens.append(cloud_bob)
+		_ambient_tweens.append(cloud_bob)
 		var base_y = cloud.position.y
 		cloud_bob.tween_property(
 			cloud, "position:y", base_y - 6, speed * 0.7
@@ -541,11 +614,12 @@ func _spawn_decorations() -> void:
 
 	var vp = get_viewport_rect().size
 	_boat_node = _build_procedural_boat()
-	_boat_node.position = Vector2(vp.x * 0.72, vp.y * 0.78)
 	_boat_node.z_index = -2  # Above waves, below characters
 	add_child(_boat_node)
+	_layout_boat_for_viewport(vp)
 
-	# Gentle rocking motion
+	# Gentle rocking motion. Rotation carries no layout information, so unlike the bob
+	# and the drift below, this one is started once and never rebased.
 	var rock = create_tween().set_loops()
 	_tweens.append(rock)
 	rock.tween_property(
@@ -555,10 +629,30 @@ func _spawn_decorations() -> void:
 		_boat_node, "rotation_degrees", -4.0, 1.8
 	).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
 
+	_start_boat_loops()
+
+
+## Re-derived from the viewport rather than kept as the absolute it was spawned with:
+## _spawn_decorations() also builds the node, so the resize handler cannot re-run it.
+func _layout_boat_for_viewport(vp: Vector2) -> void:
+	if not _boat_node:
+		return
+	_boat_node.position = Vector2(vp.x * BOAT_POS_RATIO.x, vp.y * BOAT_POS_RATIO.y)
+
+
+## The boat's two position-owning loops. Both hold absolute targets read from wherever
+## the boat sits when they start, so they go in _ambient_tweens and are restarted from
+## the new position after a resize. Nothing in the resize path touched the boat at all
+## before this: it kept drifting around its pre-resize spot, which on a tall canvas put
+## it above the waterline it is supposed to float on.
+func _start_boat_loops() -> void:
+	if not _boat_node:
+		return
+
 	# Bob up and down with waves
 	var base_y = _boat_node.position.y
 	var bob = create_tween().set_loops()
-	_tweens.append(bob)
+	_ambient_tweens.append(bob)
 	bob.tween_property(
 		_boat_node, "position:y", base_y - 8, 2.2
 	).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
@@ -569,7 +663,7 @@ func _spawn_decorations() -> void:
 	# Slow horizontal drift
 	var base_x = _boat_node.position.x
 	var drift = create_tween().set_loops()
-	_tweens.append(drift)
+	_ambient_tweens.append(drift)
 	drift.tween_property(
 		_boat_node, "position:x", base_x + 30, 6.0
 	).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
@@ -1227,6 +1321,105 @@ func _animate_entrance() -> void:
 	_ms.set_trans(Tween.TRANS_BACK)
 	mbtn.tween_property(multiplayer_button, "scale", Vector2(1.0, 1.0), 0.08)
 
+## One crowd member's vertical idle bob, by role. Split out of _start_idle_loops() so
+## _rebase_ambient_animations() can restart it against the position the resize handler
+## just wrote: these tweens hold absolute position:y targets read from the viewport that
+## was current when they started, and a running Tween writes its property every frame,
+## so the handler's write is undone on the next frame unless they are rebased.
+func _start_crowd_bob(
+	ch: Node2D, i: int, depth_scale: float, char_trait: String
+) -> void:
+	var base_y = ch.position.y
+	match char_trait:
+		"jumper":
+			# Big bouncy jumps
+			var jump = create_tween().set_loops()
+			_ambient_tweens.append(jump)
+			jump.tween_interval(0.05 * i)
+			jump.tween_property(
+				ch, "position:y",
+				base_y - 18 * depth_scale, 0.30
+			).set_trans(Tween.TRANS_QUAD).set_ease(
+				Tween.EASE_OUT
+			)
+			jump.tween_property(
+				ch, "position:y", base_y, 0.30
+			).set_trans(Tween.TRANS_QUAD).set_ease(
+				Tween.EASE_IN
+			)
+			jump.tween_interval(0.3)
+		"spinner":
+			var bob = create_tween().set_loops()
+			_ambient_tweens.append(bob)
+			bob.tween_property(
+				ch, "position:y",
+				base_y - 4 * depth_scale, 0.5
+			).set_trans(Tween.TRANS_SINE)
+			bob.tween_property(
+				ch, "position:y", base_y, 0.5
+			).set_trans(Tween.TRANS_SINE)
+		"bouncer":
+			# Springy bounce
+			var spr = create_tween().set_loops()
+			_ambient_tweens.append(spr)
+			spr.tween_interval(0.05 * i)
+			spr.tween_property(
+				ch, "position:y",
+				base_y - 10 * depth_scale, 0.25
+			).set_trans(Tween.TRANS_BACK).set_ease(
+				Tween.EASE_OUT
+			)
+			spr.tween_property(
+				ch, "position:y", base_y, 0.25
+			).set_trans(Tween.TRANS_BOUNCE).set_ease(
+				Tween.EASE_OUT
+			)
+			spr.tween_interval(0.15)
+		"waver":
+			# Big arm wave side to side
+			var wave_b = create_tween().set_loops()
+			_ambient_tweens.append(wave_b)
+			wave_b.tween_property(
+				ch, "position:y",
+				base_y - 3 * depth_scale, 0.45
+			).set_trans(Tween.TRANS_SINE)
+			wave_b.tween_property(
+				ch, "position:y", base_y, 0.45
+			).set_trans(Tween.TRANS_SINE)
+		_:
+			# Default gentle bob (dancer, jogger, cheerer, etc.)
+			var bob_amp = (3.0 + 0.5 * float(i % 3)) * depth_scale
+			var bob_dur = 0.45 + 0.05 * (i % 4)
+			var bounce = create_tween().set_loops()
+			_ambient_tweens.append(bounce)
+			bounce.tween_interval(0.05 * i)
+			bounce.tween_property(
+				ch, "position:y",
+				base_y - bob_amp, bob_dur
+			).set_trans(Tween.TRANS_SINE)
+			bounce.tween_property(
+				ch, "position:y", base_y, bob_dur
+			).set_trans(Tween.TRANS_SINE)
+
+
+## The spinner's continuous rotation, kept out of _start_crowd_bob() because rotation
+## carries no layout information and so must not be restarted when the viewport changes.
+##
+## as_relative() is what makes it continuous. Written as an absolute
+## tween_property(ch, "rotation", TAU, 2.5) it turned once and then froze: a
+## PropertyTweener with no from() captures the property when it STARTS, a looping Tween
+## starts its tweeners again on every loop, so loop 2 onwards animated TAU -> TAU.
+## Measured in tools/VerifyLoopingTweenAdvance.tscn - the fixed-target form moved
+## 0.000 rad across two revolutions of runway, as_relative() moved 12.620 rad. Peachy
+## stood frozen in the crowd from 2.5 s after the idle loops began, and because a full
+## turn leaves her upright it read as a character who simply never animated.
+func _start_crowd_spin(ch: Node2D) -> void:
+	var spin = create_tween().set_loops()
+	_tweens.append(spin)
+	spin.tween_property(ch, "rotation", TAU, 2.5).set_trans(
+		Tween.TRANS_LINEAR
+	).as_relative()
+
 func _start_idle_loops() -> void:
 	_crowd_idle_started = true
 	for i in range(_characters.size()):
@@ -1238,95 +1431,49 @@ func _start_idle_loops() -> void:
 		if i < _crowd_walk_dirs.size() and _crowd_walk_dirs[i] < 0:
 			ch.scale.x = -depth_scale
 
-		var base_y = ch.position.y
 		var char_trait = str(ch.get_meta("role", "idle"))
 
-		# Trait-specific bounce/motion
-		match char_trait:
-			"jumper":
-				# Big bouncy jumps
-				var jump = create_tween().set_loops()
-				_tweens.append(jump)
-				jump.tween_interval(0.05 * i)
-				jump.tween_property(
-					ch, "position:y",
-					base_y - 18 * depth_scale, 0.30
-				).set_trans(Tween.TRANS_QUAD).set_ease(
-					Tween.EASE_OUT
-				)
-				jump.tween_property(
-					ch, "position:y", base_y, 0.30
-				).set_trans(Tween.TRANS_QUAD).set_ease(
-					Tween.EASE_IN
-				)
-				jump.tween_interval(0.3)
-			"spinner":
-				# Slow spin while walking
-				var spin = create_tween().set_loops()
-				_tweens.append(spin)
-				spin.tween_property(
-					ch, "rotation", TAU, 2.5
-				).set_trans(Tween.TRANS_LINEAR)
-				var bob = create_tween().set_loops()
-				_tweens.append(bob)
-				bob.tween_property(
-					ch, "position:y",
-					base_y - 4 * depth_scale, 0.5
-				).set_trans(Tween.TRANS_SINE)
-				bob.tween_property(
-					ch, "position:y", base_y, 0.5
-				).set_trans(Tween.TRANS_SINE)
-			"bouncer":
-				# Springy bounce
-				var spr = create_tween().set_loops()
-				_tweens.append(spr)
-				spr.tween_interval(0.05 * i)
-				spr.tween_property(
-					ch, "position:y",
-					base_y - 10 * depth_scale, 0.25
-				).set_trans(Tween.TRANS_BACK).set_ease(
-					Tween.EASE_OUT
-				)
-				spr.tween_property(
-					ch, "position:y", base_y, 0.25
-				).set_trans(Tween.TRANS_BOUNCE).set_ease(
-					Tween.EASE_OUT
-				)
-				spr.tween_interval(0.15)
-			"waver":
-				# Big arm wave side to side
-				var wave_b = create_tween().set_loops()
-				_tweens.append(wave_b)
-				wave_b.tween_property(
-					ch, "position:y",
-					base_y - 3 * depth_scale, 0.45
-				).set_trans(Tween.TRANS_SINE)
-				wave_b.tween_property(
-					ch, "position:y", base_y, 0.45
-				).set_trans(Tween.TRANS_SINE)
-			_:
-				# Default gentle bob (dancer, jogger, cheerer, etc.)
-				var bob_amp = (3.0 + 0.5 * float(i % 3)) * depth_scale
-				var bob_dur = 0.45 + 0.05 * (i % 4)
-				var bounce = create_tween().set_loops()
-				_tweens.append(bounce)
-				bounce.tween_interval(0.05 * i)
-				bounce.tween_property(
-					ch, "position:y",
-					base_y - bob_amp, bob_dur
-				).set_trans(Tween.TRANS_SINE)
-				bounce.tween_property(
-					ch, "position:y", base_y, bob_dur
-				).set_trans(Tween.TRANS_SINE)
+		# Trait-specific bounce/motion. The vertical part owns position:y, so it lives
+		# in its own function and gets restarted from the new layout when the viewport
+		# changes. The spinner's rotation carries no layout information, so it is
+		# started once here and left alone.
+		_start_crowd_bob(ch, i, depth_scale, char_trait)
+		if char_trait == "spinner":
+			_start_crowd_spin(ch)
 
-		# Walking leg swing + trait-specific arm motion
-		_start_walk_leg_animation(ch, i)
+		# Role-specific flourish (guitar strum, ball bounce, pom-poms, groove).
+		# _start_character_personality_animation was written but never called, so
+		# the crowd's role props sat frozen. Capped at PERSONALITY_ANIM_LIMIT
+		# characters and skipped under reduce-motion: each role adds up to two
+		# more looping tweens, and this screen already runs three per crowd
+		# member on the Cortex-A53 target.
+		var with_personality: bool = (
+			i < PERSONALITY_ANIM_LIMIT and not _should_reduce_mobile_motion()
+		)
+
+		# Walking leg swing + arm swing. Whichever limbs the role flourish is
+		# about to drive are left out here — two looping tweens writing the same
+		# rotation_degrees produce a stuttering limb, not a blended motion.
+		var role_name := str(ch.get_meta("role", "idle"))
+		var flourish_takes_arms: bool = (
+			with_personality and role_name in ["dancer", "musician", "cheerer"]
+		)
+		var flourish_takes_legs: bool = with_personality and role_name == "baller"
+		_start_walk_leg_animation(ch, i, not flourish_takes_arms, not flourish_takes_legs)
+
+		if with_personality:
+			_start_character_personality_animation(ch, i)
 
 	if _main_character:
 		_start_main_character_showtime()
 
 
-func _start_walk_leg_animation(ch: Node2D, char_index: int) -> void:
+func _start_walk_leg_animation(
+	ch: Node2D,
+	char_index: int,
+	animate_arms: bool = true,
+	animate_legs: bool = true
+) -> void:
 	var left_leg = ch.get_node_or_null("LeftLeg") as Line2D
 	var right_leg = ch.get_node_or_null("RightLeg") as Line2D
 	if not left_leg or not right_leg:
@@ -1335,17 +1482,18 @@ func _start_walk_leg_animation(ch: Node2D, char_index: int) -> void:
 	if char_index < _crowd_walk_speeds.size():
 		spd_factor = _crowd_walk_speeds[char_index] / 35.0  # normalize around avg
 	var step_dur = clampf(0.30 / spd_factor, 0.18, 0.50)
-	var walk_legs = create_tween().set_loops()
-	_tweens.append(walk_legs)
-	walk_legs.tween_property(left_leg, "rotation_degrees", -12.0, step_dur)
-	walk_legs.parallel().tween_property(right_leg, "rotation_degrees", 12.0, step_dur)
-	walk_legs.tween_property(left_leg, "rotation_degrees", 12.0, step_dur)
-	walk_legs.parallel().tween_property(right_leg, "rotation_degrees", -12.0, step_dur)
+	if animate_legs:
+		var walk_legs = create_tween().set_loops()
+		_tweens.append(walk_legs)
+		walk_legs.tween_property(left_leg, "rotation_degrees", -12.0, step_dur)
+		walk_legs.parallel().tween_property(right_leg, "rotation_degrees", 12.0, step_dur)
+		walk_legs.tween_property(left_leg, "rotation_degrees", 12.0, step_dur)
+		walk_legs.parallel().tween_property(right_leg, "rotation_degrees", -12.0, step_dur)
 
 	# Arm swing
 	var left_arm = ch.get_node_or_null("LeftArm") as Line2D
 	var right_arm = ch.get_node_or_null("RightArm") as Line2D
-	if left_arm and right_arm:
+	if animate_arms and left_arm and right_arm:
 		var arm_swing = create_tween().set_loops()
 		_tweens.append(arm_swing)
 		arm_swing.tween_property(left_arm, "rotation_degrees", 10.0, step_dur)
@@ -1353,8 +1501,13 @@ func _start_walk_leg_animation(ch: Node2D, char_index: int) -> void:
 		arm_swing.tween_property(left_arm, "rotation_degrees", -10.0, step_dur)
 		arm_swing.parallel().tween_property(right_arm, "rotation_degrees", 10.0, step_dur)
 
-	if _main_character:
-		_start_main_character_showtime()
+	# NOTE: do NOT start the hero's showtime tweens here. This function runs once
+	# per crowd character (up to MAX_CROWD_CHARS), and _start_idle_loops() already
+	# starts the hero exactly once after the loop. Calling it here as well spawned
+	# ~5 looping tweens per crowd member on the SAME hero node — up to 55 live
+	# tweens all writing position:y / position:x / scale / rotation on one Node2D.
+	# They fought each other (visible jitter, scale drifting off HERO_BASE_SCALE)
+	# and cost frame time on the Cortex-A53 target for no visual gain.
 
 
 func _start_character_personality_animation(ch: Node2D, char_index: int = 0) -> void:
@@ -1369,20 +1522,19 @@ func _start_character_personality_animation(ch: Node2D, char_index: int = 0) -> 
 	var right_leg = ch.get_node_or_null("RightLeg") as Line2D
 	var prop = ch.get_node_or_null("RoleProp") as Label
 	var note = ch.get_node_or_null("RoleNote") as Label
-	var base_x = ch.position.x
 	var phase_offset = 0.08 * char_index
 
 	match role:
 		"dancer":
+			# Rotation only — position:x belongs to the walk integration in
+			# _process(). Tweening it here would pin the dancer to the X it had
+			# when the tween started and fight the walk every frame.
 			var groove = create_tween().set_loops()
 			_tweens.append(groove)
 			groove.tween_interval(phase_offset)
 			groove.tween_property(ch, "rotation", deg_to_rad(3.2), 0.60)
-			groove.parallel().tween_property(ch, "position:x", base_x + 3.5, 0.60)
 			groove.tween_property(ch, "rotation", deg_to_rad(-2.8), 0.62)
-			groove.parallel().tween_property(ch, "position:x", base_x - 3.0, 0.62)
 			groove.tween_property(ch, "rotation", 0.0, 0.44)
-			groove.parallel().tween_property(ch, "position:x", base_x, 0.44)
 			if left_arm and right_arm and not reduce_motion:
 				var arms = create_tween().set_loops()
 				_tweens.append(arms)
@@ -1454,23 +1606,22 @@ func _start_character_personality_animation(ch: Node2D, char_index: int = 0) -> 
 				confetti.parallel().tween_property(prop, "modulate:a", 1.0, 0.64)
 
 
-func _start_main_character_showtime() -> void:
+## The hero's two position-owning loops - the vertical bounce and the horizontal sway -
+## kept apart from the limb and sparkle loops below so a resize can restart just these.
+## Restarting the whole of _start_main_character_showtime() instead would stack a second
+## copy of the arm, leg and sparkle loops on every resize, and two tweens writing one
+## rotation_degrees give a stuttering limb rather than a blended motion.
+func _start_hero_body_loops() -> void:
 	if not _main_character:
 		return
 
 	var hero_scale = _get_hero_base_scale()
 	var hero_bounce_amp = _get_hero_bounce_amplitude()
-	var reduce_motion = _should_reduce_mobile_motion()
 	var hero_base_y = _main_character.position.y
 	var hero_base_x = _main_character.position.x
-	var left_arm = _main_character.get_node_or_null("LeftArm") as Line2D
-	var right_arm = _main_character.get_node_or_null("RightArm") as Line2D
-	var left_leg = _main_character.get_node_or_null("LeftLeg") as Line2D
-	var right_leg = _main_character.get_node_or_null("RightLeg") as Line2D
-	var sparkle = _main_character.get_node_or_null("RoleProp") as Label
 
 	var hero_bounce = create_tween().set_loops()
-	_tweens.append(hero_bounce)
+	_ambient_tweens.append(hero_bounce)
 	hero_bounce.tween_property(
 		_main_character,
 		"position:y",
@@ -1497,13 +1648,27 @@ func _start_main_character_showtime() -> void:
 	)
 
 	var hero_sway = create_tween().set_loops()
-	_tweens.append(hero_sway)
+	_ambient_tweens.append(hero_sway)
 	hero_sway.tween_property(_main_character, "rotation", deg_to_rad(2.4), 1.10)
 	hero_sway.parallel().tween_property(_main_character, "position:x", hero_base_x + 3.0, 1.10)
 	hero_sway.tween_property(_main_character, "rotation", deg_to_rad(-2.0), 1.06)
 	hero_sway.parallel().tween_property(_main_character, "position:x", hero_base_x - 2.8, 1.06)
 	hero_sway.tween_property(_main_character, "rotation", 0.0, 0.72)
 	hero_sway.parallel().tween_property(_main_character, "position:x", hero_base_x, 0.72)
+
+
+func _start_main_character_showtime() -> void:
+	if not _main_character:
+		return
+
+	var reduce_motion = _should_reduce_mobile_motion()
+	var left_arm = _main_character.get_node_or_null("LeftArm") as Line2D
+	var right_arm = _main_character.get_node_or_null("RightArm") as Line2D
+	var left_leg = _main_character.get_node_or_null("LeftLeg") as Line2D
+	var right_leg = _main_character.get_node_or_null("RightLeg") as Line2D
+	var sparkle = _main_character.get_node_or_null("RoleProp") as Label
+
+	_start_hero_body_loops()
 
 	if left_arm and right_arm:
 		var hero_wave = create_tween().set_loops()
@@ -1742,11 +1907,13 @@ func _on_settings_pressed() -> void:
 	_go_to_scene(["res://scenes/ui/Settings.tscn"])
 
 
-func _on_accessibility_pressed() -> void:
-	if AudioManager:
-		AudioManager.play_click()
-	if AccessibilityManager:
-		AccessibilityManager.toggle_menu()
+## _on_accessibility_pressed() stood here. Nothing connected it — no .tscn
+## connection, no .connect() call anywhere — and its one statement called
+## AccessibilityManager.toggle_menu(), which has never existed: that autoload
+## is a settings/service node with no UI of its own. Every option it holds
+## (colorblind, large touch targets, audio cues, haptics, screen shake,
+## particles, and now Reduce Motion) is exposed by Settings.tscn, which the
+## gear button already opens, so nothing was lost with it.
 
 
 # ── Welcome popup ───────────────────────────────────────────────────
@@ -1813,26 +1980,27 @@ func _update_next_unlock_panel(current_droplets: int) -> void:
 	if not next_unlock_progress or not next_unlock_label:
 		return
 
-	# Full unlock catalogue sorted by cost — characters + minigame bundles
+	# Full unlock catalogue sorted by cost — characters + minigame bundles. "key" names the
+	# shared-table entry, "name" is the English fallback, "emoji" is appended at render time.
 	const ALL_UNLOCKABLES: Array = [
-		{"cost": 50,  "name": "Pinky 💗",          "type": "character", "id": "pinky"},
-		{"cost": 100, "name": "Minty 🌿",           "type": "character", "id": "minty"},
-		{"cost": 100, "name": "Water Sort 🧪",       "type": "minigame",  "id": "water_sorting"},
-		{"cost": 120, "name": "Sun Hat 👒",           "type": "accessory", "id": "sun_hat"},
-		{"cost": 150, "name": "Sunny ☀️",             "type": "character", "id": "sunny"},
-		{"cost": 150, "name": "Sailboat 🛥️",          "type": "decoration","id": "boat"},
-		{"cost": 180, "name": "Cool Shades 🕶️",       "type": "accessory", "id": "cool_shades"},
-		{"cost": 200, "name": "Lavvy ✨",             "type": "character", "id": "lavvy"},
-		{"cost": 200, "name": "Fix Leaks 💧",         "type": "minigame",  "id": "leak_fix"},
-		{"cost": 220, "name": "Party Cap 🎉",         "type": "accessory", "id": "party_cap"},
-		{"cost": 260, "name": "Leaf Crown 🍃",        "type": "accessory", "id": "leaf_crown"},
-		{"cost": 300, "name": "Peachy 🍑",            "type": "character", "id": "peachy"},
-		{"cost": 300, "name": "Water Quiz ❓",        "type": "minigame",  "id": "water_quiz"},
-		{"cost": 320, "name": "Safety Helmet ⛑️",     "type": "accessory", "id": "safety_helmet"},
-		{"cost": 400, "name": "Cyanny 🌊",            "type": "character", "id": "cyanny"},
-		{"cost": 400, "name": "Bucket Relay 🪣",      "type": "minigame",  "id": "bucket_relay"},
-		{"cost": 500, "name": "Coral 🪸",             "type": "character", "id": "coral"},
-		{"cost": 500, "name": "Fun Games 🎉",         "type": "minigame",  "id": "fun_games"},
+		{"cost": 50,  "key": "character_name_pinky",   "name": "Pinky",     "emoji": "💗", "type": "character", "id": "pinky"},
+		{"cost": 100, "key": "character_name_minty",   "name": "Minty",     "emoji": "🌿", "type": "character", "id": "minty"},
+		{"cost": 100, "key": "minigame_water_sorting", "name": "Water Sort", "emoji": "🧪", "type": "minigame",  "id": "water_sorting"},
+		{"cost": 120, "key": "accessory_sun_hat",      "name": "Sun Hat",   "emoji": "👒", "type": "accessory", "id": "sun_hat"},
+		{"cost": 150, "key": "character_name_sunny",   "name": "Sunny",     "emoji": "☀️", "type": "character", "id": "sunny"},
+		{"cost": 150, "key": "shop_decor_sailboat",    "name": "Sailboat",  "emoji": "🛥️", "type": "decoration","id": "boat"},
+		{"cost": 180, "key": "accessory_cool_shades",  "name": "Cool Shades", "emoji": "🕶️", "type": "accessory", "id": "cool_shades"},
+		{"cost": 200, "key": "character_name_lavvy",   "name": "Lavvy",     "emoji": "✨", "type": "character", "id": "lavvy"},
+		{"cost": 200, "key": "minigame_leak_fix",      "name": "Fix Leaks", "emoji": "💧", "type": "minigame",  "id": "leak_fix"},
+		{"cost": 220, "key": "accessory_party_cap",    "name": "Party Cap", "emoji": "🎉", "type": "accessory", "id": "party_cap"},
+		{"cost": 260, "key": "accessory_leaf_crown",   "name": "Leaf Crown", "emoji": "🍃", "type": "accessory", "id": "leaf_crown"},
+		{"cost": 300, "key": "character_name_peachy",  "name": "Peachy",    "emoji": "🍑", "type": "character", "id": "peachy"},
+		{"cost": 300, "key": "minigame_water_quiz",    "name": "Water Quiz", "emoji": "❓", "type": "minigame",  "id": "water_quiz"},
+		{"cost": 320, "key": "accessory_safety_helmet", "name": "Safety Helmet", "emoji": "⛑️", "type": "accessory", "id": "safety_helmet"},
+		{"cost": 400, "key": "character_name_cyanny",  "name": "Cyanny",    "emoji": "🌊", "type": "character", "id": "cyanny"},
+		{"cost": 400, "key": "minigame_bucket_relay",  "name": "Bucket Relay", "emoji": "🏺", "type": "minigame",  "id": "bucket_relay"},
+		{"cost": 500, "key": "character_name_coral",   "name": "Coral",     "emoji": "🌺", "type": "character", "id": "coral"},
+		{"cost": 500, "key": "minigame_fun_games",     "name": "Fun Games", "emoji": "🎉", "type": "minigame",  "id": "fun_games"},
 	]
 
 	var save_mgr = get_node_or_null("/root/SaveManager")
@@ -1876,7 +2044,12 @@ func _update_next_unlock_panel(current_droplets: int) -> void:
 	var in_segment: int = max(0, current_droplets - prev_cost)
 	next_unlock_progress.value = clamp((float(in_segment) / float(segment)) * 100.0, 0.0, 100.0)
 	var remaining: int = next_cost - current_droplets
-	next_unlock_label.text = "%s\n💧 %d to go" % [str(next_item.name), remaining]
+	# The catalogue stores the table key, the plain English name as the fallback, and the
+	# emoji separately: the emoji is language-neutral, and keeping it out of the key lets
+	# this panel reuse the same entries UnlockablesScreen already reads.
+	var next_name := "%s %s" % [
+		_loc(str(next_item.key), str(next_item.name)), str(next_item.emoji)]
+	next_unlock_label.text = _loc("unlock_droplets_to_go", "%s\n💧 %d to go") % [next_name, remaining]
 
 
 # ── Helpers ─────────────────────────────────────────────────────────
@@ -1914,3 +2087,7 @@ func _exit_tree() -> void:
 		if tw and tw.is_valid():
 			tw.kill()
 	_tweens.clear()
+	for tw in _ambient_tweens:
+		if tw and tw.is_valid():
+			tw.kill()
+	_ambient_tweens.clear()

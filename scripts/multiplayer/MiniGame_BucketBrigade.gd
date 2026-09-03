@@ -4,7 +4,7 @@ extends "res://scripts/multiplayer/MultiplayerMiniGameEffects.gd"
 ## ═══════════════════════════════════════════════════════════════════
 ## MINIGAME_BUCKET_BRIGADE.GD - Multiplayer Bucket Passing Game
 ## ═══════════════════════════════════════════════════════════════════
-## Theme: "Bucket Brigade" 🪣
+## Theme: "Bucket Brigade" 🏺
 ## 
 ## ASYMMETRIC GAMEPLAY:
 ## - Player 1 (Host): Fills buckets from tap by clicking
@@ -95,7 +95,7 @@ func _ready() -> void:
 
 func get_instructions() -> String:
 	if is_player_one:
-		return """🪣 BUCKET FILLER
+		return """🏺 BUCKET FILLER
 
 YOUR ROLE: Fill buckets with water!
 
@@ -174,7 +174,7 @@ func _setup_role_ui() -> void:
 		title_label.text = "YOUR ROLE: Fill Empty Buckets!"
 		controls_label.text = "🕹️ CONTROLS: Click on EMPTY buckets to fill them with water"
 	else:
-		role_label.text = "🪣 PLAYER 2: EMPTIER"
+		role_label.text = "🏺 PLAYER 2: EMPTIER"
 		title_label.text = "YOUR ROLE: Empty Full Buckets!"
 		controls_label.text = "🕹️ CONTROLS: Click on FULL buckets to empty them and score points"
 	
@@ -385,6 +385,11 @@ func _start_game() -> void:
 	game_active = true
 	local_score = 0
 	round_start_time = Time.get_ticks_msec()
+
+	# Force the next frame to repaint the countdown: on a replayed round the
+	# cached second is still the previous round's value, which would suppress
+	# the first write and briefly show a stale time.
+	reset_timer_label_cache()
 	
 	# Set the quota in GameManager
 	if GameManager:
@@ -405,7 +410,7 @@ func _start_game() -> void:
 
 func _update_score_display() -> void:
 	var global_score: int = GameManager.get_global_score() if GameManager else local_score
-	score_label.text = "🪣 Score: %d / %d" % [global_score, current_settings["quota"]]
+	score_label.text = "🏺 Score: %d / %d" % [global_score, current_settings["quota"]]
 	quota_bar.value = global_score
 	score_updated.emit(global_score)
 	
@@ -432,7 +437,7 @@ func _on_team_won() -> void:
 	await get_tree().create_timer(2.0).timeout
 	
 	if GameManager and GameManager.is_host:
-		GameManager.rpc("_load_next_multiplayer_minigame")
+		GameManager.advance_multiplayer_round()
 
 func _on_team_lost() -> void:
 	game_active = false
@@ -443,7 +448,7 @@ func _on_team_lost() -> void:
 	
 	if GameManager and GameManager.is_host:
 		if GameManager.team_lives > 0:
-			GameManager.rpc("_load_next_multiplayer_minigame")
+			GameManager.advance_multiplayer_round()
 		else:
 			GameManager.rpc("_show_multiplayer_final_results")
 

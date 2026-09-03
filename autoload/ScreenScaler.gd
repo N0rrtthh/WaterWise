@@ -3,13 +3,20 @@ extends Node
 ## ═══════════════════════════════════════════════════════════════════
 ## SCREEN SCALER - DYNAMIC GAME CONTENT SCALING
 ## ═══════════════════════════════════════════════════════════════════
-## Works alongside the project's stretch settings (canvas_items + keep)
+## Works alongside the project's stretch settings (canvas_items + expand)
 ## to ensure game content fills the viewport correctly on all devices.
 ##
-## With canvas_items/keep mode, the viewport always renders at the
-## design resolution (1920×1080) and scales uniformly to the physical
-## screen.  This scaler provides helper utilities for scenes that need
-## additional adjustments (e.g. programmatically created Node2D content).
+## With canvas_items/EXPAND, the viewport does NOT stay at 1920×1080: one
+## axis is held at the design size and the other grows to match the device
+## aspect, so nothing is letterboxed and no content is cropped. On a 19.5:9
+## phone the visible rect measures ~2411×1080 and screen_scale is (1.26, 1.0).
+## Scenes that build Node2D content in code use the helpers below to match.
+##
+## Under --headless there is no real window (DisplayServer reports 0×0 and the
+## backing store is 64×64, aspect 1.0), so EXPAND resolves the visible rect to
+## a square 1920×1920 and scale_y prints as 1.78. That is a property of the
+## headless driver, not a scaling defect — verified with tools/ViewportProbe.tscn,
+## which reports 2411×1080 / (1.26, 1.0) for the same build in a real window.
 ## ═══════════════════════════════════════════════════════════════════
 
 const BASE_WIDTH = 1920.0

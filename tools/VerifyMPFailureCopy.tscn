@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://tools/VerifyMPFailureCopy.gd" id="1_vmpfc"]
+
+[node name="VerifyMPFailureCopy" type="Node"]
+script = ExtResource("1_vmpfc")

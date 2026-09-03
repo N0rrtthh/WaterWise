@@ -19,7 +19,7 @@ const CHARACTER_PRESETS: Array[Dictionary] = [
 	{"id": "lavvy", "name": "Lavvy", "hat": "✨", "color": Color(0.8, 0.6, 1.0)},
 	{"id": "peachy", "name": "Peachy", "hat": "🍑", "color": Color(1.0, 0.8, 0.7)},
 	{"id": "cyanny", "name": "Cyanny", "hat": "🌊", "color": Color(0.4, 1.0, 1.0)},
-	{"id": "coral", "name": "Coral", "hat": "🪸", "color": Color(1.0, 0.5, 0.5)},
+	{"id": "coral", "name": "Coral", "hat": "🌺", "color": Color(1.0, 0.5, 0.5)},
 ]
 
 const ACCESSORIES: Array[Dictionary] = [
@@ -67,6 +67,11 @@ var _accessory_scroll: ScrollContainer
 var _acc_dragging: bool = false
 var _acc_drag_start_x: float = 0.0
 var _acc_scroll_start: int = 0
+## Which contact owns the accessory strip's horizontal scroll. Without this a
+## second finger re-anchored the drag to itself and its lift cancelled the scroll
+## the first finger was still performing.
+const NO_TOUCH_INDEX: int = -1
+var _acc_touch_index: int = NO_TOUCH_INDEX
 
 
 func _ready() -> void:
@@ -496,14 +501,20 @@ func _input(event: InputEvent) -> void:
 	if event is InputEventScreenTouch:
 		var touch = event as InputEventScreenTouch
 		if touch.pressed:
+			if _acc_touch_index != NO_TOUCH_INDEX:
+				return
 			if _accessory_scroll.get_global_rect().has_point(touch.position):
+				_acc_touch_index = touch.index
 				_acc_dragging = true
 				_acc_drag_start_x = touch.position.x
 				_acc_scroll_start = _accessory_scroll.scroll_horizontal
-		else:
+		elif touch.index == _acc_touch_index:
+			_acc_touch_index = NO_TOUCH_INDEX
 			_acc_dragging = false
 	elif event is InputEventScreenDrag and _acc_dragging:
 		var drag = event as InputEventScreenDrag
+		if drag.index != _acc_touch_index:
+			return
 		var delta = _acc_drag_start_x - drag.position.x
 		_accessory_scroll.scroll_horizontal = int(_acc_scroll_start + delta)
 
@@ -601,7 +612,7 @@ func _update_carousel(direction: int) -> void:
 	_bob_tween.tween_property(
 		_preview_node, "position:y", center.y, 0.7
 	).set_trans(Tween.TRANS_SINE)
-	_name_label.text = "%s %s" % [preset.hat, preset.name]
+	_name_label.text = "%s %s" % [preset.hat, _get_character_name(str(preset.id), str(preset.name))]
 	var equipped_acc = _get_current_accessory(char_id)
 	var acc_name = _loc("accessory_default", "Default")
 	for a in ACCESSORIES:
@@ -876,6 +887,13 @@ func _get_accessory_name(acc_id: String, fallback: String) -> String:
 	if key.is_empty():
 		return fallback
 	return _loc(key, fallback)
+
+## Mirrors UnlockablesScreen._get_character_name: the eight character names live in the
+## shared table under character_name_<id>, so the carousel caption and the unlock list
+## cannot drift apart. The names are proper nouns and read the same in both languages,
+## but they still go through the table so a future rename happens in one place.
+func _get_character_name(char_id: String, fallback: String) -> String:
+	return _loc("character_name_%s" % char_id, fallback)
 
 
 func _refresh_accessory_button_texts() -> void:

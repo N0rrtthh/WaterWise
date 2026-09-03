@@ -489,11 +489,17 @@ func _animate_droplet(is_win: bool) -> void:
 		# Spin dizzy stars
 		var dizzy_stars = _character.get_node_or_null("DizzyStars")
 		if dizzy_stars:
+			# The target is the DELTA, not an absolute: a looping Tween restarts its
+			# tweeners each loop and a fixed target would then animate
+			# rotation -> rotation, so the stars turned once and stood still for the
+			# remaining five loops. Same shape as WringItOutLoseOutro's cyclone; the
+			# engine behaviour is measured in tools/VerifyLoopingTweenAdvance.tscn.
+			# Not reachable today (this branch is gated on `not use_cartoon_cutscenes`),
+			# so it is fixed but unverified in scene.
 			var star_spin = create_tween().set_loops(6)
 			star_spin.tween_property(
-				dizzy_stars, "rotation",
-				dizzy_stars.rotation + TAU, 0.55
-			).set_trans(Tween.TRANS_LINEAR)
+				dizzy_stars, "rotation", TAU, 0.55
+			).set_trans(Tween.TRANS_LINEAR).as_relative()
 
 		# Limp arms swinging
 		var left_arm = _character.get_node_or_null("LeftArm")
@@ -630,7 +636,7 @@ func _get_scene_data(key: String, is_win: bool) -> Dictionary:
 					{"e": "☁️", "x": 0.5, "y": 0.12, "size": 72, "anim": "shake", "delay": 0.0},
 					{"e": "🌧️", "x": 0.22, "y": 0.24, "size": 48, "anim": "fall", "delay": 0.12},
 					{"e": "🌧️", "x": 0.78, "y": 0.26, "size": 48, "anim": "fall", "delay": 0.24},
-					{"e": "🪣", "x": 0.5, "y": 0.8, "size": 68, "anim": "pop", "delay": 0.1},
+					{"e": "🏺", "x": 0.5, "y": 0.8, "size": 68, "anim": "pop", "delay": 0.1},
 					{"e": "💀", "x": 0.8, "y": 0.76, "size": 44, "anim": "pop", "delay": 0.72},
 				],
 				"text": "Mystery liquid fills the drum. A plant dies.",
@@ -664,7 +670,7 @@ func _get_scene_data(key: String, is_win: bool) -> Dictionary:
 				"props": [
 					{"e": "💧", "x": 0.22, "y": 0.3, "size": 60, "anim": "bounce", "delay": 0.0},
 					{"e": "💧", "x": 0.75, "y": 0.25, "size": 52, "anim": "bounce", "delay": 0.15},
-					{"e": "🫙", "x": 0.5, "y": 0.78, "size": 76, "anim": "fill_up", "delay": 0.38},
+					{"e": "🥛", "x": 0.5, "y": 0.78, "size": 76, "anim": "fill_up", "delay": 0.38},
 					{"e": "✨", "x": 0.78, "y": 0.68, "size": 48, "anim": "float", "delay": 0.6},
 				],
 				"text": "Every drop caught. The droplets look betrayed.",
@@ -674,7 +680,7 @@ func _get_scene_data(key: String, is_win: bool) -> Dictionary:
 				"props": [
 					{"e": "💧", "x": 0.22, "y": 0.28, "size": 60, "anim": "fly_away", "delay": 0.1},
 					{"e": "💧", "x": 0.72, "y": 0.22, "size": 52, "anim": "fly_away", "delay": 0.25},
-					{"e": "🫙", "x": 0.5, "y": 0.78, "size": 76, "anim": "shake", "delay": 0.18},
+					{"e": "🥛", "x": 0.5, "y": 0.78, "size": 76, "anim": "shake", "delay": 0.18},
 					{"e": "😢", "x": 0.16, "y": 0.7, "size": 52, "anim": "pop", "delay": 0.52},
 				],
 				"text": "The last droplet waves goodbye. Glass is empty.",
@@ -707,7 +713,7 @@ func _get_scene_data(key: String, is_win: bool) -> Dictionary:
 					{"e": "🔧", "x": 0.5, "y": 0.3, "size": 80, "anim": "pop", "delay": 0.0},
 					{"e": "🚰", "x": 0.5, "y": 0.78, "size": 72, "anim": "pop", "delay": 0.2},
 					{"e": "💧", "x": 0.62, "y": 0.7, "size": 36, "anim": "float", "delay": 0.72},
-					{"e": "🫡", "x": 0.75, "y": 0.48, "size": 56, "anim": "pop", "delay": 0.82},
+					{"e": "👋", "x": 0.75, "y": 0.48, "size": 56, "anim": "pop", "delay": 0.82},
 				],
 				"text": "Silence. Peace. A single drip salutes you.",
 			},
@@ -729,7 +735,7 @@ func _get_scene_data(key: String, is_win: bool) -> Dictionary:
 					{"e": "🔧", "x": 0.5, "y": 0.3, "size": 80, "anim": "pop", "delay": 0.0},
 					{"e": "🚰", "x": 0.5, "y": 0.78, "size": 72, "anim": "pop", "delay": 0.2},
 					{"e": "💧", "x": 0.62, "y": 0.7, "size": 36, "anim": "float", "delay": 0.72},
-					{"e": "🫡", "x": 0.75, "y": 0.48, "size": 56, "anim": "pop", "delay": 0.82},
+					{"e": "👋", "x": 0.75, "y": 0.48, "size": 56, "anim": "pop", "delay": 0.82},
 				],
 				"text": "Silence. Peace. A single drip salutes you.",
 			},
@@ -748,7 +754,7 @@ func _get_scene_data(key: String, is_win: bool) -> Dictionary:
 			"win": {
 				"bg": Color(0.08, 0.25, 0.08, 0.88),
 				"props": [
-					{"e": "🪣", "x": 0.3, "y": 0.68, "size": 72, "anim": "pop", "delay": 0.0},
+					{"e": "🏺", "x": 0.3, "y": 0.68, "size": 72, "anim": "pop", "delay": 0.0},
 					{"e": "🌸", "x": 0.72, "y": 0.62, "size": 60, "anim": "pop", "delay": 0.3},
 					{"e": "🌿", "x": 0.5, "y": 0.78, "size": 60, "anim": "bounce", "delay": 0.5},
 				],
@@ -768,8 +774,8 @@ func _get_scene_data(key: String, is_win: bool) -> Dictionary:
 			"win": {
 				"bg": Color(0.2, 0.22, 0.05, 0.88),
 				"props": [
-					{"e": "🪣", "x": 0.22, "y": 0.42, "size": 72, "anim": "bounce", "delay": 0.0},
-					{"e": "🪣", "x": 0.5, "y": 0.38, "size": 72, "anim": "bounce", "delay": 0.15},
+					{"e": "🏺", "x": 0.22, "y": 0.42, "size": 72, "anim": "bounce", "delay": 0.0},
+					{"e": "🏺", "x": 0.5, "y": 0.38, "size": 72, "anim": "bounce", "delay": 0.15},
 					{"e": "🌿", "x": 0.78, "y": 0.72, "size": 68, "anim": "pop", "delay": 0.4},
 					{"e": "🎉", "x": 0.5, "y": 0.18, "size": 60, "anim": "float", "delay": 0.6},
 				],
@@ -778,7 +784,7 @@ func _get_scene_data(key: String, is_win: bool) -> Dictionary:
 			"fail": {
 				"bg": Color(0.2, 0.15, 0.05, 0.88),
 				"props": [
-					{"e": "🪣", "x": 0.5, "y": 0.45, "size": 72, "anim": "shake", "delay": 0.0},
+					{"e": "🏺", "x": 0.5, "y": 0.45, "size": 72, "anim": "shake", "delay": 0.0},
 					{"e": "🥪", "x": 0.75, "y": 0.42, "size": 60, "anim": "pop", "delay": 0.42},
 					{"e": "🌱", "x": 0.22, "y": 0.72, "size": 56, "anim": "shake", "delay": 0.62},
 				],
@@ -891,7 +897,7 @@ func _get_scene_data(key: String, is_win: bool) -> Dictionary:
 			"win": {
 				"bg": Color(0.06, 0.22, 0.1, 0.88),
 				"props": [
-					{"e": "🪣", "x": 0.3, "y": 0.42, "size": 68, "anim": "pop", "delay": 0.0},
+					{"e": "🏺", "x": 0.3, "y": 0.42, "size": 68, "anim": "pop", "delay": 0.0},
 					{"e": "🌿", "x": 0.7, "y": 0.72, "size": 80, "anim": "bounce", "delay": 0.3},
 					{"e": "💧", "x": 0.5, "y": 0.25, "size": 52, "anim": "fall", "delay": 0.1},
 				],
@@ -901,7 +907,7 @@ func _get_scene_data(key: String, is_win: bool) -> Dictionary:
 				"bg": Color(0.2, 0.15, 0.06, 0.88),
 				"props": [
 					{"e": "🌱", "x": 0.72, "y": 0.72, "size": 72, "anim": "shake", "delay": 0.0},
-					{"e": "🪣", "x": 0.3, "y": 0.52, "size": 64, "anim": "pop", "delay": 0.3},
+					{"e": "🏺", "x": 0.3, "y": 0.52, "size": 64, "anim": "pop", "delay": 0.3},
 					{"e": "😐", "x": 0.72, "y": 0.35, "size": 52, "anim": "pop", "delay": 0.72},
 				],
 				"text": "Wrong bucket. The real green one watches silently.",
@@ -912,7 +918,7 @@ func _get_scene_data(key: String, is_win: bool) -> Dictionary:
 				"bg": Color(0.05, 0.2, 0.38, 0.88),
 				"props": [
 					{"e": "🚰", "x": 0.5, "y": 0.28, "size": 76, "anim": "pop", "delay": 0.0},
-					{"e": "🫙", "x": 0.5, "y": 0.78, "size": 76, "anim": "fill_up", "delay": 0.3},
+					{"e": "🥛", "x": 0.5, "y": 0.78, "size": 76, "anim": "fill_up", "delay": 0.3},
 					{"e": "🎯", "x": 0.78, "y": 0.32, "size": 56, "anim": "pop", "delay": 0.52},
 				],
 				"text": "Perfect fill! The container does a little shimmy.",
@@ -1121,7 +1127,7 @@ func _get_scene_data(key: String, is_win: bool) -> Dictionary:
 					{"e": "🌧️", "x": 0.5, "y": 0.15, "size": 68, "anim": "fall", "delay": 0.0},
 					{"e": "🐠", "x": 0.35, "y": 0.65, "size": 64, "anim": "bounce", "delay": 0.42},
 					{"e": "🐟", "x": 0.65, "y": 0.7, "size": 60, "anim": "bounce", "delay": 0.52},
-					{"e": "🪣", "x": 0.5, "y": 0.8, "size": 72, "anim": "fill_up", "delay": 0.3},
+					{"e": "🏺", "x": 0.5, "y": 0.8, "size": 72, "anim": "fill_up", "delay": 0.3},
 				],
 				"text": "Tank filled to the line. The fish look smug.",
 			},
@@ -1140,7 +1146,7 @@ func _get_scene_data(key: String, is_win: bool) -> Dictionary:
 				"bg": Color(0.06, 0.2, 0.3, 0.88),
 				"props": [
 					{"e": "🍽️", "x": 0.35, "y": 0.52, "size": 72, "anim": "pop", "delay": 0.0},
-					{"e": "🪣", "x": 0.65, "y": 0.72, "size": 72, "anim": "fill_up", "delay": 0.3},
+					{"e": "🏺", "x": 0.65, "y": 0.72, "size": 72, "anim": "fill_up", "delay": 0.3},
 					{"e": "🌱", "x": 0.5, "y": 0.2, "size": 56, "anim": "pop", "delay": 0.62},
 				],
 				"text": "Dishes clean. Greywater saved. Two eco-icons.",
@@ -1148,7 +1154,7 @@ func _get_scene_data(key: String, is_win: bool) -> Dictionary:
 			"fail": {
 				"bg": Color(0.18, 0.15, 0.08, 0.88),
 				"props": [
-					{"e": "🪣", "x": 0.5, "y": 0.65, "size": 72, "anim": "shake", "delay": 0.0},
+					{"e": "🏺", "x": 0.5, "y": 0.65, "size": 72, "anim": "shake", "delay": 0.0},
 					{"e": "🌊", "x": 0.5, "y": 0.85, "size": 72, "anim": "pop", "delay": 0.3},
 					{"e": "😤", "x": 0.25, "y": 0.38, "size": 52, "anim": "pop", "delay": 0.52},
 					{"e": "😤", "x": 0.72, "y": 0.42, "size": 52, "anim": "pop", "delay": 0.66},
@@ -1169,7 +1175,7 @@ func _get_scene_data(key: String, is_win: bool) -> Dictionary:
 			"fail": {
 				"bg": Color(0.12, 0.12, 0.18, 0.88),
 				"props": [
-					{"e": "🪣", "x": 0.5, "y": 0.65, "size": 72, "anim": "shake", "delay": 0.0},
+					{"e": "🏺", "x": 0.5, "y": 0.65, "size": 72, "anim": "shake", "delay": 0.0},
 					{"e": "🌊", "x": 0.5, "y": 0.85, "size": 72, "anim": "pop", "delay": 0.3},
 					{"e": "🧹", "x": 0.28, "y": 0.45, "size": 60, "anim": "pop", "delay": 0.62},
 				],
@@ -1181,8 +1187,8 @@ func _get_scene_data(key: String, is_win: bool) -> Dictionary:
 				"bg": Color(0.05, 0.18, 0.35, 0.88),
 				"props": [
 					{"e": "🚿", "x": 0.5, "y": 0.28, "size": 76, "anim": "pop", "delay": 0.0},
-					{"e": "🪣", "x": 0.3, "y": 0.72, "size": 68, "anim": "fill_up", "delay": 0.3},
-					{"e": "🪣", "x": 0.7, "y": 0.72, "size": 68, "anim": "fill_up", "delay": 0.45},
+					{"e": "🏺", "x": 0.3, "y": 0.72, "size": 68, "anim": "fill_up", "delay": 0.3},
+					{"e": "🏺", "x": 0.7, "y": 0.72, "size": 68, "anim": "fill_up", "delay": 0.45},
 					{"e": "🌍", "x": 0.5, "y": 0.18, "size": 52, "anim": "pop", "delay": 0.72},
 				],
 				"text": "Every warm-up litre saved. You fixed the crisis.",
@@ -1190,7 +1196,7 @@ func _get_scene_data(key: String, is_win: bool) -> Dictionary:
 			"fail": {
 				"bg": Color(0.05, 0.1, 0.28, 0.92),
 				"props": [
-					{"e": "🪣", "x": 0.5, "y": 0.62, "size": 72, "anim": "shake", "delay": 0.0},
+					{"e": "🏺", "x": 0.5, "y": 0.62, "size": 72, "anim": "shake", "delay": 0.0},
 					{"e": "🌊", "x": 0.5, "y": 0.85, "size": 76, "anim": "pop", "delay": 0.3},
 					{"e": "🚿", "x": 0.5, "y": 0.22, "size": 64, "anim": "shake", "delay": 0.42},
 				],
@@ -1202,7 +1208,7 @@ func _get_scene_data(key: String, is_win: bool) -> Dictionary:
 				"bg": Color(0.04, 0.18, 0.4, 0.88),
 				"props": [
 					{"e": "🐡", "x": 0.5, "y": 0.58, "size": 76, "anim": "bounce", "delay": 0.42},
-					{"e": "🪣", "x": 0.3, "y": 0.72, "size": 68, "anim": "pop", "delay": 0.0},
+					{"e": "🏺", "x": 0.3, "y": 0.72, "size": 68, "anim": "pop", "delay": 0.0},
 					{"e": "🎯", "x": 0.72, "y": 0.42, "size": 56, "anim": "pop", "delay": 0.52},
 				],
 				"text": "Perfect fill! A goldfish materializes to say thank you.",
@@ -1277,7 +1283,7 @@ func _get_scene_data(key: String, is_win: bool) -> Dictionary:
 				"bg": Color(0.06, 0.2, 0.32, 0.88),
 				"props": [
 					{"e": "🚗", "x": 0.5, "y": 0.68, "size": 84, "anim": "pop", "delay": 0.0},
-					{"e": "🪣", "x": 0.28, "y": 0.55, "size": 60, "anim": "bounce", "delay": 0.3},
+					{"e": "🏺", "x": 0.28, "y": 0.55, "size": 60, "anim": "bounce", "delay": 0.3},
 					{"e": "✨", "x": 0.72, "y": 0.48, "size": 52, "anim": "float", "delay": 0.52},
 				],
 				"text": "Shiny car, zero hose used. A neighbor is impressed.",
@@ -1334,8 +1340,17 @@ func _get_scene_data(key: String, is_win: bool) -> Dictionary:
 		},
 	}
 	var key_data: Dictionary = scenes.get(key, {})
-	return key_data.get(outcome, {
+	var data: Dictionary = key_data.get(outcome, {
 		"bg": default_bg,
 		"props": [],
 		"text": "",
 	})
+	# The flavour line is authored in English above and mirrored in the shared table as
+	# cutscene_line_<game>_<win|fail>. `scenes` is rebuilt on every call, so writing the
+	# field here touches only this call's copy, and the authored English stays as the
+	# fallback for a row the table has no entry for (the MP rows, which reach this
+	# function from nowhere, and CloudCatcher, which has no row at all).
+	var line_key := "cutscene_line_%s_%s" % [key.to_snake_case(), outcome]
+	if Localization and Localization.has_text(line_key):
+		data["text"] = Localization.get_text(line_key)
+	return data

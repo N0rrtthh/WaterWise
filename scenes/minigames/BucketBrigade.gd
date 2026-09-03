@@ -1,3 +1,8 @@
+## ORPHAN: no scene loads this file. BucketBrigade.tscn runs
+## res://scripts/minigames_v2/BucketBrigadeV2.gd instead — this is the pre-v2
+## version, kept for reference. Edits here do not reach the running game.
+## tools/VerifyScriptOwnership.tscn fails if this banner is removed while the file is
+## still unreferenced.
 extends MiniGameBase
 
 ## ═══════════════════════════════════════════════════════════════════
@@ -45,7 +50,7 @@ func _apply_difficulty_settings() -> void:
 
 func _ready():
 	game_name = "Bucket Brigade"
-	game_instruction_text = Localization.get_text("bucket_brigade_instructions") if Localization else "TAP the person with the bucket\nto pass it along! 🪣➡️🌱"
+	game_instruction_text = Localization.get_text("bucket_brigade_instructions") if Localization else "TAP the person with the bucket\nto pass it along! 🏺➡️🌱"
 	game_duration = 40.0
 	game_mode = "quota"
 	
@@ -209,7 +214,7 @@ func _create_source_and_destination() -> void:
 func _create_score_display() -> void:
 	var score_display = Label.new()
 	score_display.name = "ScoreDisplay"
-	score_display.text = "🪣 Delivered: 0 / %d" % target_buckets
+	score_display.text = "🏺 Delivered: 0 / %d" % target_buckets
 	score_display.add_theme_font_size_override("font_size", 32)
 	score_display.add_theme_color_override("font_color", Color.WHITE)
 	score_display.add_theme_color_override("font_outline_color", Color(0.2, 0.3, 0.5))
@@ -465,7 +470,7 @@ func _bucket_delivered(bucket: Node2D) -> void:
 	buckets_delivered += 1
 	
 	# Update score display
-	get_node("ScoreDisplay").text = "🪣 Delivered: %d / %d" % [buckets_delivered, target_buckets]
+	get_node("ScoreDisplay").text = "🏺 Delivered: %d / %d" % [buckets_delivered, target_buckets]
 	
 	# Update progress bar
 	var progress = float(buckets_delivered) / float(target_buckets)
@@ -479,7 +484,7 @@ func _bucket_delivered(bucket: Node2D) -> void:
 	# Make garden grow a bit
 	var garden = get_node("Garden/GardenEmoji")
 	var growth_stage = mini(buckets_delivered, 4)
-	var garden_emojis = ["🌱", "🌿", "🪴", "🌳", "🌳"]
+	var garden_emojis = ["🌱", "🌿", "🌼", "🌳", "🌳"]
 	garden.text = garden_emojis[growth_stage]
 	
 	# Bounce animation for garden

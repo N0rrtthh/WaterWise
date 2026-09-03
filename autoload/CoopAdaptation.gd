@@ -24,6 +24,18 @@ signal synchronization_updated(sync_score: float)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 const WINDOW_SIZE: int = 5  # Rolling window size (matches single-player)
+
+## Hard cap on the append-only diagnostic arrays.
+##
+## player1_history, player2_history and synchronization_history are appended to
+## once per round and were never pruned, so a long demo or soak grew them without
+## bound against a project that holds itself to a flat-RAM target. 500 matches
+## AdaptiveDifficulty.MAX_PERFORMANCE_HISTORY and GCounter.MAX_HISTORY_ENTRIES so
+## all three keep the same depth of evidence. A 2-player session never reaches 500
+## rounds, so _calculate_avg_sync() still averages the whole session in practice;
+## past the cap it averages the most recent 500 rounds.
+const MAX_HISTORY_ENTRIES: int = 500
+
 const SKILL_GAP_THRESHOLD: float = 0.15  # 15% proficiency difference triggers asymmetric adjustment
 const WEAKER_ADJUSTMENT_FACTOR: float = 0.3  # Reduce Φ by 30% of skill gap
 const STRONGER_ADJUSTMENT_FACTOR: float = 0.2  # Increase Φ by 20% of skill gap
@@ -156,12 +168,16 @@ func add_game_result(
 	
 	# Add to Player 1 tracking
 	player1_history.append(p1_performance)
+	if player1_history.size() > MAX_HISTORY_ENTRIES:
+		player1_history.pop_front()
 	player1_window.append(p1_performance)
 	if player1_window.size() > WINDOW_SIZE:
 		player1_window.pop_front()
-	
+
 	# Add to Player 2 tracking
 	player2_history.append(p2_performance)
+	if player2_history.size() > MAX_HISTORY_ENTRIES:
+		player2_history.pop_front()
 	player2_window.append(p2_performance)
 	if player2_window.size() > WINDOW_SIZE:
 		player2_window.pop_front()
@@ -177,10 +193,18 @@ func add_game_result(
 	team_success_rate = float(successful_games) / float(total_games)
 	
 	# ════════════════════════════════════════════════════════════════════════
-	# SYNCHRONIZATION SCORE CALCULATION (G-Counter Algorithm)
+	# TEAM SYNCHRONIZATION SCORE (coordination metric — NOT the G-Counter CRDT)
 	# ════════════════════════════════════════════════════════════════════════
-	# ELI5: The "G-Counter" (Grow-only Counter) measures how well synchronized
-	#       the two players are. Good teamwork = finishing close together in time!
+	# Measures how well synchronized the two players are: good teamwork = both
+	# finishing close together in time.
+	#
+	# This block used to be labelled "G-Counter Algorithm". It is not one, and
+	# the label had to go: the paper's G-Counter is the grow-only replicated
+	# score counter in autoload/GCounter.gd (merge = element-wise max, integer
+	# payload, monotonic for the whole session). The value below is recomputed
+	# from scratch every round from a single time difference and freely goes
+	# DOWN when a round is poorly coordinated, so it satisfies none of the CRDT
+	# properties the thesis proves. Nothing here merges, replicates or converges.
 	#
 	# Formula: Sync = max(0, 100 - (time_diff × penalty))
 	#
@@ -202,10 +226,9 @@ func add_game_result(
 	#   time_diff = |5.0 - 25.0| = 20.0 seconds
 	#   Sync = 100 - (20.0 × 5.0) = 100 - 100 = 0% (clamped) ← NO COORDINATION
 	#
-	# WHY "G-Counter"? In distributed systems, a G-Counter is a CRDT (Conflict-free
-	# Replicated Data Type) that only grows upward, never decreases. Similarly,
-	# this sync score tracks the "growth" of team coordination over time.
-	# As players learn to work together, their sync scores grow higher!
+	# Scope note: this score is presentation/telemetry only. It feeds the sync
+	# trend log and _apply_synchronization_adjustments(); it never enters Φ, so a
+	# badly coordinated round cannot distort either player's proficiency index.
 	# ════════════════════════════════════════════════════════════════════════
 	
 	# STEP 1: Calculate time difference between players
@@ -218,6 +241,8 @@ func add_game_result(
 	
 	# STEP 3: Save to history for trend analysis
 	synchronization_history.append(current_sync_score)
+	if synchronization_history.size() > MAX_HISTORY_ENTRIES:
+		synchronization_history.pop_front()
 	
 	var result_str = "Success" if team_success else "Failed"
 	_log("📊 Game added - Team %s | Sync: %.1f%%"
@@ -256,7 +281,11 @@ func calculate_proficiency_index(rolling_window: Array[Dictionary]) -> float:
 	# - WMA = Weighted Moving Average with linear weights [1,2,3,4,5]
 	# - CP  = min(σ / 5000.0, 0.2) — standard deviation in ms, capped at 20%
 	#
-	# Identical to AdaptiveDifficulty._calculate_proficiency_index()
+	# Same math as single-player AdaptiveDifficulty._calculate_window_metrics():
+	# linear-weighted mean of accuracy, minus a σ-of-time penalty. The one
+	# difference is units — AdaptiveDifficulty stores reaction_time already in
+	# milliseconds, this window stores time in seconds, so the conversion to ms
+	# happens here (see std_dev_ms below) before the same /5000 divisor is applied.
 	#
 	# Returns: Φ value between -0.2 and 1.0
 	
@@ -421,7 +450,7 @@ func adjust_coop_difficulty() -> void:
 	difficulty_adapted.emit(player1_difficulty, player2_difficulty, skill_gap)
 	
 	# ────────────────────────────────────────────────────────────────────────
-	# STEP 5: Apply synchronization adjustments (G-Counter based)
+	# STEP 5: Apply synchronization adjustments (team coordination score)
 	# ────────────────────────────────────────────────────────────────────────
 	# ELI5: If their sync score is low, add coordination helpers
 	#       If their sync score is high, add challenge for expert teams

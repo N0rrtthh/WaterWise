@@ -331,15 +331,15 @@ func _pick_icon_for_key(success: bool, key: String) -> String:
 	if "Rain" in key:
 		return "🌦" if success else "🌧"
 	if "Leak" in key or "Tap" in key or "Pipe" in key:
-		return "🔧" if success else "🫗"
+		return "🔧" if success else "💧"
 	if "Plant" in key or "Vegetable" in key:
 		return "🌿" if success else "🥀"
 	if "Filter" in key or "Speck" in key or "Sort" in key:
 		return "🧪" if success else "🧫"
 	if "Shower" in key or "Soap" in key or "Scrub" in key:
-		return "🫧" if success else "🧼"
+		return "💦" if success else "🧼"
 	if "Bucket" in key or "Drum" in key or "Tank" in key:
-		return "🪣" if success else "🛢"
+		return "🏺" if success else "🛢"
 	if "Rice" in key or "Mud" in key:
 		return "🍃" if success else "💧"
 	if "Timing" in key or "Trace" in key:
@@ -1089,7 +1089,7 @@ func _add_outcome_bugged_drum(parent: Node2D, pos: Vector2) -> void:
 	parent.add_child(drum)
 	for i in 2:
 		var bug = Label.new()
-		bug.text = ["🦟", "🪲"][i]
+		bug.text = ["🦟", "🐞"][i]
 		bug.add_theme_font_size_override("font_size", 12)
 		bug.position = pos + Vector2(i * 12 - 6, -8)
 		parent.add_child(bug)
@@ -1471,11 +1471,16 @@ func _run_outro_character_vfx() -> void:
 			# Spinning dizzy stars
 			var stars = _water_droplet.get_node_or_null("DizzyStars")
 			if stars:
+				# Delta target, not absolute — a looping Tween re-captures the start of
+				# every tweener, so `stars.rotation + TAU` froze the stars after one
+				# turn and left five loops of stillness. See the note in
+				# SimpleCutscenePlayer._animate_droplet(); this branch is below
+				# _play_cartoon_outro()'s early return, so it is fixed but unverified
+				# in scene.
 				var star_spin = create_tween().set_loops(6)
 				star_spin.tween_property(
-					stars, "rotation",
-					stars.rotation + TAU, 1.2
-				).set_trans(Tween.TRANS_LINEAR)
+					stars, "rotation", TAU, 1.2
+				).set_trans(Tween.TRANS_LINEAR).as_relative()
 
 			# Limp arm swing
 			var arm_l = _water_droplet.get_node_or_null("Arm_L")

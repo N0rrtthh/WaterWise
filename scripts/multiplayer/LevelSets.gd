@@ -66,6 +66,22 @@ const LEVEL_SETS = [
 		"player2_role": "Car Washer",
 		"connection_type": "resource_transfer",
 		"connection_description": "P1's dish water → P2 washes car"
+	},
+	{
+		## The sixth pair, added because both of its games were unreachable without it: 12 MP_*.tscn
+		## ship on disk, the lobby only ever loads a set from this list (MultiplayerLobby.gd:501 ->
+		## get_random_level_set()), and these two were in none of them. They were written as a pair —
+		## MP_CatchTheRain sends "clean_water" and MP_FilterWater is the only game that receives it —
+		## so nothing about the pairing is invented here; it just had no entry.
+		"id": "rain_filtering",
+		"name": "Rain Catching and Filtering",
+		"description": "P1 catches rain, P2 filters the dirt out of it",
+		"player1_game": "res://scenes/multiplayer/MP_CatchTheRain.tscn",
+		"player2_game": "res://scenes/multiplayer/MP_FilterWater.tscn",
+		"player1_role": "Rain Catcher",
+		"player2_role": "Water Filterer",
+		"connection_type": "resource_transfer",
+		"connection_description": "P1's caught rain → P2 filters it clean"
 	}
 ]
 

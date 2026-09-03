@@ -27,7 +27,10 @@ func _apply_difficulty_settings() -> void:
 			game_duration = 20.0
 
 func _ready():
-	game_name = "Scrub To Save"
+	# Localized: the title stayed English above the Filipino objective FIX 58
+	# authored. _loc() keeps the English literal as the fallback for the case
+	# where the table is not up yet (tools/SceneLoadCheck instantiates that way).
+	game_name = _loc("scrub_to_save", "Scrub To Save")
 	game_instruction_text = Localization.get_text("scrub_save_instructions") if Localization else "RUB the dish to clean it!\nUse water wisely! 🍽️"
 	game_duration = 25.0
 	game_mode = "quota"
@@ -67,7 +70,7 @@ func _ready():
 	# Progress display
 	var progress_label = Label.new()
 	progress_label.name = "ProgressLabel"
-	progress_label.text = "Dirt: 100%"
+	progress_label.text = _loc("hud_dirt_percent", "Dirt: %.0f%%") % 100.0
 	progress_label.add_theme_font_size_override("font_size", 28)
 	progress_label.add_theme_color_override("font_color", Color.WHITE)
 	progress_label.add_theme_color_override("font_outline_color", Color.BLACK)
@@ -193,10 +196,15 @@ func _handle_scrubbing():
 			current_dish.rotation = 0
 	
 	# Update progress
-	get_node("ProgressLabel").text = "Dirt: %.0f%%" % dirt_level
-	
-	# Check if clean
-	if dirt_level <= 0:
+	get_node("ProgressLabel").text = _loc("hud_dirt_percent", "Dirt: %.0f%%") % dirt_level
+
+	# Check if clean.
+	#
+	# Gated on current_dish, not on dirt_level alone: dirt_level stays at 0 until
+	# _spawn_dish() resets it, so this test kept passing every frame while the
+	# awaits in _dish_cleaned() were pending. _dish_cleaned() clears the member,
+	# which turns the level check into a one-shot edge.
+	if current_dish and dirt_level <= 0:
 		_dish_cleaned()
 
 func _update_dirt_visual():
@@ -223,15 +231,32 @@ func _spawn_bubbles(pos: Vector2):
 		tw.tween_callback(bubble.queue_free)
 
 func _dish_cleaned():
+	# Detach the dish from the member reference before anything awaits.
+	#
+	# _handle_scrubbing() re-tested `dirt_level <= 0` every frame, and dirt_level
+	# is not reset until _spawn_dish() runs, so during the 0.3s and 0.5s awaits
+	# below this function was re-entered once per frame. Every re-entry counted
+	# another dish, fed another record_action(true) into the accuracy window the
+	# adaptive-difficulty algorithm reads, and queued another end_game(true). One
+	# round in the 480s soak logged 43 ignored end_game calls and reported
+	# Score:2185 / Acc:100% — against 20-605 for every other quota game — because
+	# record_action's combo bonus compounded across the phantom successes. Nulling
+	# the member here is what makes the level check a single edge.
+	var cleaned_dish: Node2D = current_dish
+	current_dish = null
+
 	dishes_cleaned += 1
 	record_action(true)
 	get_node("ScoreDisplay").text = "🍽️ %d / %d" % [dishes_cleaned, target_dishes]
-	
-	# Success animation
+
+	# Success animation. The dish frees itself at the end of its own fade now
+	# rather than when the next dish spawns, since _spawn_dish() can no longer
+	# reach it through current_dish.
 	var tw = create_tween()
-	tw.tween_property(current_dish, "scale", Vector2(1.2, 1.2), 0.1)
-	tw.tween_property(current_dish, "scale", Vector2(1.0, 1.0), 0.1)
-	tw.tween_property(current_dish, "modulate:a", 0.0, 0.2)
+	tw.tween_property(cleaned_dish, "scale", Vector2(1.2, 1.2), 0.1)
+	tw.tween_property(cleaned_dish, "scale", Vector2(1.0, 1.0), 0.1)
+	tw.tween_property(cleaned_dish, "modulate:a", 0.0, 0.2)
+	tw.tween_callback(cleaned_dish.queue_free)
 	
 	var flash = ColorRect.new()
 	flash.color = Color(0, 1, 0, 0.3)
@@ -243,9 +268,9 @@ func _dish_cleaned():
 	ftw.tween_callback(flash.queue_free)
 	
 	if dishes_cleaned >= target_dishes:
-		await get_tree().create_timer(0.3).timeout
+		await round_delay(0.3)
 		end_game(true)
 	else:
-		await get_tree().create_timer(0.5).timeout
+		await round_delay(0.5)
 		if game_active:
 			_spawn_dish()

@@ -13,6 +13,29 @@ var showers_taken: int = 0
 var target_showers: int = 5
 var gauge_position: float = 0.0
 var gauge_speed: float = 80.0
+
+## GAUGE SCALE - the instrument is sized in logical units and drawn scaled.
+##
+## The sweep in _process() runs gauge_position over a fixed 0..290 space, and
+## _start_shower() picks target_zone_start from randf_range(50, 200) with a 60-wide
+## zone in that same space. Those numbers ARE the difficulty (gauge_speed is 60/100/150
+## units per second, so the green zone is a 400 ms window on Hard), so they must not
+## move. What was wrong is that the gauge was DRAWN in those units too: a 300x40 bar on
+## the 1920x1080 canvas the project ships is 15.6% of the width, with a 10-unit indicator
+## inside it - 4.4 device pixels on the 854x480 profile in tools/AuditMobileUI.gd DEVICES.
+## Everything around it (shower head, drop column, score) is screen-relative.
+##
+## So scale the container instead of the numbers. The indicator and the green zone are its
+## children, so they scale with it and every timing value above keeps its exact meaning.
+const GAUGE_LOGICAL_W: float = 300.0
+const GAUGE_LOGICAL_H: float = 40.0
+## 40% of the width makes the bar the clear instrument it is; the cap keeps an ultrawide
+## window from stretching it across the whole screen.
+const GAUGE_VIEWPORT_SHARE: float = 0.40
+const GAUGE_SCALE_MAX: float = 3.0
+
+## Bathroom tile row height. Only a backdrop, but the row COUNT has to follow the screen.
+const TILE_H: float = 80.0
 var gauge_direction: int = 1
 
 func _apply_difficulty_settings() -> void:
@@ -31,7 +54,10 @@ func _apply_difficulty_settings() -> void:
 			game_duration = 8.0
 
 func _ready():
-	game_name = "Quick Shower"
+	# Localized: the title stayed English above the Filipino objective FIX 58
+	# authored. _loc() keeps the English literal as the fallback for the case
+	# where the table is not up yet (tools/SceneLoadCheck instantiates that way).
+	game_name = _loc("quick_shower", "Quick Shower")
 	game_instruction_text = Localization.get_text("quick_shower_instructions") if Localization else "TAP when gauge is in GREEN zone!\nSave water with quick showers! 🚿"
 	game_duration = 20.0
 	game_mode = "quota"
@@ -48,12 +74,15 @@ func _ready():
 	bg.z_index = -10
 	add_child(bg)
 	
-	# Tiles
-	for i in range(10):
+	# Tiles. The COUNT is derived, not fixed: ten 80-unit rows cover 800 units, and the canvas
+	# the project ships is 1080 tall, so the bottom 280 units fell through to the flat bg colour
+	# and left a visible seam right where the gauge sits (tools/probe_frames/QuickShower2).
+	# One row of overhang is correct - a partial row at the bottom is worse than none.
+	for i in range(ceili(screen_size.y / TILE_H)):
 		var tile = ColorRect.new()
 		tile.color = Color(0.8, 0.85, 0.9) if i % 2 == 0 else Color(0.75, 0.8, 0.85)
-		tile.size = Vector2(screen_size.x, 80)
-		tile.position = Vector2(0, i * 80)
+		tile.size = Vector2(screen_size.x, TILE_H)
+		tile.position = Vector2(0, i * TILE_H)
 		tile.z_index = -9
 		add_child(tile)
 	
@@ -74,8 +103,17 @@ func _ready():
 	# Gauge background
 	var gauge_bg = ColorRect.new()
 	gauge_bg.name = "GaugeBG"
-	gauge_bg.size = Vector2(300, 40)
-	gauge_bg.position = Vector2(screen_size.x / 2 - 150, screen_size.y * 0.75)
+	gauge_bg.size = Vector2(GAUGE_LOGICAL_W, GAUGE_LOGICAL_H)
+	# Scale, do not resize: the indicator and the green zone are children, and every timing
+	# number above lives in the 0..290 logical space, so growing the container is the only
+	# change that leaves the difficulty untouched. Control scale pivots at pivot_offset
+	# ((0,0) by default = top-left), so position is recompensated for the scaled width to
+	# keep the bar centred.
+	var gauge_scale: float = clampf(
+		(screen_size.x * GAUGE_VIEWPORT_SHARE) / GAUGE_LOGICAL_W, 1.0, GAUGE_SCALE_MAX)
+	gauge_bg.scale = Vector2(gauge_scale, gauge_scale)
+	gauge_bg.position = Vector2(
+		screen_size.x * 0.5 - GAUGE_LOGICAL_W * gauge_scale * 0.5, screen_size.y * 0.75)
 	gauge_bg.color = Color(0.3, 0.3, 0.3)
 	add_child(gauge_bg)
 	
@@ -208,7 +246,7 @@ func _good_timing():
 	if showers_taken >= target_showers:
 		end_game(true)
 	else:
-		await get_tree().create_timer(0.8).timeout
+		await round_delay(0.8)
 		if game_active:
 			_start_shower()
 
@@ -226,6 +264,6 @@ func _bad_timing():
 	tw.tween_callback(flash.queue_free)
 	
 	# Restart same shower
-	await get_tree().create_timer(0.5).timeout
+	await round_delay(0.5)
 	if game_active:
 		_start_shower()

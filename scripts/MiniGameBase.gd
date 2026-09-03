@@ -25,12 +25,59 @@ signal game_failed()
 
 ## Performance Tracking
 var game_start_time: int = 0
+
+## Milliseconds this round has spent frozen, and when the current freeze began (0 when
+## running). Subtracted by elapsed_play_seconds(); see there for what they are for.
+var _paused_ms_total: int = 0
+var _pause_began_ms: int = 0
 var mistakes_made: int = 0
 var correct_actions: int = 0
 var total_actions: int = 0
+
+## Per-action response latencies, in milliseconds, for the round in progress.
+##
+## The thesis defines the Consistency Penalty over "individual reaction times".
+## The value that used to be fed to it was the ROUND DURATION - see end_game(),
+## which sends int(elapsed_play_seconds() * 1000). Round duration is dominated by
+## which minigame was drawn, not by the player: measured over the 594 real
+## single-player rounds in user://session_logs, 71% of its variance is between
+## games rather than within them, and the per-game medians span 1.4 s
+## (Turn Off Tap) to 25 s (Filter Builder). Feeding that to CP made sigma a
+## measure of the shuffle. These samples are the per-action latency instead,
+## which is what "reaction time" denotes and is comparable across games.
+var action_latencies_ms: PackedInt32Array = PackedInt32Array()
+var _last_action_ms: int = 0
 var game_active: bool = false
 var timer_running: bool = false  # True when timer has actually started
+
+## True once end_game() has run for the current round.
+##
+## end_game() is the single most consequential function in a round: it deducts a
+## life, banks droplets and score, and feeds one performance sample into the
+## adaptive-difficulty rolling window. It must therefore run exactly once, and
+## `game_active` alone cannot guarantee that — it is cleared at the top of
+## end_game(), but a coroutine parked on an `await` from BEFORE that point resumes
+## afterwards and re-checks nothing.
+##
+## Reproduced in ThirstyPlant: a wrong tap parks on `await create_timer(1.0)` and
+## then calls end_game(false) unconditionally. If the round timer expires inside
+## that second, _on_timeout() ends the round first and the parked coroutine ends it
+## again — two lives lost for one round and a DUPLICATE sample in the Φ window.
+## _water_plant() is worse: it can bank a win over a round that already timed out.
+##
+## 47 call sites across 27 minigames end their own rounds, so the invariant belongs
+## here rather than as a re-check bolted onto each of them. First call wins, which
+## is the correct resolution: whatever genuinely ended the round happened first.
+var _round_ended: bool = false
+## Has this scene already begun leaving? See _on_exit_pressed(): the QUIT button is
+## not disabled when pressed and its tally screen takes seconds, so a repeat tap has
+## to be refused outright rather than merely skip the recording.
+var _quitting: bool = false
 var lives: int = 3
+## Short outcome line of the most recently finished round (e.g. "Water leak
+## fixed — no more noise."), used by the quit tally instead of a generic
+## "SESSION ENDED" title. Set every time a round score page is shown.
+var _last_round_outcome_text: String = ""
 var current_score: int = 0
 var combo_streak: int = 0
 var max_combo: int = 0
@@ -51,6 +98,9 @@ var _last_tick_second: int = -1
 ## String allocation and theme lookups out of the per-frame path.
 var _last_timer_tenths: int = -1
 var _last_timer_band: int = -1
+## Whole-second cache for the countdown number. Separate from _last_timer_tenths
+## because the bar and the number now refresh at different rates (10 Hz vs 1 Hz).
+var _last_timer_second: int = -1
 
 ## Internal timer reference (so we can stop it in end_game)
 var _game_timer: Timer
@@ -63,6 +113,16 @@ var _time_penalty_total: float = 0.0
 ## Chaos effect timer references (stopped on game end to prevent leaks)
 var _chaos_timers: Array[Timer] = []
 
+## Screen-shake bookkeeping.
+##
+## _shake_base_origin remembers the viewport canvas_transform origin from before a
+## cameraless shake started, so it can be put back exactly. The root viewport
+## SURVIVES scene changes, so a displacement left behind here would carry into the
+## next minigame as a permanently off-centre view — hence the restore in both
+## end_game() and _exit_tree().
+var _shake_base_origin: Vector2 = Vector2.ZERO
+var _shake_active: bool = false
+
 ## Control reverse flag — child classes check this to invert input
 var controls_reversed: bool = false
 
@@ -74,9 +134,48 @@ var mistakes_label: Label
 var hud_layer: CanvasLayer
 var timer_bar: ProgressBar
 var pause_menu: Control
+## Ref to the HUD pause toggle so it can be hidden once the round ends.
+var pause_button_ref: Button
+var pause_button: Button
 var instruction_overlay: Control
 var animated_cutscene_player: SimpleCutscenePlayer  # Simple animated cutscene system
 var _instruction_overlay_tweens: Array[Tween] = []
+
+## ── Minimalist HUD palette ────────────────────────────────────────────────
+## One flat ink colour at two weights, plus two accents. Defined here rather
+## than inline so every screen that wants to match the in-game HUD reads the
+## same four constants instead of re-picking approximate values.
+## The legacy HUD strip. MicrogameShell draws its own DWTD bar over this one and
+## repoints score_label/combo_label at its own nodes, so it needs a handle to the
+## row it is replacing: buried-but-visible text still rasterises under the shell
+## layer and still costs a draw.
+var hud_top_row: HBoxContainer
+
+const HUD_BAR_HEIGHT: float = 6.0
+const HUD_INK: Color = Color(0.13, 0.15, 0.18)
+const HUD_INK_SOFT: Color = Color(0.13, 0.15, 0.18, 0.85)
+const HUD_GREEN: Color = Color(0.29, 0.78, 0.44)
+const HUD_AMBER: Color = Color(0.98, 0.75, 0.18)
+const HUD_RED: Color = Color(0.93, 0.29, 0.26)
+## Combo/streak accent. Dark enough to survive the pale halo every HUD label gets.
+##
+## Was Color(0.95, 0.5, 0.16) - a bright orange, which is fine against art but not
+## against HUD_TEXT_HALO. VisualSweepHard measured the "x%d" combo badge at 2.35:1 in
+## CloudCatcher, 2.43:1 in SpotTheSpeck and 2.42:1 in WringItOut, all against an
+## effective background luminance of 0.876 (the halo, not the backdrop), where WCAG AA
+## asks 4.5:1 at this 22px size. Every other HUD label passes because it is near-black
+## ink on that same halo; the combo badge was the only warm one. This burnt orange has
+## relative luminance 0.135, i.e. 5.0:1 on the measured halo and 5.7:1 on pure white,
+## and still reads as "streak" next to HUD_AMBER and HUD_RED rather than as ink.
+const HUD_COMBO: Color = Color(0.68, 0.28, 0.04)
+
+## Halo drawn around HUD text. Pale and mostly opaque so dark ink stays legible
+## over dark art without turning the HUD into a set of boxes. Every HUD control
+## gets one, the pause glyph included: at 0.55 alpha the soft ink measured
+## 2.55:1 - 4.49:1 against the pale minigame backdrops, under the 4.5:1 floor,
+## and the un-haloed pause button was the worst of them.
+const HUD_TEXT_HALO: Color = Color(1.0, 1.0, 1.0, 0.85)
+const HUD_TEXT_HALO_SIZE: int = 4
 
 ## Theme visuals (kid-friendly palette per minigame)
 var _theme_layer: CanvasLayer
@@ -85,23 +184,63 @@ var _theme_secondary_rect: ColorRect
 var _theme_wash_rect: ColorRect
 var _active_game_theme: Dictionary = {}
 
+## "Dumb Ways to Die"-style cutscenes: a full cause clip before the round and
+## a win/lose consequence clip after it, acted out by CartoonActor.
+## Set false on a subclass to keep the old emoji outros for that game.
+var use_cartoon_cutscenes: bool = true
+
+## Below this average FPS the cutscenes play compressed rather than at full
+## length (see _get_cartoon_speed).
+const LOW_END_FPS_THRESHOLD: float = 27.0
+
+## Ceiling on how long the round-advance chain will wait for an outro clip to
+## report itself finished. Authored beat clips run about 2-3 seconds even at the
+## slowest speed_scale, so this only fires when a clip is genuinely broken or was
+## freed mid-play — and it fires instead of parking the round permanently.
+const BEAT_OUTRO_TIMEOUT_SEC: float = 8.0
+
 func _loc(key: String, fallback: String) -> String:
-	if Localization:
-		var translated = Localization.get_text(key)
-		if translated != key:
-			return translated
+	# Optional lookup: many result/flavour lines only exist for some minigames,
+	# so a miss is normal and must not warn. has_text() answers without going
+	# through get_text()'s push_warning path.
+	if Localization and Localization.has_text(key):
+		return Localization.get_text(key)
 	return fallback
 
 func _ready() -> void:
-	await get_tree().process_frame
-	
-	# Load session lives from GameManager
+	# Difficulty is resolved BEFORE the frame wait, and this ordering is load-bearing.
+	#
+	# Subclasses call super._ready() partway through their own _ready() and then keep
+	# building their board. Because this function is a coroutine, super._ready()
+	# returns to them at the first `await` — so anything the base does after that
+	# await happens a whole frame LATER than the rest of the subclass's _ready().
+	#
+	# _apply_difficulty_settings() used to sit after the await, which meant every
+	# subclass that read a difficulty-tuned value while building its board got the
+	# member initializer instead of the difficulty value. Measured cases:
+	#   • VegetableBath built 5 veggies for a quota of 3 (verified: washed=5/3,
+	#     total_actions=5, score inflated 35→65, two rejected end_game(true) calls,
+	#     and the inflated score fed AdaptiveDifficulty as S=0.882).
+	#   • PlugTheLeak laid out `num_pipes` pipes from the default, not the difficulty.
+	#   • MudPieMaker drew the gauge's target band from default target_min/target_max,
+	#     so the visible target was not the band being graded.
+	#   • FilterBuilder built its solution guides from the default
+	#     show_solution_guide, ignoring the visual_guidance output of the algorithm.
+	#   • 14 more games printed a stale "0 / N" quota on their score label.
+	#
+	# The frame wait still guards _setup_ui() — that is what needs a settled
+	# viewport — and the chaos effects are queued rather than spawned so they land
+	# after the board exists. See _apply_difficulty_settings().
 	if GameManager:
 		lives = GameManager.session_lives
-	
+
 	_load_difficulty_settings()
 	_apply_difficulty_settings()
+
+	await get_tree().process_frame
+
 	_setup_ui()
+	_activate_pending_chaos_effects()
 	_apply_minigame_theme_visuals()
 	call_deferred("_refresh_minigame_theme_visuals")
 	_setup_animated_cutscene_player()  # Initialize animated cutscene system
@@ -109,13 +248,38 @@ func _ready() -> void:
 	
 	# Register with AutoPlayManager so it can drive SP gameplay
 	if AutoPlayManager and AutoPlayManager.is_auto_play_enabled():
-		AutoPlayManager.register_game(self, game_name)
+		# Identity, not the display title. game_name reaches HANDLERS and
+		# _determine_strategy, and FixLeakV2 builds its title from Localization, so
+		# under Filipino the bot registered "Ayusin ang Tagas", matched nothing, and
+		# drove the game with the random-button fallback instead of its own ai.
+		# See GameManager.complete_minigame() for the same distinction.
+		AutoPlayManager.register_game(self, _get_minigame_key())
 
+	# First play of a game with an authored tutorial gets the tutorial popup in
+	# place of the one-line instruction overlay — not in addition to it, so there
+	# is still exactly one thing to dismiss. _wait_for_input() polls global input
+	# state rather than events, so the same tap that presses the popup's START
+	# button also ends the wait and nothing can strand the player behind it.
+	var first_play_tutorial: Control = _show_first_play_tutorial()
 	# Show instruction overlay, wait for tap to start
-	instruction_overlay.visible = true
-	if AudioManager:
-		AudioManager.play_music("instruction", 0.25)
+	instruction_overlay.visible = first_play_tutorial == null
+	# Scoped to the round: normally superseded by the gameplay track a moment later, so
+	# the scoped stop is a no-op - it matters when the scene is destroyed while the
+	# player is still sitting at the tap-to-start prompt.
+	_play_scoped_music("instruction", 0.25, self)
 	await _wait_for_input()
+	# _wait_for_input() has two exits: the player tapped, or this node left the tree
+	# while the prompt was still up - quit to menu, the app being backgrounded, a
+	# harness tearing the scene down. Only the first of those means "start the round".
+	# Resuming blind started a round on a DETACHED node: _start_timer() adds a Timer
+	# whose parent is outside the tree and calls start() on it, which is the "Unable to
+	# start the timer because it is not inside the scene tree" error - 69 of them in one
+	# VerifyFairness run, about one per game instantiated - and it left game_active true
+	# with game_started emitted on a node that was about to be freed.
+	if not is_inside_tree():
+		return
+	if first_play_tutorial != null and is_instance_valid(first_play_tutorial):
+		first_play_tutorial.queue_free()
 	_hide_instruction_overlay()
 	
 	# Start game
@@ -356,32 +520,96 @@ func _load_difficulty_settings() -> void:
 		current_difficulty = "Medium"
 		print("🎮 %s | Difficulty: %s (fallback)" % [game_name, current_difficulty])
 	# Always set penalty after current_difficulty is resolved.
+	#
+	# NOTE: this is a provisional value only. _penalty_for_difficulty() scales
+	# with game_duration, and at this point game_duration is still the class
+	# default — subclasses set the real one in _apply_difficulty_settings(),
+	# which runs *after* this. _start_timer() recomputes it once the duration is
+	# final; see the comment there.
 	mistake_time_penalty = _penalty_for_difficulty(current_difficulty)
 
 func _apply_difficulty_settings() -> void:
 	# Override this in child classes to apply specific settings
 	# Example: adjust spawn rates, timer speeds, etc.
-	
+
 	# Apply speed multiplier to game duration
 	if difficulty_settings.has("time_limit"):
 		game_duration = difficulty_settings["time_limit"]
-	
-	# Activate chaos effects
+
+	# Chaos effects are QUEUED here, not activated.
+	#
+	# This function runs before the subclass has built its board (see the ordering
+	# note in _ready()), and the chaos effects add children, read
+	# get_viewport().canvas_transform and spawn timers — a splatter created now
+	# would sit behind every node the subclass adds afterwards. _ready() drains the
+	# queue once the board and the HUD exist.
+	#
+	# Subclasses call super() from their own override, so the queue is refilled on
+	# every re-apply; clearing it first keeps a second call from doubling the
+	# effects.
+	_pending_chaos_effects.clear()
 	for effect in chaos_effects_active:
+		_pending_chaos_effects.append(effect)
+
+
+## Chaos effects selected by the algorithm but not yet instantiated.
+var _pending_chaos_effects: Array = []
+
+
+## Instantiate the queued chaos effects. Called from _ready() after the board and
+## HUD exist, and safe to call again — the queue is emptied as it is drained.
+func _activate_pending_chaos_effects() -> void:
+	if _pending_chaos_effects.is_empty():
+		return
+	var effects: Array = _pending_chaos_effects.duplicate()
+	_pending_chaos_effects.clear()
+	for effect in effects:
 		_activate_chaos_effect(effect)
 
 func _penalty_for_difficulty(diff: String) -> float:
-	## Seconds deducted per mistake — generous on Easy, punishing on Hard.
+	## Seconds deducted per mistake, as a FRACTION of the round length.
+	##
+	## This used to return flat seconds: Easy 3, Medium 6, Hard 10. That is
+	## unplayable, because round length shrinks as difficulty rises while the
+	## penalty grows. Measured against the shipped tables:
+	##
+	##   Hard   penalty 10 s  vs  8 s rounds (TurnOffTap, TimingTap, ToiletTankFix,
+	##                            QuickShower, ThirstyPlant, WringItOut, CatchTheRain)
+	##   → one single mistake drove effective_time_left below zero on the same
+	##     frame, so the round was lost before the player could react. A human
+	##     cannot clear a quota with a zero-mistake requirement at that speed.
+	##
+	## Scaling by duration keeps the *intent* (harder = costlier mistakes) while
+	## guaranteeing a round always survives several errors:
+	##   Easy   12% of the clock  → ~8 mistakes before timeout
+	##   Medium 18%               → ~5 mistakes
+	##   Hard   25%               → 4 mistakes
+	##
+	## Clamped to [1.0, 6.0] s so very long rounds don't hand out 7 s penalties
+	## and very short ones still cost something noticeable.
+	var fraction: float = 0.18
 	match diff:
-		"Easy":   return 3.0
-		"Medium": return 6.0
-		"Hard":   return 10.0
-		_:        return 5.0
+		"Easy":   fraction = 0.12
+		"Medium": fraction = 0.18
+		"Hard":   fraction = 0.25
+		_:        fraction = 0.18
+	return clampf(game_duration * fraction, 1.0, 6.0)
 
 func _apply_sp_time_penalty() -> void:
 	## Deduct mistake_time_penalty from the SP timer and show a visual flash.
 	if not game_active or not timer_running:
 		return
+
+	# ── Survival mode must NOT be clock-penalised ──────────────────────────
+	# In survival mode _on_timeout() calls end_game(true): running the clock
+	# down IS the win condition. Subtracting time for a mistake therefore
+	# *rewarded* the mistake — a Hard 10 s round could be won by taking one
+	# hit. Survival games express failure through their own rules (e.g.
+	# WaterPlant drowning the plant), so a mistake here only costs accuracy
+	# and combo, never seconds.
+	if game_mode == "survival":
+		return
+
 	_time_penalty_total += mistake_time_penalty
 	print("💔 [%s] Mistake! -%ds (total: %.0fs)" % [game_name, int(mistake_time_penalty), _time_penalty_total])
 	if timer_bar:
@@ -389,7 +617,14 @@ func _apply_sp_time_penalty() -> void:
 		tw.tween_property(timer_bar, "modulate", Color(2.0, 0.3, 0.3), 0.12)
 		tw.tween_property(timer_bar, "modulate", Color.WHITE, 0.18)
 	if timer_label:
-		timer_label.text = "-%ds" % int(mistake_time_penalty)
+		# Don't write the penalty into timer_label: _process() owns that text and
+		# rewrites it whenever the whole second changes. The penalty moves the
+		# clock by at least a second, so the "-3s" was overwritten on the very
+		# next frame and read as a one-frame flicker. Instead force the cache to
+		# repaint so the reduced number appears at once — the bar flash above is
+		# what communicates "you lost time".
+		_last_timer_second = -1
+		_last_timer_tenths = -1
 
 func get_difficulty_multiplier(setting_name: String, default_value: float = 1.0) -> float:
 	return difficulty_settings.get(setting_name, default_value)
@@ -400,19 +635,29 @@ func get_difficulty_multiplier(setting_name: String, default_value: float = 1.0)
 
 func start_game() -> void:
 	game_active = true
+	_round_ended = false
+	_quitting = false
+	# Baseline for the first action latency of the round.
+	_last_action_ms = 0
+	action_latencies_ms.clear()
 	game_started.emit()
 	
 	# Play game start sound and gameplay music
 	if AudioManager:
 		AudioManager.play_game_start()
-		AudioManager.play_music("gameplay", 0.5)
+	# Scoped to the round. end_game() still stops this track itself with its own 0.5s
+	# fade (:664) and that is deliberate presentation, so the scoped stop is a no-op on
+	# the normal path - it only fires when the scene dies without end_game() ever
+	# running, which used to leave current_music='gameplay' playing over the hub.
+	_play_scoped_music("gameplay", 0.5, self)
 	
 	# Start game timer (unless paused for setup phase)
 	if not timer_starts_paused:
 		game_start_time = Time.get_ticks_msec()
+		_paused_ms_total = 0
+		_pause_began_ms = 0
 		timer_running = true
-		_last_timer_tenths = -1
-		_last_timer_band = -1
+		reset_timer_label_cache()
 		_start_timer()
 	
 	# Override this in child classes for specific game logic
@@ -421,9 +666,10 @@ func start_game() -> void:
 ## Call this from child class when ready to start the timer
 func start_timer_now() -> void:
 	game_start_time = Time.get_ticks_msec()
+	_paused_ms_total = 0
+	_pause_began_ms = 0
 	timer_running = true
-	_last_timer_tenths = -1
-	_last_timer_band = -1
+	reset_timer_label_cache()
 	_start_timer()
 	
 	# Show timer if it was hidden during setup
@@ -431,10 +677,27 @@ func start_timer_now() -> void:
 		timer_bar.visible = show_timer
 
 func end_game(success: bool = true) -> void:
+	# Exactly once per round — see _round_ended. Warned rather than silently
+	# dropped so a genuine double-end still shows up in soak logs instead of
+	# being hidden by the guard that makes it harmless.
+	if _round_ended:
+		push_warning(
+			"%s: end_game(%s) ignored — round already ended" % [game_name, success]
+		)
+		return
+	_round_ended = true
+
 	game_active = false
 	timer_running = false
 	_hide_instruction_overlay()
 	get_tree().paused = false
+	# The round is over: kill the pause affordance so it can't appear over
+	# the scoring/tally screens.
+	if pause_button_ref and is_instance_valid(pause_button_ref):
+		pause_button_ref.visible = false
+	var shell_btn: Button = get("shell_pause_button")
+	if shell_btn and is_instance_valid(shell_btn):
+		shell_btn.visible = false
 
 	# Unregister from AutoPlay so nav logic takes over for the outro
 	if AutoPlayManager and AutoPlayManager.is_auto_play_enabled():
@@ -450,6 +713,7 @@ func end_game(success: bool = true) -> void:
 			t.stop()
 			t.queue_free()
 	_chaos_timers.clear()
+	_clear_screen_shake()
 	controls_reversed = false
 	
 	# Stop gameplay music
@@ -460,16 +724,28 @@ func end_game(success: bool = true) -> void:
 	if not success:
 		_deduct_life()
 	
-	var reaction_time = Time.get_ticks_msec() - game_start_time
-	var accuracy = _calculate_accuracy()
+	# Paused seconds excluded: an interruption used to inflate the reaction time fed
+	# to the algorithm, making an interrupted player look slower than they were.
+	var reaction_time = int(elapsed_play_seconds() * 1000.0)
+	# Two different quantities, deliberately kept apart:
+	#   reaction_time  - how long the ROUND took. Drives the speed bonus below and
+	#                    the session clock, both of which are about the round.
+	#   algo_reaction  - the player's RESPONSE latency, which is what the thesis's
+	#                    Consistency Penalty is defined over. See
+	#                    representative_reaction_time_ms().
+	var algo_reaction = representative_reaction_time_ms()
+	var accuracy = _report_accuracy(success)
 	
 	# Always send performance data to algorithm (success or fail)
 	if GameManager:
 		var droplets_earned = 0
 		if success:
-			droplets_earned = 10 # Base reward
-			if accuracy > 0.9: droplets_earned += 5 # Perfect bonus
-			if reaction_time < game_duration * 1000: droplets_earned += 5 # Speed bonus
+			# Tuned-down economy (playtest rework): a win pays at most 7
+			# droplets instead of the old 20, so shop prices (100-500) keep
+			# meaning something for dozens of rounds. Losses pay nothing.
+			droplets_earned = 3 # Base reward
+			if accuracy > 0.9: droplets_earned += 2 # Perfect bonus
+			if reaction_time < game_duration * 1000: droplets_earned += 2 # Speed bonus
 
 			if SaveManager and SaveManager.has_method("add_droplets"):
 				SaveManager.add_droplets(droplets_earned)
@@ -483,28 +759,56 @@ func end_game(success: bool = true) -> void:
 			if GameManager.has_method("add_session_droplets"):
 				GameManager.add_session_droplets(droplets_earned)
 		
+		# Win-only session points (playtest rework): a lost round contributes
+		# nothing to session_score, the SP leaderboard, or per-game high
+		# scores. The in-round tally still shows current_score for context;
+		# it simply never banks.
+		var banked_score: int = current_score if success else 0
+		if success and banked_score <= 0:
+			# GUARANTEED WIN PAYOUT: some games end without feeding points
+			# through record_action (timer wins, cutscene-triggered wins),
+			# which used to bank 0 even on a win. Fall back to the same
+			# accuracy-based formula GameManager uses so a win always pays.
+			banked_score = maxi(10, int(accuracy * 100.0) - mistakes_made * 10)
+
 		# Always complete minigame (records performance for algorithm)
 		GameManager.complete_minigame(
 			game_name,
 			accuracy,
-			reaction_time,
+			algo_reaction,
 			mistakes_made,
-			current_score,
-			max_combo
+			banked_score,
+			max_combo,
+			success,
+			# Identity, not the display title: see GameManager.complete_minigame.
+			_get_minigame_key()
 		)
 
-	if success:
-		await _show_success_micro_cutscene()
-	else:
-		await _show_failure_micro_cutscene()
-	
+	# Outcome presentation. With cartoon cutscenes on, the CartoonStage clip in
+	# _show_tally_screen IS the outcome beat, so the older micro-cutscene is
+	# skipped to avoid showing two consecutive win/lose screens.
+	if not use_cartoon_cutscenes:
+		if success:
+			await _show_success_micro_cutscene()
+		else:
+			await _show_failure_micro_cutscene()
+
 	game_completed.emit(accuracy, reaction_time, mistakes_made)
-	
+
 	# Show tally screen with score
 	await _show_tally_screen(success, accuracy, reaction_time)
 	await _show_round_score_page(success, accuracy, reaction_time)
-	
-	# Continue to next game
+
+	# Continue to next game — but only if this minigame is still the live scene.
+	#
+	# The two awaits above span several seconds of presentation, and the player can
+	# quit to the menu inside that window. Advancing unconditionally here would
+	# then pull them straight back out of the menu into the next round, because
+	# GameManager is an autoload and start_next_minigame() works perfectly well
+	# from a node that has already been detached.
+	if not is_inside_tree():
+		return
+
 	if GameManager:
 		GameManager.start_next_minigame()
 	else:
@@ -515,8 +819,82 @@ func _calculate_accuracy() -> float:
 		return 0.0
 	return float(correct_actions) / float(total_actions)
 
+## Fraction of the round's objective the player actually completed (0.0–1.0).
+##
+## Override in a minigame that has a countable quota so a partially-completed
+## loss earns partial credit. The default is the paper's binary A ("1 for
+## success, 0 for failure").
+func _get_objective_progress(success: bool) -> float:
+	return 1.0 if success else 0.0
+
+## The accuracy value reported to AdaptiveDifficulty as the paper's A term.
+##
+## _calculate_accuracy() alone answers "of the actions you took, how many were
+## correct" — which is the right signal for combo/streak feedback but the wrong
+## one for the algorithm. A player who caught 2 of the 8 droplets a round
+## required, all of them cleanly, scored A = 1.00 on a LOSS: a soak log showed
+## `Score:0 | Acc:100%` producing S = 0.698 for a failed round, so failing
+## pushed difficulty UP. Conversely a round won on the timer without any
+## record_action() call reported A = 0.00 on a WIN.
+##
+## Weighting action-correctness by objective completion fixes both directions
+## and is correct under either reading of the paper (which states A is binary
+## success, yet whose worked example feeds the window fractional accuracies).
+## Wins are unchanged: the default progress on success is 1.0.
+func _report_accuracy(success: bool) -> float:
+	var objective: float = clampf(_get_objective_progress(success), 0.0, 1.0)
+	if total_actions <= 0:
+		# Nothing discrete to grade (timer-resolved or cutscene-triggered
+		# rounds): objective completion IS the accuracy signal.
+		return objective
+	return clampf(_calculate_accuracy() * objective, 0.0, 1.0)
+
+## The round's representative reaction time, in milliseconds, for the thesis's
+## Consistency Penalty.
+##
+## CP is defined over "individual reaction times". When the round graded discrete
+## actions, the median per-action latency is that quantity, and it is comparable
+## across minigames of very different lengths. Median rather than mean because a
+## single mid-round hesitation (a player looking away) must not masquerade as a
+## slow player.
+##
+## Rounds with nothing discrete to grade - timer-resolved and cutscene-resolved
+## games - have no per-action latency to report, so they fall back to the round
+## duration, which is exactly what every round used to send. The fallback is
+## reported, not silent: report_reaction_time_source() names which was used, and
+## SessionLogger records it per round.
+func representative_reaction_time_ms() -> int:
+	var n: int = action_latencies_ms.size()
+	if n == 0:
+		return int(elapsed_play_seconds() * 1000.0)
+	var sorted_ms: Array[int] = []
+	for v in action_latencies_ms:
+		sorted_ms.append(int(v))
+	sorted_ms.sort()
+	if n % 2 == 1:
+		return sorted_ms[n / 2]
+	return int(round((sorted_ms[n / 2 - 1] + sorted_ms[n / 2]) / 2.0))
+
+
+## "per_action" when the value above came from measured action latencies,
+## "round_duration" when the round had no graded actions to measure.
+func report_reaction_time_source() -> String:
+	return "per_action" if action_latencies_ms.size() > 0 else "round_duration"
+
+
 func record_action(is_correct: bool) -> void:
 	total_actions += 1
+
+	# Time since the previous graded action (or since the round started, for the
+	# first). Paused seconds are already excluded because elapsed_play_seconds()
+	# discounts them; using it here keeps a pause from being recorded as one very
+	# slow response.
+	var now_ms: int = int(elapsed_play_seconds() * 1000.0)
+	var gap_ms: int = now_ms - _last_action_ms
+	_last_action_ms = now_ms
+	if gap_ms > 0:
+		action_latencies_ms.append(gap_ms)
+
 	
 	if is_correct:
 		combo_streak += 1
@@ -525,7 +903,7 @@ func record_action(is_correct: bool) -> void:
 		var combo_bonus = int(floor(float(combo_streak) / 3.0)) * 5
 		current_score += 10 + combo_bonus
 		if score_label:
-			score_label.text = "⭐ " + str(current_score)
+			score_label.text = str(current_score)
 		if combo_label:
 			combo_label.text = "x%d" % combo_streak
 			combo_label.visible = combo_streak >= 2
@@ -545,21 +923,18 @@ func record_action(is_correct: bool) -> void:
 		if AudioManager:
 			AudioManager.play_damage()
 		
-		# Deduct time penalty scaled by difficulty.
+		# Deduct time penalty scaled by difficulty. This call already owns the
+		# timer_bar "modulate" flash — see _apply_sp_time_penalty().
+		#
+		# A second Tween used to be created here animating the SAME
+		# timer_bar:modulate property. When two Tweens fight over one property
+		# the later one forcibly wins, so the flashes clobbered each other and
+		# could leave the bar tinted red. It also wrote timer_bar.position:x,
+		# which a Control inside a container does not own — the container
+		# overwrites it on the next layout pass, so the "shake" read as jitter.
+		# Both are gone; the flash now lives in exactly one place.
 		_apply_sp_time_penalty()
-		
-		# Flash timer red to show time penalty (actual penalty applied in _process)
-		if timer_bar:
-			var tween = create_tween()
-			tween.tween_property(timer_bar, "modulate", Color(2, 0.3, 0.3), 0.15)
-			tween.tween_property(timer_bar, "modulate", Color.WHITE, 0.15)
-			
-			# Also shake the timer
-			var original_pos = timer_bar.position
-			tween.parallel().tween_property(timer_bar, "position:x", original_pos.x + 10, 0.05)
-			tween.tween_property(timer_bar, "position:x", original_pos.x - 10, 0.05)
-			tween.tween_property(timer_bar, "position:x", original_pos.x, 0.05)
-		
+
 		_on_mistake()
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -567,6 +942,19 @@ func record_action(is_correct: bool) -> void:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func _start_timer() -> void:
+	# Recompute the mistake penalty now that game_duration is final.
+	# _load_difficulty_settings() runs before the subclass's
+	# _apply_difficulty_settings(), so the value computed there was based on the
+	# default duration. This is the last point before the clock starts.
+	mistake_time_penalty = _penalty_for_difficulty(current_difficulty)
+
+	# The bar's range is set from game_duration, which subclasses only finalise
+	# in _apply_difficulty_settings() — after _setup_ui() built the bar. Without
+	# this, a 10 s round kept a max_value of 25 and the bar started 60% drained.
+	if timer_bar:
+		timer_bar.max_value = game_duration
+		timer_bar.value = game_duration
+
 	if _game_timer:
 		_game_timer.stop()
 		_game_timer.queue_free()
@@ -585,10 +973,130 @@ func _on_timer_timeout() -> void:
 			end_game(true)
 		else:
 			end_game(false)
+## Seconds this round has actually been PLAYED, with time spent paused removed.
+##
+## The single source of truth for round time. Four places used to compute
+## "(Time.get_ticks_msec() - game_start_time) / 1000.0" independently:
+## _process() at the timeout check, get_remaining_time(), and the reaction_time fed
+## to the algorithm from both end_game() and _on_exit_pressed(). Time.get_ticks_msec()
+## is WALL CLOCK, so every one of them counted time the game was frozen.
+##
+## What that cost, measured by tools/VerifyPauseClock.tscn before this existed:
+##   - a 2s pause took 2.02s off the round;
+##   - the HUD read 12.93s while _game_timer - the Timer node that actually ends the
+##     round, and which DOES stop when the tree pauses - held 14.94s, a 2.01s
+##     disagreement between the number shown and the number enforced;
+##   - a 6s interruption on a 4s round ended the round as a FAILURE on the first
+##     frame after resume and spent a life, 3 -> 2, before the player could touch
+##     anything.
+##
+## The third one is the serious one, because on Android the pause is not a menu the
+## player chose: MobileUIManager._on_app_focus_lost() sets get_tree().paused = true
+## when the app is backgrounded (autoload/MobileUIManager.gd:1339). An incoming call
+## or a pulled-down notification failed the round.
+##
+## Paused time is accounted rather than the clock being switched to accumulated
+## delta, so games that hold the timer through a setup phase keep the reaction_time
+## semantics they already had - the only thing that changes is that frozen seconds
+## no longer count.
+func elapsed_play_seconds() -> float:
+	var paused_ms: int = _paused_ms_total
+	if _pause_began_ms > 0:
+		# Called while still paused: include the pause in progress, otherwise the
+		# value jumps the moment the tree resumes.
+		paused_ms += Time.get_ticks_msec() - _pause_began_ms
+	return float(Time.get_ticks_msec() - game_start_time - paused_ms) / 1000.0
+
+
+## Paused-time bookkeeping.
+##
+## NOTIFICATION_PAUSED / NOTIFICATION_UNPAUSED are delivered when this node's own
+## processing stops and restarts, which is precisely the interval elapsed_play_seconds()
+## has to discount - it covers the pause menu, the network pause and the Android
+## background pause identically, without any of them having to know about this.
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_PAUSED:
+		if _pause_began_ms == 0:
+			_pause_began_ms = Time.get_ticks_msec()
+	elif what == NOTIFICATION_UNPAUSED:
+		if _pause_began_ms > 0:
+			_paused_ms_total += Time.get_ticks_msec() - _pause_began_ms
+			_pause_began_ms = 0
+
+
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# MUSIC OWNERSHIP
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+## Start a music track and pair its stop with `scope`'s lifetime.
+##
+## Every music start in this file is a promise to stop it, and the destination screens
+## do not cover for it. AudioManager.music_player is a child of the AudioManager
+## AUTOLOAD (autoload/AudioManager.gd:116-119), so freeing a scene does not silence
+## anything - a track is only ended by an explicit stop_music() or superseded by a
+## later play_music(). Of the screens a round can exit to, only MainMenu ("menu", :53)
+## and FinalScore ("results", :88) start a track of their own; InitialScreen - the hub
+## GameManager.return_to_main_menu() actually loads - starts none, and neither do
+## MultiplayerLobby, MultiplayerMenu, Settings, UnlockablesScreen or RoadmapScreen. A
+## track nobody stopped just keeps playing over them.
+##
+## Writing the stop on a later line of the same coroutine does NOT discharge that
+## promise, because the coroutine can be abandoned. create_tween() binds its tween to
+## this node; freeing the node kills the tween; a killed tween never emits `finished`,
+## so `await fade_out.finished` never resumes and everything below it is dead code for
+## that exit. tools/VerifyStrayAudio.tscn measured exactly that, in one run: with the
+## quit tally's stop on its coroutine's last line, tearing the scene down while the
+## tally was up left `current_music='scoring' playing=true` over InitialScreen, while
+## the score page - whose stop was already bound to its page - came out silent.
+##
+## tree_exiting fires on every way out instead: the queue_free() at the natural end of
+## the presentation, a quit, the roster advancing, the session ending. So the stop
+## happens once per start without any of those paths having to know about it.
+##
+## `scope` is whichever node the track actually belongs to - the presentation page for
+## a page's track, `self` for a track that belongs to the round as a whole (there is no
+## per-call node to hang it on in the micro-cutscenes, which return early on the
+## animated_cutscene_player path).
+##
+## The current_music guard is what makes overlapping scopes safe. Tracks supersede each
+## other by design here - "instruction" gives way to "gameplay", "gameplay" to
+## "scoring" - so by the time a scope exits, another track may legitimately own the
+## player, including one started by the screen that is replacing this one. Stopping
+## only while our own track is still the current one keeps a scope from silencing
+## somebody else's music, and makes the order in which nested scopes exit irrelevant.
+func _play_scoped_music(track: String, fade_in: float, scope: Node) -> void:
+	if AudioManager == null or not is_instance_valid(AudioManager):
+		return
+	AudioManager.play_music(track, fade_in)
+	if scope == null or not is_instance_valid(scope):
+		return
+	scope.tree_exiting.connect(func() -> void:
+		if is_instance_valid(AudioManager) and AudioManager.current_music == track:
+			AudioManager.stop_music(0.15))
+
 
 func get_remaining_time() -> float:
-	var elapsed = (Time.get_ticks_msec() - game_start_time) / 1000.0
-	return max(0.0, game_duration - elapsed)
+	## Seconds left on the clock, mistake penalties included.
+	##
+	## This used to ignore _time_penalty_total, so it disagreed with both the
+	## HUD number and the _process() timeout check — a game asking "how long do I
+	## have?" got a more optimistic answer than the one that ends the round.
+	var elapsed = elapsed_play_seconds()
+	return max(0.0, game_duration - elapsed - _time_penalty_total)
+
+## Clear the cached HUD values so the next frame repaints unconditionally.
+##
+## The timer UI only writes when the tenth / second / colour band changes. After
+## a replay the cache still holds the previous round's values, so the first frame
+## would skip the write and briefly show the old time. Called from start_game()
+## and start_timer_now().
+func reset_timer_label_cache() -> void:
+	_last_timer_tenths = -1
+	_last_timer_band = -1
+	_last_timer_second = -1
+	_last_tick_second = -1
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # CHAOS EFFECTS SYSTEM
@@ -621,22 +1129,74 @@ func _start_screen_shake(intensity: float) -> void:
 	if not _is_screen_shake_allowed():
 		return
 
-	var camera = get_viewport().get_camera_2d()
-	if camera:
-		var shake_timer = Timer.new()
-		shake_timer.wait_time = 0.05
-		shake_timer.timeout.connect(func():
-			if game_active:
-				camera.offset = Vector2(
-					randf_range(-intensity * 5, intensity * 5),
-					randf_range(-intensity * 5, intensity * 5)
-				)
-			else:
-				camera.offset = Vector2.ZERO
+	# Screen shake is the visible half of the thesis's chaos_effects output
+	# ({NONE, MILD, STRONG} from the difficulty decision tree). It used to be gated
+	# entirely behind `get_viewport().get_camera_2d()`, and no single-player minigame
+	# scene owns a Camera2D — measured: 0 of the 25 scenes in scenes/minigames, the
+	# last one (FixLeak) having had an inert camera that also broke MicrogameShell's
+	# world==screen assumption. So on Hard the algorithm faithfully emitted
+	# screen_shake_heavy and every single-player game silently displayed nothing at
+	# all, with no warning to say so.
+	#
+	# The camera branch below is kept rather than deleted because it is the correct
+	# driver wherever a camera does exist: an active Camera2D rewrites the viewport's
+	# canvas_transform every frame, so displacing that transform directly would be
+	# overwritten instantly. (All 12 multiplayer scenes do own one, though they run on
+	# MultiplayerMiniGameBase, which extends Node2D and never reaches this code.)
+	# Cameraless, offsetting canvas_transform.origin is the equivalent — it moves all
+	# Node2D content and deliberately leaves the CanvasLayer HUD still, which keeps the
+	# timer and score readable while the world shakes.
+	var camera := get_viewport().get_camera_2d()
+	if not _shake_active:
+		_shake_active = true
+		_shake_base_origin = get_viewport().canvas_transform.origin
+
+	var shake_timer := Timer.new()
+	shake_timer.wait_time = 0.05
+	shake_timer.timeout.connect(func() -> void:
+		if not game_active:
+			_clear_screen_shake()
+			return
+		var amplitude := intensity * 5.0
+		var jitter := Vector2(
+			randf_range(-amplitude, amplitude),
+			randf_range(-amplitude, amplitude)
 		)
-		add_child(shake_timer)
-		shake_timer.start()
-		_chaos_timers.append(shake_timer)
+		if camera and is_instance_valid(camera):
+			camera.offset = jitter
+		else:
+			var vp := get_viewport()
+			if vp:
+				var xform := vp.canvas_transform
+				xform.origin = _shake_base_origin + jitter
+				vp.canvas_transform = xform
+	)
+	add_child(shake_timer)
+	shake_timer.start()
+	_chaos_timers.append(shake_timer)
+
+func _clear_screen_shake() -> void:
+	## Put the view back where the shake found it.
+	##
+	## The old code only reset camera.offset from inside the shake timer's own
+	## callback, on the first tick after game_active went false — but end_game()
+	## stops and frees those timers in the same breath as clearing game_active, so
+	## that tick usually never arrived and a shaking round could end (and hand over
+	## to the tally screen) still displaced.
+	if not _shake_active:
+		return
+	_shake_active = false
+
+	var vp := get_viewport()
+	if vp == null:
+		return
+	var camera := vp.get_camera_2d()
+	if camera and is_instance_valid(camera):
+		camera.offset = Vector2.ZERO
+	else:
+		var xform := vp.canvas_transform
+		xform.origin = _shake_base_origin
+		vp.canvas_transform = xform
 
 func _spawn_mud_splatters() -> void:
 	# Create random mud splatter sprites
@@ -657,11 +1217,18 @@ func _create_mud_splatter() -> void:
 	)
 	add_child(splatter)
 	
-	# Fade out after some time
-	await get_tree().create_timer(5.0).timeout
+	# Hold, then fade - on one node-bound tween rather than an awaited SceneTreeTimer.
+	#
+	# This used to `await get_tree().create_timer(5.0).timeout` before building the fade.
+	# A SceneTreeTimer that has not run out is never resumed once the round is torn down,
+	# so every splatter spawned in the last five seconds of a round stranded this
+	# function state for the life of the process, and the timer went with it. A tween
+	# created on this node is killed when the node is freed, and tween_interval expresses
+	# the same five second hold with no coroutine at all.
 	var tween = create_tween()
+	tween.tween_interval(5.0)
 	tween.tween_property(splatter, "modulate:a", 0.0, 1.0)
-	tween.finished.connect(splatter.queue_free)
+	tween.tween_callback(splatter.queue_free)
 
 func _spawn_buzzing_fly() -> void:
 	# Create an annoying fly emoji that moves around
@@ -706,261 +1273,192 @@ func _create_visual_obstruction() -> void:
 # UI MANAGEMENT
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+## The HUD's game-name label, kept so a language change can re-resolve it.
+var _hud_name_label: Label = null
+
+## Re-resolve the displayed title when the language changes mid-round.
+##
+## Every game assigns `game_name` once, in its own _ready() and mostly through
+## Localization, so the title is correct for the language that was active when the
+## round loaded and then frozen for the life of the scene.
+##
+## REACHABILITY, STATED PLAINLY: no surface inside a round can switch the language.
+## The only toggle is the button in Settings.gd, and reaching Settings is a full scene
+## change that rebuilds the game from scratch — so this is defence in depth, not a
+## live player-visible bug. It is driven directly, by calling Localization from a
+## harness while a round is on screen (tools/VerifyTitleRetitle.tscn).
+##
+## Rewriting `game_name` is safe: it is the display title, not identity. AutoPlayManager
+## registers on _get_minigame_key() and GameManager.complete_minigame() keys on the same
+## thing precisely because this string is language-dependent. The table is consulted
+## first, so a game whose title is a plain literal with no row keeps its literal.
+func _retitle_for_language(_new_language: String = "") -> void:
+	if Localization == null or not is_instance_valid(_hud_name_label):
+		return
+	var key: String = _get_minigame_key().to_snake_case()
+	if not Localization.has_text(key):
+		return
+	game_name = Localization.get_text(key)
+	_hud_name_label.text = game_name.to_upper()
+
+
 func _setup_ui() -> void:
 	# Create HUD Layer
 	hud_layer = CanvasLayer.new()
 	add_child(hud_layer)
 
 	# ══════════════════════════════════════════════════════════════════
-	# DWTD-STYLE GAME HUD — Clean, warm, rounded pill design
+	# MINIMALIST HUD — one bar, two numbers, nothing else
 	# ══════════════════════════════════════════════════════════════════
+	# Dumb Ways to Die's HUD is almost invisible: a bare timer bar pinned to the
+	# screen edge and flat type. This used to be six rounded "pill" PanelContainers
+	# with drop shadows, 2 px borders and four emoji glyphs used as icons
+	# (⏱ ⭐ · 🔥). That chrome cost ~30 extra Control nodes, ate the top 90 px of a
+	# phone screen, and the emoji rendered in whatever the platform font decided —
+	# so the same HUD looked different on every device. Flat type in a fixed
+	# palette is both cheaper and consistent.
+	#
+	# Layout, top to bottom, full-bleed with no outer margin:
+	#   [==========timer bar==========]   6 px, flush to the very top edge
+	#   GAME NAME              12  x3     one thin row of flat text
+	#
+	# Node contract kept intact for the 25 subclasses: timer_bar, timer_label,
+	# score_label and combo_label are all still assigned here.
 
-	var margin = MarginContainer.new()
-	margin.set_anchors_preset(Control.PRESET_FULL_RECT)
-	margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	margin.add_theme_constant_override("margin_top", 16)
-	margin.add_theme_constant_override("margin_left", 16)
-	margin.add_theme_constant_override("margin_right", 16)
-	hud_layer.add_child(margin)
-
-	var vbox = VBoxContainer.new()
-	vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	vbox.add_theme_constant_override("separation", 8)
-	margin.add_child(vbox)
-
-	# ── Top Row: Game Name | Timer | Score | Pause ───────────────
-	var top_row = HBoxContainer.new()
-	top_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	top_row.add_theme_constant_override("separation", 10)
-	vbox.add_child(top_row)
-
-	# -- Shared pill style --
-	var pill_style = StyleBoxFlat.new()
-	pill_style.bg_color = Color(0.96, 0.93, 0.86, 0.92)
-	pill_style.corner_radius_top_left = 20
-	pill_style.corner_radius_top_right = 20
-	pill_style.corner_radius_bottom_left = 20
-	pill_style.corner_radius_bottom_right = 20
-	pill_style.border_width_left = 2
-	pill_style.border_width_right = 2
-	pill_style.border_width_top = 2
-	pill_style.border_width_bottom = 2
-	pill_style.border_color = Color(0.85, 0.8, 0.7, 0.6)
-	pill_style.shadow_size = 3
-	pill_style.shadow_offset = Vector2(0, 2)
-	pill_style.shadow_color = Color(0, 0, 0, 0.12)
-
-	# -- Game Name (left) --
-	var name_pill = PanelContainer.new()
-	name_pill.add_theme_stylebox_override("panel", pill_style.duplicate())
-	top_row.add_child(name_pill)
-
-	var name_inner = MarginContainer.new()
-	name_inner.add_theme_constant_override("margin_left", 14)
-	name_inner.add_theme_constant_override("margin_right", 14)
-	name_inner.add_theme_constant_override("margin_top", 6)
-	name_inner.add_theme_constant_override("margin_bottom", 6)
-	name_pill.add_child(name_inner)
-
-	var hud_name_label = Label.new()
-	hud_name_label.text = game_name
-	hud_name_label.add_theme_font_size_override("font_size", 22)
-	hud_name_label.add_theme_color_override("font_color", Color(0.25, 0.22, 0.18))
-	hud_name_label.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	name_inner.add_child(hud_name_label)
-
-	# -- Spacer (push timer to center) --
-	var spacer_l = Control.new()
-	spacer_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	spacer_l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	top_row.add_child(spacer_l)
-
-	# -- Timer Pill (center) --
-	var timer_pill = PanelContainer.new()
-	timer_pill.add_theme_stylebox_override("panel", pill_style.duplicate())
-	top_row.add_child(timer_pill)
-
-	var timer_inner = MarginContainer.new()
-	timer_inner.add_theme_constant_override("margin_left", 14)
-	timer_inner.add_theme_constant_override("margin_right", 14)
-	timer_inner.add_theme_constant_override("margin_top", 6)
-	timer_inner.add_theme_constant_override("margin_bottom", 6)
-	timer_pill.add_child(timer_inner)
-
-	var timer_hbox = HBoxContainer.new()
-	timer_hbox.add_theme_constant_override("separation", 8)
-	timer_inner.add_child(timer_hbox)
-
-	var timer_icon = Label.new()
-	timer_icon.text = "⏱"
-	timer_icon.add_theme_font_size_override("font_size", 22)
-	timer_hbox.add_child(timer_icon)
-
-	timer_label = Label.new()
-	timer_label.add_theme_font_size_override("font_size", 24)
-	timer_label.add_theme_color_override("font_color", Color(0.3, 0.28, 0.22))
-	timer_label.add_theme_color_override("font_outline_color", Color(1, 1, 1, 0.3))
-	timer_label.add_theme_constant_override("outline_size", 2)
-	timer_label.text = "%.0fs" % game_duration
-	timer_hbox.add_child(timer_label)
-
-	# -- Spacer (push score/pause to right) --
-	var spacer_r = Control.new()
-	spacer_r.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	spacer_r.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	top_row.add_child(spacer_r)
-
-	# -- Score + Combo Pill (right) --
-	var score_pill = PanelContainer.new()
-	score_pill.add_theme_stylebox_override("panel", pill_style.duplicate())
-	score_pill.visible = show_quota
-	top_row.add_child(score_pill)
-
-	var score_inner = MarginContainer.new()
-	score_inner.add_theme_constant_override("margin_left", 14)
-	score_inner.add_theme_constant_override("margin_right", 14)
-	score_inner.add_theme_constant_override("margin_top", 6)
-	score_inner.add_theme_constant_override("margin_bottom", 6)
-	score_pill.add_child(score_inner)
-
-	var score_hbox = HBoxContainer.new()
-	score_hbox.add_theme_constant_override("separation", 10)
-	score_inner.add_child(score_hbox)
-
-	var score_icon = Label.new()
-	score_icon.add_theme_font_size_override("font_size", 22)
-	score_icon.text = "⭐"
-	score_hbox.add_child(score_icon)
-
-	score_label = Label.new()
-	score_label.add_theme_font_size_override("font_size", 22)
-	score_label.add_theme_color_override("font_color", Color(0.45, 0.38, 0.2))
-	score_label.text = "0"
-	score_hbox.add_child(score_label)
-
-	# Combo display (inline, appears when streak >= 2)
-	var combo_sep = Label.new()
-	combo_sep.text = "·"
-	combo_sep.add_theme_font_size_override("font_size", 22)
-	combo_sep.add_theme_color_override("font_color", Color(0.7, 0.65, 0.55))
-	score_hbox.add_child(combo_sep)
-
-	var combo_icon = Label.new()
-	combo_icon.add_theme_font_size_override("font_size", 22)
-	combo_icon.text = "🔥"
-	score_hbox.add_child(combo_icon)
-
-	combo_label = Label.new()
-	combo_label.add_theme_font_size_override("font_size", 20)
-	combo_label.add_theme_color_override("font_color", Color(0.85, 0.45, 0.15))
-	combo_label.text = "x0"
-	combo_label.visible = false
-	score_hbox.add_child(combo_label)
-
-	# -- Pause Button --
-	var pause_btn = Button.new()
-	pause_btn.text = "⏸"
-	pause_btn.custom_minimum_size = Vector2(44, 44)
-	pause_btn.add_theme_font_size_override("font_size", 20)
-
-	var btn_normal = StyleBoxFlat.new()
-	btn_normal.bg_color = Color(0.96, 0.93, 0.86, 0.92)
-	btn_normal.corner_radius_top_left = 22
-	btn_normal.corner_radius_top_right = 22
-	btn_normal.corner_radius_bottom_right = 22
-	btn_normal.corner_radius_bottom_left = 22
-	btn_normal.border_width_left = 2
-	btn_normal.border_width_right = 2
-	btn_normal.border_width_top = 2
-	btn_normal.border_width_bottom = 2
-	btn_normal.border_color = Color(0.85, 0.8, 0.7, 0.6)
-
-	var btn_pressed = btn_normal.duplicate()
-	btn_pressed.bg_color = Color(0.88, 0.84, 0.76, 0.95)
-
-	pause_btn.add_theme_stylebox_override("normal", btn_normal)
-	pause_btn.add_theme_stylebox_override("pressed", btn_pressed)
-	pause_btn.add_theme_stylebox_override("hover", btn_normal)
-	pause_btn.add_theme_color_override("font_color", Color(0.35, 0.3, 0.25))
-
-	pause_btn.process_mode = Node.PROCESS_MODE_ALWAYS
-	pause_btn.pressed.connect(_on_pause_pressed)
-	top_row.add_child(pause_btn)
-
-	# ── Timer Progress Bar (thin bar below top row) ───────────────
+	# ── Timer bar: full width, pinned to the top edge ──────────────────
+	# Outside any container so nothing can push it inward — a container would
+	# also overwrite any position we tween on it.
 	timer_bar = ProgressBar.new()
-	timer_bar.custom_minimum_size = Vector2(0, 8)
-	timer_bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	timer_bar.show_percentage = false
+	timer_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	timer_bar.set_anchors_preset(Control.PRESET_TOP_WIDE)
+	timer_bar.custom_minimum_size = Vector2(0, HUD_BAR_HEIGHT)
+	# No explicit `size` assignment: PRESET_TOP_WIDE uses non-equal opposite
+	# horizontal anchors, so the layout server overrides any size set during
+	# _ready() and Godot pushes a warning for every minigame that boots. The
+	# anchors already stretch the bar full-width; custom_minimum_size supplies
+	# the height.
 	timer_bar.max_value = game_duration
 	timer_bar.value = game_duration
 
+	# Square corners, no border: the bar reads as part of the screen edge.
 	var bar_bg = StyleBoxFlat.new()
-	bar_bg.bg_color = Color(0.88, 0.84, 0.76, 0.5)
-	bar_bg.corner_radius_top_left = 4
-	bar_bg.corner_radius_top_right = 4
-	bar_bg.corner_radius_bottom_right = 4
-	bar_bg.corner_radius_bottom_left = 4
+	bar_bg.bg_color = Color(0.0, 0.0, 0.0, 0.16)
 	timer_bar.add_theme_stylebox_override("background", bar_bg)
 
 	var bar_fill = StyleBoxFlat.new()
-	bar_fill.bg_color = Color(0.4, 0.82, 0.45)
-	bar_fill.corner_radius_top_left = 4
-	bar_fill.corner_radius_top_right = 4
-	bar_fill.corner_radius_bottom_right = 4
-	bar_fill.corner_radius_bottom_left = 4
+	bar_fill.bg_color = HUD_GREEN
 	timer_bar.add_theme_stylebox_override("fill", bar_fill)
 
 	timer_bar.visible = show_timer
-	vbox.add_child(timer_bar)
+	hud_layer.add_child(timer_bar)
 
-	# ── Progressive Level Indicator (only when above base difficulty) ──
+	# ── Info row: name (left) · seconds + score + combo (right) ────────
+	var margin = MarginContainer.new()
+	margin.set_anchors_preset(Control.PRESET_TOP_WIDE)
+	margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	margin.add_theme_constant_override("margin_top", int(HUD_BAR_HEIGHT) + 8)
+	margin.add_theme_constant_override("margin_left", 18)
+	margin.add_theme_constant_override("margin_right", 18)
+	hud_layer.add_child(margin)
+
+	var top_row := HBoxContainer.new()
+	hud_top_row = top_row
+	top_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	top_row.add_theme_constant_override("separation", 14)
+	margin.add_child(top_row)
+
+	# -- Game name: quiet, lowercase-weight, never competes with gameplay --
+	# Every HUD label gets a light outline. The ink colours are dark by design
+	# (they read as pencil on the light minigame backdrops), but several
+	# minigames use dark or high-contrast art, and without an outline the
+	# left-side name and the score simply disappeared into the background.
+	var hud_name_label = Label.new()
+	hud_name_label.text = game_name.to_upper()
+	_hud_name_label = hud_name_label
+	if Localization and not Localization.language_changed.is_connected(_retitle_for_language):
+		Localization.language_changed.connect(_retitle_for_language)
+	hud_name_label.add_theme_font_size_override("font_size", 18)
+	hud_name_label.add_theme_color_override("font_color", HUD_INK_SOFT)
+	_apply_hud_label_contrast(hud_name_label)
+	top_row.add_child(hud_name_label)
+
+	var spacer = Control.new()
+	spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	top_row.add_child(spacer)
+
+	# -- Seconds: the only large number on screen --
+	timer_label = Label.new()
+	timer_label.add_theme_font_size_override("font_size", 30)
+	timer_label.add_theme_color_override("font_color", HUD_INK)
+	timer_label.text = "%.0f" % game_duration
+	_apply_hud_label_contrast(timer_label)
+	top_row.add_child(timer_label)
+
+	# -- Score --
+	score_label = Label.new()
+	score_label.add_theme_font_size_override("font_size", 22)
+	score_label.add_theme_color_override("font_color", HUD_INK_SOFT)
+	score_label.text = "0"
+	score_label.visible = show_quota
+	_apply_hud_label_contrast(score_label)
+	top_row.add_child(score_label)
+
+	# -- Combo: hidden until it means something (streak >= 2) --
+	combo_label = Label.new()
+	combo_label.add_theme_font_size_override("font_size", 22)
+	combo_label.add_theme_color_override("font_color", HUD_COMBO)
+	combo_label.text = "x0"
+	combo_label.visible = false
+	_apply_hud_label_contrast(combo_label)
+	top_row.add_child(combo_label)
+
+	# -- Pause: flat glyph, no panel behind it --
+	var pause_btn = Button.new()
+	pause_button_ref = pause_btn
+	pause_btn.text = "II"
+	pause_btn.flat = true
+	pause_btn.custom_minimum_size = Vector2(44, 44)
+	pause_btn.add_theme_font_size_override("font_size", 20)
+	pause_btn.add_theme_color_override("font_color", HUD_INK_SOFT)
+	pause_btn.add_theme_color_override("font_pressed_color", HUD_INK)
+	pause_btn.add_theme_color_override("font_hover_color", HUD_INK)
+	_apply_hud_label_contrast(pause_btn)
+	pause_btn.process_mode = Node.PROCESS_MODE_ALWAYS
+	pause_btn.pressed.connect(_on_pause_pressed)
+	pause_button = pause_btn  # ref used by MicrogameShell to bury this glyph
+	top_row.add_child(pause_btn)
+
+	# ── Progressive level: a bare "LVL 3", no pill ─────────────────────
 	if AdaptiveDifficulty:
 		var settings = AdaptiveDifficulty.get_difficulty_settings()
 		var progressive_level = settings.get("progressive_level", 0)
 		if progressive_level > 0:
-			var prog_pill = PanelContainer.new()
-			var prog_style = StyleBoxFlat.new()
-			prog_style.bg_color = Color(1.0, 0.35, 0.15, 0.88)
-			prog_style.corner_radius_top_left = 14
-			prog_style.corner_radius_top_right = 14
-			prog_style.corner_radius_bottom_left = 14
-			prog_style.corner_radius_bottom_right = 14
-			prog_style.border_width_left = 2
-			prog_style.border_width_right = 2
-			prog_style.border_width_top = 2
-			prog_style.border_width_bottom = 2
-			prog_style.border_color = Color(1, 0.85, 0.2, 0.8)
-			prog_pill.add_theme_stylebox_override("panel", prog_style)
-
-			var prog_inner = MarginContainer.new()
-			prog_inner.add_theme_constant_override("margin_left", 12)
-			prog_inner.add_theme_constant_override("margin_right", 12)
-			prog_inner.add_theme_constant_override("margin_top", 4)
-			prog_inner.add_theme_constant_override("margin_bottom", 4)
-			prog_pill.add_child(prog_inner)
-
-			var prog_hbox = HBoxContainer.new()
-			prog_hbox.add_theme_constant_override("separation", 6)
-			prog_inner.add_child(prog_hbox)
-
-			var prog_icon = Label.new()
-			prog_icon.add_theme_font_size_override("font_size", 20)
-			prog_icon.text = "🔥"
-			prog_hbox.add_child(prog_icon)
-
 			var prog_label = Label.new()
-			prog_label.add_theme_font_size_override("font_size", 20)
-			prog_label.add_theme_color_override("font_color", Color(1, 1, 0.85))
-			prog_label.text = "LVL " + str(progressive_level)
-			prog_hbox.add_child(prog_label)
+			prog_label.add_theme_font_size_override("font_size", 16)
+			prog_label.add_theme_color_override("font_color", HUD_COMBO)
+			prog_label.text = _loc("hud_level_short", "LVL %d") % progressive_level
+			prog_label.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+			prog_label.position = Vector2(
+				get_viewport_rect().size.x - 90.0, HUD_BAR_HEIGHT + 46.0
+			)
+			prog_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			_apply_hud_label_contrast(prog_label)
+			hud_layer.add_child(prog_label)
 
-			# Place it at top-right, after the timer bar
-			prog_pill.size_flags_horizontal = Control.SIZE_SHRINK_END
-			vbox.add_child(prog_pill)
-	
 	# Create Pause Menu (Hidden)
 	_create_pause_menu()
+
+## Adds a light halo behind HUD text so it survives dark backdrops.
+##
+## The HUD ink is intentionally near-black for a "pencil on paper" look, which
+## works on the pale minigames but made the top-left game name and the score
+## unreadable on the darker ones. A pale outline is cheaper than a panel and
+## keeps the flat look, while guaranteeing contrast either way.
+func _apply_hud_label_contrast(label: Control) -> void:
+	label.add_theme_color_override("font_outline_color", HUD_TEXT_HALO)
+	label.add_theme_constant_override("outline_size", HUD_TEXT_HALO_SIZE)
 
 func _setup_animated_cutscene_player() -> void:
 	# Initialize the SimpleCutscenePlayer for win/fail cutscenes
@@ -1024,7 +1522,7 @@ func _create_instruction_overlay():
 	).set_trans(Tween.TRANS_SINE)
 
 	# Atmospheric intro narrative (game-specific flavor text)
-	var _intro_text: String = _get_narratives().get(_get_minigame_key(), {}).get("intro", "")
+	var _intro_text: String = _narrative(_get_minigame_key(), "intro")
 	if not _intro_text.is_empty():
 		var intro_label := Label.new()
 		intro_label.text = _intro_text
@@ -1066,8 +1564,20 @@ func _create_instruction_overlay():
 
 func _wait_for_input() -> void:
 	# AutoPlay bypass — skip the "tap to start" wait automatically
+	#
+	# Frame-polled rather than `await get_tree().create_timer(0.8).timeout`, for the same
+	# reason the manual loop below is `while is_inside_tree()`. A SceneTreeTimer that has not
+	# run out yet is never resumed once the scene is torn down or the process quits, so every
+	# round that ended inside that 0.8 s window stranded this coroutine's
+	# GDScriptFunctionState for the life of the process. Measured with --verbose: VerifyFairness
+	# leaked 72 of them, VerifyNarrativeCopy 49, VerifyCartoonLoop 6 - one per game the harness
+	# instantiated, and `Orphan StringName: _wait_for_input` matched each count exactly.
+	# process_frame emits every idle frame, paused or not, so the wait is still 0.8 s and it
+	# now ends the moment the node leaves the tree.
 	if AutoPlayManager and AutoPlayManager.is_auto_play_enabled():
-		await get_tree().create_timer(0.8).timeout
+		var bypass_deadline := Time.get_ticks_msec() + 800
+		while is_inside_tree() and Time.get_ticks_msec() < bypass_deadline:
+			await get_tree().process_frame
 		return
 
 	var mouse_was_down := Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
@@ -1075,8 +1585,18 @@ func _wait_for_input() -> void:
 	if InputMap.has_action("touch"):
 		touch_was_down = Input.is_action_pressed("touch")
 
-	while true:
+	# Loop while this node is still live, not `while true`.
+	#
+	# The only way out used to be the player pressing something. If the scene was
+	# torn down while this waited on the "tap to start" prompt — quit to menu, the
+	# app being backgrounded, shutdown — the loop had no terminating condition and
+	# the coroutine spun on forever, stranding its GDScriptFunctionState (an
+	# ObjectDB leak at exit). get_tree() also returns null on a detached node, so
+	# the await itself would fault once the node left the tree.
+	while is_inside_tree():
 		await get_tree().process_frame
+		if not is_inside_tree():
+			return
 		var mouse_down := Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
 		var mouse_just_pressed := mouse_down and not mouse_was_down
 		mouse_was_down = mouse_down
@@ -1094,6 +1614,41 @@ func _wait_for_input() -> void:
 		):
 			break
 
+## Bring up the authored first-play tutorial for this game, or return null when
+## there is nothing to show.
+##
+## autoload/TutorialManager.gd carries multi-step bilingual tutorials plus a tip
+## for 8 of the 24 singleplayer games, and had NO caller anywhere in the project:
+## should_show_tutorial(), create_tutorial_popup() and mark_tutorial_shown() were
+## all unreachable, so first-time players only ever saw game_instruction_text — a
+## single line. This is the caller. Games with no authored entry fall through to
+## that line exactly as before.
+##
+## The key is the scene basename ("CatchTheRain"), which is what TutorialManager
+## keys its dictionary on.
+##
+## mark_tutorial_shown() is called HERE rather than from the popup's START button
+## so that a player who leaves mid-tutorial is not shown it again on every future
+## visit; the button's own call is idempotent.
+func _show_first_play_tutorial() -> Control:
+	if TutorialManager == null or hud_layer == null:
+		return null
+	if scene_file_path.is_empty():
+		return null
+	var key: String = scene_file_path.get_file().get_basename()
+	if not TutorialManager.should_show_tutorial(key):
+		return null
+	var popup: Control = TutorialManager.create_tutorial_popup(key, hud_layer) as Control
+	if popup == null:
+		return null
+	# The popup has to swallow taps aimed at the game underneath it, and keep
+	# animating if the round is brought up paused.
+	popup.mouse_filter = Control.MOUSE_FILTER_STOP
+	popup.process_mode = Node.PROCESS_MODE_ALWAYS
+	TutorialManager.mark_tutorial_shown(key)
+	return popup
+
+
 func _hide_instruction_overlay() -> void:
 	_stop_instruction_overlay_tweens()
 	if instruction_overlay and is_instance_valid(instruction_overlay):
@@ -1106,7 +1661,14 @@ func _stop_instruction_overlay_tweens() -> void:
 	_instruction_overlay_tweens.clear()
 
 func _exit_tree() -> void:
+	# Safety: never leave the tree paused when the minigame scene goes away —
+	# a stuck pause here froze the whole game past the scoring screen.
+	get_tree().paused = false
 	_hide_instruction_overlay()
+	# The root viewport outlives this scene, so an unrestored cameraless shake
+	# offset would follow the player into the next minigame. Quitting to menu
+	# mid-round skips end_game() entirely, which is how that used to happen.
+	_clear_screen_shake()
 
 func _play_intro_animation() -> void:
 	var scene = _resolve_cutscene_scene("intro")
@@ -1114,7 +1676,14 @@ func _play_intro_animation() -> void:
 		var intro = scene.instantiate()
 		hud_layer.add_child(intro)
 		if intro.has_method("configure"):
-			intro.configure(game_name, _loc("get_ready", "Get ready..."))
+			# Third argument is the anim profile MiniGameIntroCutscene divides its whole
+			# 4 s timeline by. It used to be omitted, which pinned this intro at full
+			# length even with reduced motion on.
+			intro.configure(
+				game_name,
+				_loc("get_ready", "Get ready..."),
+				{"speed": _motion_speed()}
+			)
 		if intro.has_method("play_cutscene"):
 			await intro.play_cutscene()
 		else:
@@ -1190,7 +1759,7 @@ func _create_pause_menu():
 
 	# ── Title ────────────────────────────────────────────────────────
 	var label = Label.new()
-	label.text = "PAUSED"
+	label.text = _loc("mp_paused", "PAUSED")
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	label.add_theme_font_size_override("font_size", 44)
 	label.add_theme_color_override("font_color", Color(0.85, 0.92, 1.0))
@@ -1205,7 +1774,7 @@ func _create_pause_menu():
 	score_info.add_theme_font_size_override("font_size", 20)
 	score_info.add_theme_color_override("font_color", Color(0.6, 0.75, 0.88))
 	var _session_score = GameManager.session_score if GameManager else 0
-	score_info.text = "Current Score: %d" % _session_score
+	score_info.text = _loc("shell_current_score", "Current Score: %d") % _session_score
 	vbox.add_child(score_info)
 
 	# ── Spacer ───────────────────────────────────────────────────────
@@ -1215,7 +1784,7 @@ func _create_pause_menu():
 
 	# ── RESUME Button ────────────────────────────────────────────────
 	var resume_btn = Button.new()
-	resume_btn.text = "▶  RESUME"
+	resume_btn.text = _loc("shell_resume", "▶  RESUME")
 	resume_btn.custom_minimum_size = Vector2(260, 64)
 	var resume_style = StyleBoxFlat.new()
 	resume_style.bg_color = Color(0.2, 0.6, 0.4, 0.92)
@@ -1242,7 +1811,7 @@ func _create_pause_menu():
 
 	# ── QUIT Button ──────────────────────────────────────────────────
 	var exit_btn = Button.new()
-	exit_btn.text = "✕  QUIT GAME"
+	exit_btn.text = _loc("shell_quit_game", "✕  QUIT GAME")
 	exit_btn.custom_minimum_size = Vector2(260, 64)
 	var exit_style = StyleBoxFlat.new()
 	exit_style.bg_color = Color(0.55, 0.2, 0.2, 0.85)
@@ -1268,13 +1837,18 @@ func _create_pause_menu():
 	vbox.add_child(exit_btn)
 
 func _on_pause_pressed():
+	# No pausing once the round is over (scoring/tally/outro) — the pause
+	# overlay belongs to the minigame scene and would freeze the game with
+	# no way to resume once the scene changes.
+	if not game_active:
+		return
 	get_tree().paused = true
 	pause_menu.visible = true
 	# Update current score display
 	var score_lbl = pause_menu.find_child("PauseScoreLabel", true, false)
 	if score_lbl:
 		var _session_score = GameManager.session_score if GameManager else 0
-		score_lbl.text = "Current Score: %d" % _session_score
+		score_lbl.text = _loc("shell_current_score", "Current Score: %d") % _session_score
 	if AudioManager:
 		AudioManager.play_pause()
 
@@ -1285,6 +1859,31 @@ func _on_resume_pressed():
 		AudioManager.play_resume()
 
 func _on_exit_pressed():
+	# Exactly once, and never a second recording of a round end_game() already
+	# recorded. This function is the OTHER caller of
+	# GameManager.complete_minigame() besides end_game(), and it used to neither
+	# check nor set _round_ended, so the exactly-once guard covered one of the two
+	# paths. Measured consequences, from tools/VerifyRoundEndOnce.tscn before this
+	# was added: three taps on QUIT recorded the round three times, and one
+	# abandoned round put 3 samples into AdaptiveDifficulty.performance_window -
+	# 60% of a window_size of 5, so most of the evidence behind the next difficulty
+	# decision came from a single quit. It also double-counted
+	# minigames_played_this_session and wrote a duplicate SessionLogger row.
+	#
+	# Two separate flags because they answer two different questions:
+	#   _quitting     - has this scene already begun leaving? A repeat tap must do
+	#                   nothing at all, not merely skip the recording, because the
+	#                   Button stays enabled and the tally screen takes seconds.
+	#   _round_ended  - has this round already been reported to the algorithm?
+	#                   Shared with end_game() so the guard holds in BOTH
+	#                   directions: quit-then-end, and end-then-quit.
+	# The player still leaves either way; it is only the recording that is skipped.
+	if _quitting:
+		return
+	_quitting = true
+	var record_round: bool = not _round_ended
+	_round_ended = true
+
 	get_tree().paused = false
 	pause_menu.visible = false
 	game_active = false
@@ -1300,17 +1899,29 @@ func _on_exit_pressed():
 	_chaos_timers.clear()
 	controls_reversed = false
 
-	# Save whatever score we have so far
-	if GameManager:
-		var elapsed = (Time.get_ticks_msec() - game_start_time) / 1000.0
-		var accuracy = float(correct_actions) / max(1, total_actions)
+	# Save whatever score we have so far - but only if end_game() has not already
+	# reported this round. record_round is false when the round was already ended
+	# and the player then pressed QUIT over the tally screen.
+	#
+	# Deliberately NOT force-recording a zero-score round on the second path: the
+	# round already went to the algorithm with its real accuracy, and adding a
+	# second synthetic sample is the defect, not the fix.
+	if GameManager and record_round:
+		var elapsed = elapsed_play_seconds()
+		# A quit is not a completed objective. This path used to report raw
+		# action-correctness, so abandoning a round after three clean catches
+		# sent A = 1.00 to the algorithm and read as a flawless performance.
+		var accuracy = _report_accuracy(false)
 		GameManager.complete_minigame(
 			game_name,
 			accuracy,
-			int(elapsed * 1000),
+			# Same distinction as end_game(): the algorithm gets response latency.
+			representative_reaction_time_ms(),
 			mistakes_made,
 			current_score,
-			max_combo
+			max_combo,
+			false,
+			_get_minigame_key()
 		)
 
 	# Show quit tally screen with current progress before exiting
@@ -1324,8 +1935,6 @@ func _on_exit_pressed():
 
 ## DWTD-style quit tally — shows your session score before leaving
 func _show_quit_tally_screen() -> void:
-	if AudioManager:
-		AudioManager.play_music("scoring", 0.22)
 
 	var session_total: int = GameManager.session_score if GameManager else 0
 	var rounds_played: int = GameManager.round_scores.size() if GameManager else 0
@@ -1337,6 +1946,19 @@ func _show_quit_tally_screen() -> void:
 	page.process_mode = Node.PROCESS_MODE_ALWAYS
 	page.modulate.a = 0.0
 	hud_layer.add_child(page)
+
+	# Scoring track, started after the page exists so it can be scoped to the page it
+	# belongs to rather than to this coroutine.
+	#
+	# It used to start at the top of the function and be stopped on the coroutine's
+	# LAST line, three awaits and ~3.5s later. Two of those awaits are
+	# `await tween.finished` on tweens made with create_tween(), which binds them to
+	# this node - so a teardown inside the tally window killed the tweens, the awaits
+	# never resumed, and the stop never ran. tools/VerifyStrayAudio.tscn measured it:
+	# tearing the scene down while the tally was up left current_music='scoring'
+	# playing=true over InitialScreen, in a run where the score page's already-paired
+	# stop came out silent.
+	_play_scoped_music("scoring", 0.22, page)
 
 	# Dark background
 	var bg = ColorRect.new()
@@ -1365,9 +1987,15 @@ func _show_quit_tally_screen() -> void:
 	vbox.add_theme_constant_override("separation", 22)
 	outer.add_child(vbox)
 
-	# ── "GAME OVER" title ─────────────────────────────────────────────
+	# ── Outcome title (was a bare "GAME OVER") ────────────────────────
 	var title = Label.new()
-	title.text = "SESSION ENDED"
+	# The player just finished a round and chose to leave — the title should
+	# say WHAT happened, not the generic "SESSION ENDED". Reuse the round's
+	# flavor outcome line (e.g. "Water leak fixed — no more noise").
+	if _last_round_outcome_text != "":
+		title.text = _last_round_outcome_text
+	else:
+		title.text = _loc("shell_session_ended", "SESSION ENDED")
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title.add_theme_font_size_override("font_size", 42)
 	title.add_theme_color_override("font_color", Color(0.9, 0.65, 0.4))
@@ -1399,7 +2027,7 @@ func _show_quit_tally_screen() -> void:
 	vbox.add_child(score_display)
 
 	var score_cap = Label.new()
-	score_cap.text = "TOTAL SCORE"
+	score_cap.text = _loc("total_score", "TOTAL SCORE")
 	score_cap.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	score_cap.add_theme_font_size_override("font_size", 16)
 	score_cap.add_theme_color_override("font_color", Color(0.55, 0.55, 0.55))
@@ -1463,8 +2091,9 @@ func _show_quit_tally_screen() -> void:
 	fade_out.tween_property(page, "modulate:a", 0.0, 0.35)
 	await fade_out.finished
 	page.queue_free()
-	if AudioManager:
-		AudioManager.stop_music(0.15)
+	# The stop that used to be here is now bound to page.tree_exiting at the top of
+	# this function - queue_free() above still triggers it, and so does every exit
+	# that never gets this far. See _play_scoped_music().
 
 
 func _process(_delta):
@@ -1474,26 +2103,25 @@ func _process(_delta):
 	if not timer_running: return
 	
 	# ── Hot path: arithmetic only, no allocation, no UI writes ──────────────
-	var elapsed = (Time.get_ticks_msec() - game_start_time) / 1000.0
+	var elapsed = elapsed_play_seconds()
 	var time_left = max(0.0, game_duration - elapsed)
 	
 	# Note: mistake penalty is tracked in _time_penalty_total and subtracted here.
 	var effective_time_left = max(0.0, time_left - _time_penalty_total)
 	
 	# ── UI is decoupled from the hot path ───────────────────────────────────
-	# The label only shows one decimal, so refreshing faster than 10 Hz redraws
-	# identical text. Writing `timer_label.text` every frame allocated a new
-	# String 60×/s and re-laid-out the Label; `add_theme_color_override` also
-	# re-resolved the theme every frame. Both now fire only on real change.
+	# The bar moves at 10 Hz (smooth enough to read as continuous), the number
+	# only at 1 Hz because it now shows whole seconds. Writing
+	# `timer_label.text` every frame allocated a new String 60×/s and re-laid-out
+	# the Label; `add_theme_color_override` also re-resolved the theme every
+	# frame. Both fire only on real change.
 	if timer_bar:
 		var tenths := int(effective_time_left * 10.0)
 		if tenths != _last_timer_tenths:
 			_last_timer_tenths = tenths
 			timer_bar.value = effective_time_left
-			if timer_label:
-				timer_label.text = "%.1fs" % effective_time_left
-			
-			# Colour band: 0 = green, 1 = yellow, 2 = red. Recolour on transition
+
+			# Colour band: 0 = green, 1 = amber, 2 = red. Recolour on transition
 			# only, so the StyleBox and theme override are touched ~2× per round.
 			var time_ratio = effective_time_left / game_duration
 			var band := 0
@@ -1501,28 +2129,32 @@ func _process(_delta):
 				band = 2
 			elif time_ratio < 0.6:
 				band = 1
-			
+
 			if band != _last_timer_band:
 				_last_timer_band = band
 				var fill_style = timer_bar.get_theme_stylebox("fill") as StyleBoxFlat
+				var band_color: Color = HUD_GREEN
+				match band:
+					2: band_color = HUD_RED
+					1: band_color = HUD_AMBER
+					_: band_color = HUD_GREEN
 				if fill_style:
-					match band:
-						2:
-							fill_style.bg_color = Color(0.9, 0.2, 0.2)  # Red
-							if timer_label:
-								timer_label.add_theme_color_override("font_color", Color(1, 0.3, 0.3))
-						1:
-							fill_style.bg_color = Color(0.9, 0.8, 0.2)  # Yellow
-							if timer_label:
-								timer_label.add_theme_color_override("font_color", Color(1, 1, 0.3))
-						_:
-							fill_style.bg_color = Color(0.4, 0.9, 0.4)  # Green
-							if timer_label:
-								timer_label.add_theme_color_override("font_color", Color.WHITE)
-	
+					fill_style.bg_color = band_color
+				# The number stays ink-coloured until it's actually urgent, so
+				# the HUD reads as one calm object for most of the round.
+				if timer_label:
+					timer_label.add_theme_color_override(
+						"font_color", HUD_RED if band == 2 else HUD_INK
+					)
+
+	# Whole-second countdown, no unit suffix — the bar already says "time".
+	var sec := int(ceil(effective_time_left))
+	if timer_label and sec != _last_timer_second:
+		_last_timer_second = sec
+		timer_label.text = str(sec)
+
 	# Tick urgency sound once per whole second in the final 5 s. Kept outside the
 	# UI block so it fires even when this game has no timer_bar.
-	var sec := int(effective_time_left)
 	if sec != _last_tick_second and sec <= 5 and sec > 0 and AudioManager:
 		_last_tick_second = sec
 		AudioManager.play_timer_tick()
@@ -1555,62 +2187,22 @@ func _deduct_life():
 	# Note: Game over is handled by GameManager.start_next_minigame() which
 	# checks session_lives <= 0 and shows the final score screen properly.
 
-func _update_ui() -> void:
-	if timer_label:
-		timer_label.text = "⏱️ Time: %.1f" % get_remaining_time()
-	
-	if score_label:
-		score_label.text = "✅ Correct: %d" % correct_actions
-	
-	if mistakes_label:
-		mistakes_label.text = "❌ Mistakes: %d" % mistakes_made
-
-func _show_results(_accuracy: float, _reaction_time: int) -> void:
-	# Show success animation
-	var success_label = Label.new()
-	success_label.text = "SUCCESS!"
-	success_label.add_theme_font_size_override("font_size", 72)
-	success_label.add_theme_color_override("font_color", Color(0.2, 1, 0.2))
-	success_label.add_theme_color_override("font_outline_color", Color.BLACK)
-	success_label.add_theme_constant_override("outline_size", 12)
-	success_label.position = Vector2(
-		get_viewport_rect().size.x / 2 - 200,
-		get_viewport_rect().size.y / 2
-	)
-	hud_layer.add_child(success_label)
-	
-	var tween = create_tween()
-	tween.tween_property(success_label, "scale", Vector2(1.5, 1.5), 0.3).from(Vector2.ZERO)
-	tween.tween_interval(0.5)
-	tween.tween_property(success_label, "modulate:a", 0.0, 0.5)
-	
-	await get_tree().create_timer(1.5).timeout
-	# Next game automatically
-	if GameManager:
-		GameManager.start_next_minigame()
-
-func _show_failure() -> void:
-	# Show failure animation
-	var fail_label = Label.new()
-	fail_label.text = "OOPS!"
-	fail_label.add_theme_font_size_override("font_size", 72)
-	fail_label.add_theme_color_override("font_color", Color(1, 0.2, 0.2))
-	fail_label.add_theme_color_override("font_outline_color", Color.BLACK)
-	fail_label.add_theme_constant_override("outline_size", 12)
-	fail_label.position = Vector2(get_viewport_rect().size.x/2 - 150, get_viewport_rect().size.y/2)
-	hud_layer.add_child(fail_label)
-	
-	var tween = create_tween()
-	tween.tween_property(fail_label, "rotation", PI * 2, 0.5).from(0.0)
-	tween.tween_property(fail_label, "scale", Vector2(2, 2), 0.3)
-	tween.tween_property(fail_label, "modulate:a", 0.0, 0.3)
-	
-	await get_tree().create_timer(1.5).timeout
-	# Go to next game (like DWTD)
-	if GameManager:
-		GameManager.start_next_minigame()
+# _show_results() and _show_failure() used to live here: two unreachable functions
+# that dropped a bare "SUCCESS!" / "OOPS!" Label on hud_layer and then called
+# GameManager.start_next_minigame() themselves. Nothing in the project called
+# either one — the live outcome path is end_game() → _show_tally_screen() →
+# _show_round_score_page(), which plays the cartoon outro and the funny failure
+# reactions from _get_result_reaction(). They were removed rather than polished
+# because calling one would have advanced the round a SECOND time on top of
+# end_game()'s own advance, racing two scene loads.
 
 func _show_tally_screen(success: bool, _accuracy: float, _reaction_time: int):
+	# Preferred path: full "Dumb Ways to Die"-style outro — a real animated
+	# scene with a jointed character acting out the consequence, instead of
+	# a single emoji scaling in a Label.
+	if await _play_cartoon_outro(success):
+		return
+
 	var reaction = _get_result_reaction(success)
 	var score_this_round = 0
 	if GameManager and GameManager.round_scores.size() > 0:
@@ -1632,7 +2224,7 @@ func _show_tally_screen(success: bool, _accuracy: float, _reaction_time: int):
 				outro.configure(
 					success,
 					_get_minigame_key(),
-					_get_outro_anim_profile(success)
+					_with_motion_speed(_get_outro_anim_profile(success))
 				)
 			else:
 				print("📝 Configuring TEXT-BASED outro")
@@ -1642,7 +2234,7 @@ func _show_tally_screen(success: bool, _accuracy: float, _reaction_time: int):
 					score_this_round,
 					max_combo,
 					lives,
-					_get_outro_anim_profile(success)
+					_with_motion_speed(_get_outro_anim_profile(success))
 				)
 		if outro.has_method("play_cutscene"):
 			print("▶️ Playing cutscene...")
@@ -1650,16 +2242,112 @@ func _show_tally_screen(success: bool, _accuracy: float, _reaction_time: int):
 		else:
 			print("⏱️ Generic wait instead of cutscene playback")
 			await get_tree().create_timer(1.25).timeout
-		outro.queue_free()
+		if is_instance_valid(outro):
+			outro.queue_free()
 		return
 
 	# Fallback if cutscene scene is missing
 	print("❌ No outro cutscene found at all")
 	await get_tree().create_timer(0.55).timeout
 
-func _resolve_narrative_outro_scene(_success: bool) -> PackedScene:
-	var _key = _get_minigame_key()
+## Plays the animated consequence scene for this minigame.
+## Returns true if it ran, false if the caller should fall back to the older
+## emoji/text outros.
+func _play_cartoon_outro(success: bool) -> bool:
+	if not use_cartoon_cutscenes:
+		return false
 
+	# Tier 1: authored 4-beat scenes (MicrogameOutroBase subclasses) living at
+	# res://scenes/ui/cutscenes/beats/<Key><Win|Lose>Outro.tscn. They expose
+	# play_win()/play_lose() so any minigame's clip is driven identically.
+	if await _play_beat_outro(success):
+		return true
+
+	# Tier 2: declarative CartoonStage scenario (existing behaviour).
+	var kind: int = (
+		CartoonStage.Kind.EFFECT_WIN if success
+		else CartoonStage.Kind.EFFECT_LOSE
+	)
+	var stage := CartoonStage.new()
+	stage.configure(kind, _get_minigame_key(), _get_cartoon_speed())
+	hud_layer.add_child(stage)
+	await stage.play_cutscene()
+	if is_instance_valid(stage):
+		stage.queue_free()
+	if not is_inside_tree():
+		return true
+	# One frame so the queued free completes before the score page builds on top.
+	await get_tree().process_frame
+	return true
+
+## Plays an authored MicrogameOutroBase clip if one exists for this minigame.
+## Returns true if it ran, false so the caller falls back to CartoonStage.
+func _play_beat_outro(success: bool) -> bool:
+	var suffix := "Win" if success else "Lose"
+	var beat_path := "res://scenes/ui/cutscenes/beats/%s%sOutro.tscn" % [
+		_get_minigame_key(), suffix
+	]
+	if not ResourceLoader.exists(beat_path):
+		return false
+
+	var clip = (load(beat_path) as PackedScene).instantiate()
+	clip.speed_scale = _get_cartoon_speed()["speed"]
+	hud_layer.add_child(clip)
+	if success and clip.has_method("play_win"):
+		clip.play_win()
+	elif clip.has_method("play_lose"):
+		clip.play_lose()
+	await _await_signal_or_timeout(clip.outro_finished, BEAT_OUTRO_TIMEOUT_SEC)
+	if is_instance_valid(clip):
+		clip.queue_free()
+	if not is_inside_tree():
+		return true
+	await get_tree().process_frame
+	return true
+
+## Low-end devices get faster clips rather than no clips: the scenario is the
+## teaching moment, so we compress it instead of skipping it.
+## The cutscene speed DIVISOR shared by CartoonStage, the authored beat clips and
+## the intro/outro cutscene scenes: every one of them expresses its runtime as a
+## duration divided by this number, so a bigger value means a shorter cutscene.
+##
+## Two independent reasons to compress, and they multiply because both can hold at
+## once:
+##   * the device is already missing frames (1.6), so a cutscene it renders badly
+##     costs the player less time, and
+##   * the player asked for reduced motion, which is what
+##     AccessibilityManager.get_animation_speed() reports (3.0 when on).
+##
+## Until this call, get_animation_speed() had no reader anywhere in the project:
+## "reduced motion" suppressed particles and screen shake and still played every
+## cutscene at full length.
+func _get_cartoon_speed() -> Dictionary:
+	var speed: float = 1.0
+	if PerformanceProfiler and PerformanceProfiler.session_elapsed_sec > 5.0:
+		if PerformanceProfiler.fps_avg < LOW_END_FPS_THRESHOLD:
+			speed = 1.6
+	return {"speed": speed * _motion_speed()}
+
+## AccessibilityManager.get_animation_speed(), guarded, never zero. Falls back to
+## 1.0 (unchanged pacing) rather than to a guess, so a missing accessibility layer
+## leaves cutscene timing exactly as authored instead of stalling or racing it.
+func _motion_speed() -> float:
+	if AccessibilityManager and AccessibilityManager.has_method("get_animation_speed"):
+		var reported := float(AccessibilityManager.get_animation_speed())
+		if reported > 0.0:
+			return reported
+	return 1.0
+
+## Fold the reduced-motion factor into an authored anim profile without disturbing
+## the per-game pacing it carries. Copied rather than mutated: the profile helpers
+## return fresh literals today, and a future cached one must not accumulate the
+## multiplier on every round.
+func _with_motion_speed(profile: Dictionary) -> Dictionary:
+	var out: Dictionary = profile.duplicate()
+	out["speed"] = float(out.get("speed", 1.0)) * _motion_speed()
+	return out
+
+func _resolve_narrative_outro_scene(_success: bool) -> PackedScene:
 	# Try to use generic narrative scene (shows character outcome animation)
 	var fallback_narrative_path = "res://scenes/ui/cutscenes/CharacterOutcomeNarrative.tscn"
 	if ResourceLoader.exists(fallback_narrative_path):
@@ -1726,9 +2414,6 @@ func _show_round_score_page(success: bool, accuracy: float, _reaction_time: int)
 	# ═══════════════════════════════════════════════════════════════════════
 	# DWTD-STYLE SCORING PAGE  — Water Drop Characters + Evaporation
 	# ═══════════════════════════════════════════════════════════════════════
-	if AudioManager:
-		AudioManager.play_music("scoring", 0.22)
-
 	var max_lives := 3
 	var current_lives := lives  # already decremented by _deduct_life() if failed
 	var accent: Color = Color(0.35, 0.85, 0.55) if success else Color(1.0, 0.45, 0.3)
@@ -1745,6 +2430,22 @@ func _show_round_score_page(success: bool, accuracy: float, _reaction_time: int)
 	page.process_mode = Node.PROCESS_MODE_ALWAYS
 	page.modulate.a = 0.0
 	hud_layer.add_child(page)
+
+	# Scoring track, owned by the page rather than by this coroutine.
+	#
+	# The stop used to sit on the coroutine's last line, ~5.5 seconds and 40-odd
+	# await points later. Any exit before that line — the player quitting, the
+	# round being advanced, the app being backgrounded, the scene torn down — left
+	# the scoring track playing over whatever screen came next. Hanging the stop on
+	# tree_exiting instead pairs it with the page's actual lifetime, so every path
+	# out stops the music exactly once.
+	#
+	# The binding now goes through _play_scoped_music() rather than being written out
+	# here, because this was the only one of the file's six music starts that had it:
+	# tools/VerifyStrayAudio.tscn measured this page coming out silent while the quit
+	# tally, which kept its stop on the coroutine's last line, left
+	# current_music='scoring' playing=true over InitialScreen in the same run.
+	_play_scoped_music("scoring", 0.22, page)
 
 	# Warm cream/beige background (DWTD style)
 	var bg = ColorRect.new()
@@ -1775,7 +2476,7 @@ func _show_round_score_page(success: bool, accuracy: float, _reaction_time: int)
 
 	# ── Title ─────────────────────────────────────────────────────────────
 	var title = Label.new()
-	title.text = "ROUND COMPLETE" if success else "ROUND FAILED"
+	title.text = _loc("mp_round_complete", "ROUND COMPLETE") if success else _loc("round_failed", "ROUND FAILED")
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title.add_theme_font_size_override("font_size", 42)
 	title.add_theme_color_override("font_color", Color(0.22, 0.22, 0.22))
@@ -1806,6 +2507,7 @@ func _show_round_score_page(success: bool, accuracy: float, _reaction_time: int)
 	# ── Flavor text ───────────────────────────────────────────────────────
 	var flavor = Label.new()
 	flavor.text = flavor_line
+	_last_round_outcome_text = ("Win: " if success else "Loss: ") + flavor_line
 	flavor.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	flavor.add_theme_font_size_override("font_size", 22)
 	flavor.add_theme_color_override("font_color", Color(0.45, 0.42, 0.38))
@@ -1823,7 +2525,7 @@ func _show_round_score_page(success: bool, accuracy: float, _reaction_time: int)
 	vbox.add_child(score_display)
 
 	var score_caption = Label.new()
-	score_caption.text = "TOTAL SCORE"
+	score_caption.text = _loc("total_score", "TOTAL SCORE")
 	score_caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	score_caption.add_theme_font_size_override("font_size", 16)
 	score_caption.add_theme_color_override("font_color", Color(0.55, 0.52, 0.48))
@@ -1902,13 +2604,13 @@ func _show_round_score_page(success: bool, accuracy: float, _reaction_time: int)
 	session_bar.add_child(session_hbox)
 
 	var sess_label = Label.new()
-	sess_label.text = "This Round"
+	sess_label.text = _loc("shell_this_round", "This Round")
 	sess_label.add_theme_font_size_override("font_size", 18)
 	sess_label.add_theme_color_override("font_color", Color(0.3, 0.3, 0.3))
 	session_hbox.add_child(sess_label)
 
 	var sess_val = Label.new()
-	sess_val.text = "+%d pts" % round_score
+	sess_val.text = _loc("shell_round_points", "+%d pts") % round_score
 	sess_val.add_theme_font_size_override("font_size", 22)
 	sess_val.add_theme_color_override("font_color", Color(0.15, 0.15, 0.15))
 	session_hbox.add_child(sess_val)
@@ -1916,29 +2618,43 @@ func _show_round_score_page(success: bool, accuracy: float, _reaction_time: int)
 	# ══════════════════════════════════════════════════════════════════════
 	#  ANIMATION SEQUENCE
 	# ══════════════════════════════════════════════════════════════════════
+	#
+	# Every tween above and below is created on `page`, not on `self`. Two reasons:
+	# the page is PROCESS_MODE_ALWAYS, so binding to it keeps the tweens in step
+	# with the process-always timers this sequence waits on instead of stalling on
+	# a pause the timers ignore; and a tween bound to the page dies with the page,
+	# which is exactly the abort condition _score_page_alive() tests for.
+	#
+	# The waits are durations rather than `await tween.finished`. A killed tween
+	# never emits `finished`, so awaiting it strands the coroutine permanently —
+	# that is the leaked GDScriptFunctionState this sequence used to produce on
+	# shutdown, and mid-play it would have parked the round on the score page with
+	# start_next_minigame() never reached.
 
 	# 1. Fade in entire page
-	var fade_in = create_tween()
+	var fade_in = page.create_tween()
 	fade_in.tween_property(page, "modulate:a", 1.0, 0.3)
-	await fade_in.finished
+	if not await _score_page_alive(0.3, page):
+		return
 
 	# 2. Stagger water drops entrance (bounce in one-by-one)
 	for i in range(drop_labels.size()):
 		var dl: Label = drop_labels[i]
 		var is_alive := (i < current_lives)
-		var tw = create_tween()
+		var tw = page.create_tween()
 		tw.set_parallel(true)
 		tw.tween_property(dl, "modulate:a", 1.0 if is_alive else 0.7, 0.2)
 		tw.tween_property(dl, "scale", Vector2(1.0, 1.0), 0.25).from(Vector2(0.2, 0.2))
 		if AudioManager and is_alive:
 			AudioManager.play_collect()
-		await get_tree().create_timer(0.18).timeout
+		if not await _score_page_alive(0.18, page):
+			return
 
 	# 3. Evaporate dead drops (float upward + fade out)
 	for i in range(drop_labels.size()):
 		if i >= current_lives:
 			var dl: Label = drop_labels[i]
-			var evap = create_tween()
+			var evap = page.create_tween()
 			evap.set_parallel(true)
 			evap.tween_property(dl, "position:y", dl.position.y - 40, 0.6)
 			evap.tween_property(dl, "modulate:a", 0.15, 0.6)
@@ -1947,12 +2663,14 @@ func _show_round_score_page(success: bool, accuracy: float, _reaction_time: int)
 				AudioManager.play_damage()
 
 	# 4. Show flavor text
-	await get_tree().create_timer(0.2).timeout
-	var flav_tw = create_tween()
+	if not await _score_page_alive(0.2, page):
+		return
+	var flav_tw = page.create_tween()
 	flav_tw.tween_property(flavor, "modulate:a", 1.0, 0.25)
 
 	# 5. Score count-up (from previous session total → new session total)
-	await get_tree().create_timer(0.15).timeout
+	if not await _score_page_alive(0.15, page):
+		return
 	score_display.modulate.a = 1.0
 	score_caption.modulate.a = 1.0
 	var prev_total := session_total - round_score
@@ -1964,49 +2682,128 @@ func _show_round_score_page(success: bool, accuracy: float, _reaction_time: int)
 			score_display.text = str(val)
 			if AudioManager and step % 3 == 0:
 				AudioManager.play_score_tick()
-			await get_tree().create_timer(0.03).timeout
+			if not await _score_page_alive(0.03, page):
+				return
 	else:
 		score_display.text = str(prev_total)
 	score_display.text = str(session_total)
 
 	# Pop the final number
-	var pop_tw = create_tween()
+	var pop_tw = page.create_tween()
 	pop_tw.tween_property(score_display, "scale", Vector2(1.15, 1.15), 0.1)
 	pop_tw.tween_property(score_display, "scale", Vector2(1.0, 1.0), 0.1)
 	if AudioManager:
 		AudioManager.play_bonus()
 
 	# 6. Cascade stat pills
-	await get_tree().create_timer(0.2).timeout
+	if not await _score_page_alive(0.2, page):
+		return
 	for pill in pill_nodes:
-		var ptw = create_tween()
+		var ptw = page.create_tween()
 		ptw.set_parallel(true)
 		ptw.tween_property(pill, "modulate:a", 1.0, 0.2)
 		ptw.tween_property(pill, "scale", Vector2(1.0, 1.0), 0.2).from(Vector2(0.85, 0.85))
-		await get_tree().create_timer(0.12).timeout
+		if not await _score_page_alive(0.12, page):
+			return
 
 	# 7. Session total bar
-	await get_tree().create_timer(0.15).timeout
-	var stw = create_tween()
+	if not await _score_page_alive(0.15, page):
+		return
+	var stw = page.create_tween()
 	stw.tween_property(session_bar, "modulate:a", 1.0, 0.25)
 
 	# 8. Idle bounce on alive drops while user views the page
 	for i in range(mini(current_lives, drop_labels.size())):
 		var dl: Label = drop_labels[i]
-		var bounce = create_tween().set_loops(4)
+		var bounce = page.create_tween().set_loops(4)
 		bounce.tween_property(dl, "position:y", dl.position.y - 6, 0.25).set_delay(i * 0.12)
 		bounce.tween_property(dl, "position:y", dl.position.y, 0.25)
 
 	# Hold for viewing
-	await get_tree().create_timer(2.5).timeout
+	if not await _score_page_alive(2.5, page):
+		return
 
 	# 9. Fade out
-	var out_tw = create_tween()
+	var out_tw = page.create_tween()
 	out_tw.tween_property(page, "modulate:a", 0.0, 0.35)
-	await out_tw.finished
-	page.queue_free()
-	if AudioManager:
-		AudioManager.stop_music(0.15)
+	await _score_page_alive(0.35, page)
+	if is_instance_valid(page):
+		page.queue_free()
+	# Music stop is handled by the page's tree_exiting handler, so it fires on this
+	# path and on every early return above.
+
+## Await `sig`, giving up after `timeout_sec`. Returns true if the signal arrived.
+##
+## Cutscene clips announce their own completion, and the round-advance chain hangs
+## off that announcement. If a clip is freed mid-play — scene change, quit to menu,
+## app teardown — the signal never arrives, and a bare `await` parks the round for
+## good with no path back to the menu. Racing the signal against the frame clock
+## means the sequence always continues.
+##
+## The timeout is a safety net sized well past any authored clip, not a pacing
+## knob: if it ever fires, a clip failed to signal and that is worth seeing in the
+## log rather than silently swallowing.
+func _await_signal_or_timeout(sig: Signal, timeout_sec: float) -> bool:
+	if not is_inside_tree():
+		return false
+	var state := {"fired": false}
+	sig.connect(func() -> void: state["fired"] = true, CONNECT_ONE_SHOT)
+	var deadline: int = Time.get_ticks_msec() + int(timeout_sec * 1000.0)
+	while not state["fired"]:
+		if not is_inside_tree():
+			return false
+		if Time.get_ticks_msec() >= deadline:
+			push_warning(
+				"MiniGameBase: cutscene signal did not arrive within %.1fs; continuing."
+				% timeout_sec)
+			return false
+		await get_tree().process_frame
+	return true
+
+## Await `seconds` of PLAY, not of wall clock.
+##
+## SceneTree.create_timer()'s second parameter is process_always and it DEFAULTS TO
+## TRUE, so the bare `await get_tree().create_timer(0.4).timeout` that every minigame
+## used for its respawn and resolve delays kept counting while get_tree().paused was
+## true. The rest of the round does not: _on_pause_pressed() (:1684) pauses the tree,
+## which freezes _process, the round Timer node and every tween. So a pause stopped
+## the game but not its delays -- the next target spawned behind the pause overlay,
+## and on a quota-completing tap end_game() itself ran with the pause menu still up,
+## banking a score, a life and one adaptive-difficulty sample the player never saw.
+##
+## On Android this is routine rather than rare: MobileUIManager._on_app_focus_lost()
+## pauses the tree when the app is backgrounded, so a pulled-down notification lands
+## inside these sub-second windows constantly.
+##
+## Returns the Signal, so both call shapes at the 26 sites keep reading naturally:
+##     await round_delay(0.4)
+##     round_delay(0.6).connect(_check_match)
+## Post-round waits deliberately do NOT use this -- once the score page is up the
+## pause button is gone and the wait ends in a scene change; see _score_page_alive().
+func round_delay(seconds: float) -> Signal:
+	return get_tree().create_timer(seconds, false).timeout
+
+
+## Await `seconds`, then report whether the score page is still safe to touch.
+##
+## Every await in _show_round_score_page is a point where the player can quit, the
+## round can be advanced, or the app can be backgrounded — any of which frees this
+## node and its page while the coroutine is parked. Resuming blind then writes to
+## freed Labels, and at app exit the coroutine never resumes at all, stranding its
+## GDScriptFunctionState (visible as an ObjectDB leak on shutdown).
+##
+## Returning a bool lets each step bail out at its own await instead of the
+## sequence being wrapped in validity checks after the fact.
+func _score_page_alive(seconds: float, page: Control) -> bool:
+	if not is_inside_tree():
+		return false
+	if seconds > 0.0:
+		await get_tree().create_timer(seconds).timeout
+	return (
+		is_inside_tree()
+		and is_instance_valid(page)
+		and not page.is_queued_for_deletion()
+	)
 
 func _resolve_cutscene_scene(kind: String) -> PackedScene:
 	var key = _get_minigame_key()
@@ -2043,11 +2840,11 @@ func _get_result_reaction(success: bool) -> Dictionary:
 	}
 
 func _get_result_line_for_key(success: bool, key: String) -> String:
-	var _n: Dictionary = _get_narratives().get(key, {})
-	if success and _n.has("win"):
-		return str(_n["win"])
-	if not success and _n.has("fail"):
-		return str(_n["fail"])
+	# The narrative line wins over the short result lines below -- it is per-game and
+	# funnier. It goes through _narrative() so the Filipino build gets Filipino here.
+	var _narr: String = _narrative(key, "win" if success else "fail")
+	if not _narr.is_empty():
+		return _narr
 	if success:
 		match key:
 			"RiceWashRescue":
@@ -2160,6 +2957,11 @@ func _get_result_line_for_key(success: bool, key: String) -> String:
 					"result_line_success_turn_off_tap",
 					"Tap shut off right on cue!"
 				)
+			"CloudCatcher":
+				return _loc(
+					"result_line_success_cloud_catcher",
+					"Rain landed on roots. Free water, zero waste!"
+				)
 			_:
 				return _loc(
 					"result_line_success_default",
@@ -2232,6 +3034,11 @@ func _get_result_line_for_key(success: bool, key: String) -> String:
 			return _loc("result_line_fail_timing_tap", "Timing off. Tap on beat!")
 		"TurnOffTap":
 			return _loc("result_line_fail_turn_off_tap", "Tap stayed on. Cut early!")
+		"CloudCatcher":
+			return _loc(
+				"result_line_fail_cloud_catcher",
+				"Rain hit concrete. Aim over the plants!"
+			)
 		_:
 			return _loc(
 				"result_line_fail_default",
@@ -2239,8 +3046,8 @@ func _get_result_line_for_key(success: bool, key: String) -> String:
 			)
 
 func _show_failure_micro_cutscene() -> void:
-	if AudioManager:
-		AudioManager.play_music("outcome_fail", 0.18)
+	# See _show_success_micro_cutscene(): same missing stop, same scope.
+	_play_scoped_music("outcome_fail", 0.18, self)
 
 	# Try to use SimpleCutscenePlayer
 	if animated_cutscene_player and animated_cutscene_player.has_method("play_cutscene"):
@@ -2296,8 +3103,10 @@ func _show_failure_micro_cutscene() -> void:
 	cutscene.queue_free()
 
 func _show_success_micro_cutscene() -> void:
-	if AudioManager:
-		AudioManager.play_music("outcome_win", 0.18)
+	# Scoped to the round, not to this coroutine: there is no per-call node on the
+	# animated_cutscene_player path below (it returns early), and this function had
+	# no stop_music at all.
+	_play_scoped_music("outcome_win", 0.18, self)
 
 	# Try to use SimpleCutscenePlayer
 	if animated_cutscene_player and animated_cutscene_player.has_method("play_cutscene"):
@@ -2362,12 +3171,30 @@ func _get_success_cutscene_data() -> Dictionary:
 		"bg": Color(0.02, 0.12, 0.06, 0.72),
 		"hold": 0.48
 	})
-	var _n: Dictionary = _get_narratives().get(key, {})
-	if _n.has("win"):
-		var _full: String = str(_n["win"])
-		var _dot := _full.find(". ")
-		data["line"] = _full.left(_dot) if _dot > 0 else _full
+	var _win_line: String = _narrative(key, "win")
+	if not _win_line.is_empty():
+		var _dot := _win_line.find(". ")
+		data["line"] = _win_line.left(_dot) if _dot > 0 else _win_line
 	return data
+
+## One narrative field, localized, with the table's English as the fallback.
+##
+## _get_narratives() is a hardcoded English Dictionary, and four player-visible
+## surfaces read it: the intro screen's atmospheric line, the round score page's
+## flavour line, and the two micro-cutscene lines. Reading it directly meant all
+## of them were English in the Filipino build -- and because
+## _get_result_line_for_key() checks the narrative FIRST, the narrative also
+## shadowed all 46 result_line_* keys, so localizing those alone changed nothing
+## on screen. Routing every read through here fixes both at once: the key is
+## derived from the table key so no second table has to be kept in step, and a
+## key that is absent from Localization falls back to the authored English, which
+## is what shipped before.
+func _narrative(key: String, field: String) -> String:
+	var n: Dictionary = _get_narratives().get(key, {})
+	var en: String = str(n.get(field, ""))
+	if en.is_empty():
+		return ""
+	return _loc("narrative_%s_%s" % [key.to_snake_case(), field], en)
 
 func _get_narratives() -> Dictionary:
 	return {
@@ -2375,6 +3202,11 @@ func _get_narratives() -> Dictionary:
 			"intro": "The clouds finally show up. You have one drum. Gravity is merciless.",
 			"win": "The drum overflows with glory. A tiny rainbow forms. You take a bow.",
 			"fail": "You chase a red drop \"just to see.\" The drum fills with mystery liquid. A plant nearby dies on the spot.",
+		},
+		"CloudCatcher": {
+			"intro": "Clouds drift past carrying free water. The plants below are extremely aware of this.",
+			"win": "Every plant soaked straight from the sky. The clouds float off empty and smug. Not one drop of tap water spent.",
+			"fail": "You pop the clouds over bare concrete. The rain hits pavement, steams off, and is gone. The plants are still thirsty, and now they're judging you.",
 		},
 		"CoverTheDrum": {
 			"intro": "Standing water. Mosquitoes circling. They look personally offended.",
@@ -2396,10 +3228,13 @@ func _get_narratives() -> Dictionary:
 			"win": "The pipe is sealed. Silence. Peace. A single drip salutes you.",
 			"fail": "You plug one, three more burst open. The room is now a splash park. The water bill is catastrophic.",
 		},
+		# Was a verbatim copy of FixLeak's copy. Same premise, different mechanic --
+		# FixLeak is tap-to-seal several leaks, this one is hold-to-plug against a
+		# waste budget -- and identical text on two games in one session reads as a bug.
 		"PlugTheLeak": {
-			"intro": "The pipe is leaking. Dramatically. Personally.",
-			"win": "The pipe is sealed. Silence. Peace. A single drip salutes you.",
-			"fail": "You plug one, three more burst open. The room is now a splash park. The water bill is catastrophic.",
+			"intro": "Pipes with holes. One thumb. Hold and hope.",
+			"win": "Every leak held shut until the pressure dropped. Barely a litre lost. Your thumb is a hero.",
+			"fail": "You let go early and the pipe rediscovers freedom. A hundred litres later the floor is a wading pool. The pipe seems happier than you.",
 		},
 		"GreywaterSorter": {
 			"intro": "Two buckets. One for the garden. One for the drain. The water doesn't know the difference.",
@@ -2471,10 +3306,12 @@ func _get_narratives() -> Dictionary:
 			"win": "All pairs matched. The tips are now burned into your brain. You will never run a tap unnecessarily again.",
 			"fail": "You flip the wrong card every time. The cards start to look identical. You match \"Don't waste water\" with \"Turtle.\" That is not a pair.",
 		},
+		# Was a verbatim copy of WringItOut's laundry copy -- wrong game entirely: this
+		# one is "keep every plant alive without drowning it", not wringing clothes.
 		"WaterPlant": {
-			"intro": "Wet laundry. A basin below. Physics awaiting.",
-			"win": "Basin full, clothes dry enough. The water goes to the garden. The clothes go on the line.",
-			"fail": "You tap too slowly. The clothes drip-dry on the floor instead. The basin has three drops in it. The garden sulks.",
+			"intro": "A shelf of plants, all quietly dehydrating. None of them will say anything.",
+			"win": "Every plant still standing. Nobody drowned, nobody wilted. The shelf looks smug.",
+			"fail": "One plant crisps up while you flood the one beside it. You have somehow overwatered AND underwatered the same shelf. The survivors are taking notes.",
 		},
 		"WringItOut": {
 			"intro": "Wet laundry. A basin below. Physics awaiting.",
@@ -2659,7 +3496,7 @@ func _get_success_cutscene_presets() -> Dictionary:
 			"bg": Color(0.03, 0.09, 0.12, 0.72)
 		},
 		"ScrubToSave": {
-			"icon": "🫧",
+			"icon": "💦",
 			"line": "Spotless and water-wise!",
 			"anim": "bounce",
 			"bg": Color(0.03, 0.11, 0.12, 0.72)
@@ -2756,20 +3593,38 @@ func _get_failure_cutscene_data() -> Dictionary:
 		"bg": Color(0, 0, 0, 0.75),
 		"hold": 0.55
 	})
-	var _n: Dictionary = _get_narratives().get(key, {})
-	if _n.has("fail"):
-		var _full: String = str(_n["fail"])
-		var _dot := _full.find(". ")
-		data["line"] = _full.left(_dot) if _dot > 0 else _full
+	var _fail_line: String = _narrative(key, "fail")
+	if not _fail_line.is_empty():
+		var _dot := _fail_line.find(". ")
+		data["line"] = _fail_line.left(_dot) if _dot > 0 else _fail_line
 	return data
 
 func _get_minigame_key() -> String:
 	if get_script() and get_script().resource_path != "":
 		var file_name = get_script().resource_path.get_file()
 		var base_name = file_name.trim_suffix(".gd")
+		# The v2 rehaul scripts are named <Game>V2.gd while every lookup table
+		# (narratives, failure presets, cartoon stages, beat outro clip paths)
+		# keys on the bare game name — strip the suffix here, once, for all
+		# call sites (verified empirically via tools probe: without this,
+		# "CatchTheRain.tscn" resolved to key "CatchTheRainV2" and missed).
+		if base_name.ends_with("V2"):
+			base_name = base_name.trim_suffix("V2")
 		if base_name != "":
 			return base_name
-	return game_name.replace(" ", "")
+	# Fallback. Not reachable from the shipped game - every round is a .tscn instance, so
+	# its script always has a resource_path - but what it returns matters if it ever is,
+	# because this key is what high scores, completed_minigames and the narrative /
+	# cartoon-stage tables are stored under. It used to be game_name.replace(" ", ""), the
+	# DISPLAY TITLE: FixLeakV2 builds game_name from Localization, so under Filipino this
+	# line would have written "AyusinAngTagas" into the save file as a game id and split one
+	# game's history across two keys. tools/VerifyGameIdentity [5]-[7] assert that no save
+	# row is ever keyed by a title, and a fallback that quietly breaks that rule is worse
+	# than one that refuses. The scene path is the same id under every language.
+	if scene_file_path != "":
+		return scene_file_path.get_file().trim_suffix(".tscn").trim_suffix("V2")
+	push_error("MiniGameBase: no script path and no scene path for '%s' - falling back to the node name" % name)
+	return name
 
 func _get_failure_cutscene_presets() -> Dictionary:
 	return {
@@ -2904,6 +3759,30 @@ func _get_failure_cutscene_presets() -> Dictionary:
 			"line": "Tap stayed on too long!",
 			"anim": "shake",
 			"bg": Color(0.03, 0.06, 0.1, 0.82)
+		},
+		# The last three games in the roster had no preset at all, so their failure beat
+		# fell through to the generic 💥 + "wobble" while every other game got an icon and
+		# a motion that matched what had just gone wrong. The LINE was never the problem
+		# (_get_failure_cutscene_data overwrites it with the narrative fail line), the
+		# mismatched icon and animation were -- exactly the "wrong action for the moment"
+		# case the animation audit is looking for. Found by tools/VerifyNarrativeCopy.
+		"CloudCatcher": {
+			"icon": "☁",
+			"line": "Rain fell on bare concrete!",
+			"anim": "drop",
+			"bg": Color(0.05, 0.07, 0.1, 0.82)
+		},
+		"WaterMemory": {
+			"icon": "🃏",
+			"line": "The pairs slipped your mind!",
+			"anim": "shake",
+			"bg": Color(0.05, 0.06, 0.09, 0.82)
+		},
+		"DropletDash": {
+			"icon": "🏃",
+			"line": "The droplets got away!",
+			"anim": "spin",
+			"bg": Color(0.04, 0.06, 0.09, 0.82)
 		}
 	}
 
@@ -2926,29 +3805,16 @@ func _animate_failure_icon(icon: Label, anim: String) -> void:
 			tw.tween_property(icon, "rotation", 0.04, 0.08)
 			tw.tween_property(icon, "rotation", 0.0, 0.08)
 
-func _show_game_over() -> void:
-	game_active = false
-	# Show game over screen
-	var gameover_label = Label.new()
-	gameover_label.text = "GAME OVER!"
-	gameover_label.add_theme_font_size_override("font_size", 80)
-	gameover_label.add_theme_color_override("font_color", Color(1, 0, 0))
-	gameover_label.add_theme_color_override("font_outline_color", Color.BLACK)
-	gameover_label.add_theme_constant_override("outline_size", 15)
-	gameover_label.position = Vector2(
-		get_viewport_rect().size.x / 2 - 250,
-		get_viewport_rect().size.y / 2
-	)
-	hud_layer.add_child(gameover_label)
-	
-	var tween = create_tween()
-	tween.tween_property(gameover_label, "scale", Vector2(1.2, 1.2), 0.5).from(Vector2.ZERO)
-	
-	await get_tree().create_timer(2.0).timeout
-	# Return to initial screen
-	if GameManager:
-		GameManager.mark_welcome_shown()
-	get_tree().change_scene_to_file("res://scenes/ui/InitialScreen.tscn")
+## REMOVED: _show_game_over() lived here and nothing called it, in this class or any
+## of the 24 subclasses -- the only live callers of that name are NetworkManager's own
+## RPC and MultiplayerCoordinator's local function, both unrelated. It built an 80 px
+## red "GAME OVER!" Label at viewport_centre - 250 px, held it on a pause-blind
+## create_timer, then jumped straight to InitialScreen, skipping the results screen,
+## the score tally and the educational outro. Three separate things the rest of the
+## file had already moved past: the bare verdict (every live failure now reads a
+## narrative reaction line), the hardcoded centring (layout goes through anchors),
+## and the pause-blind delay (FIX 42/46). Deleted rather than banner-marked because a
+## fossil that spells the word this project is removing invites reuse.
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # OVERRIDE THESE IN CHILD CLASSES
@@ -3012,3 +3878,47 @@ func _shake_camera(intensity: float) -> void:
 				randf_range(-intensity * 10, intensity * 10)
 			), 0.05)
 		tween.tween_property(camera, "offset", original_offset, 0.05)
+
+## Android Back inside a round: toggle the pause overlay, never leave.
+##
+## Called by GameManager.handle_back_request(). Returning true claims the gesture, so
+## the fallback that sends every other screen to the hub does not run here - a round
+## carries score, a life and one sample of algorithm data, and a stray Back gesture
+## must not discard them.
+##
+## Back over the tally/outro is consumed and ignored on purpose. game_active is false
+## there, so _on_pause_pressed() would refuse anyway, and the alternative - falling
+## through to the hub - would abandon the round score page mid-presentation. The
+## presentation finishes on its own and advances, so nothing is stuck.
+func on_back_requested() -> bool:
+	if pause_menu and is_instance_valid(pause_menu) and pause_menu.visible:
+		_on_resume_pressed()
+		return true
+	if game_active:
+		_on_pause_pressed()
+		return true
+	return true
+
+
+## Keeps a bare Control tap target centred on its Node2D anchor even after the mobile
+## floor grows it.
+##
+## A fixture that authors a 100x100 Button at position (-50, -50) is centred on its art -
+## until MobileUIManager._on_node_added() raises custom_minimum_size to the 48dp floor
+## (147 canvas units on WVGA), at which point the Control grows right and down from that
+## same top-left and the hit area slides off the art by half the difference: 24 units on
+## a phone, in the direction the finger is least likely to be. Measured on
+## CloudCatcher's cloud button and TurnOffTap's TapButton by tools/VerifyTouchTargets.
+##
+## Re-centring on the resized signal covers the initial layout pass, the growth pass, and
+## any later change - the large_touch_targets accessibility toggle re-runs the floor and
+## resizes every button again.
+func centre_hit_control(c: Control) -> void:
+	if c == null or c.has_meta("hit_centred"):
+		return
+	c.set_meta("hit_centred", true)
+	c.position = -c.size * 0.5
+	var recentre := func() -> void:
+		if is_instance_valid(c):
+			c.position = -c.size * 0.5
+	c.resized.connect(recentre)
