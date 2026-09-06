@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://5yl4itliq0xs"]
+
+[ext_resource type="Script" path="res://tools/VerifyAutoPlayProgress.gd" id="1_approg"]
+
+[node name="VerifyAutoPlayProgress" type="Node"]
+script = ExtResource("1_approg")

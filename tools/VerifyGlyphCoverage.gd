@@ -32,6 +32,28 @@ extends Node
 ## A codepoint that tofus in either production chain is a defect visible right now and fails. A
 ## codepoint that only the operating system rescues is reported with its sites, because that is a
 ## risk the thesis build carries onto the demo device, not something a font file here can fix.
+##
+## WHAT THE REMAINING WARNS ARE, AND WHY THEY STAY
+##
+## The OS-dependent list is down to seven codepoints, and each one was traced to where the string
+## is actually consumed rather than left as a standing risk. None of them reaches a rasteriser on
+## the device:
+##
+##   U+2192 -> U+2500 - U+2501 - U+2514 L   console dividers and log text: AdaptiveDifficulty's
+##                        decision_path (which goes to _queue_log and into the exported JSON, and
+##                        has no UI consumer), its status_message field (no consumer anywhere), and
+##                        PerformanceProfiler's thermal print(). U+2192 also survives in
+##                        FileExporter's EXPORT_INFO.txt, which is a file on disk read in a text
+##                        editor, not drawn by this project's font chain.
+##   U+2550 =             the same, plus AutoPlayManager's own console banner.
+##   U+2715 X - U+275A |  AutoPlayManager.SHELL_BUTTON_GLYPHS, an EXACT-MATCH detector on button
+##                        text. The close and QUIT buttons were re-lettered to U+2716 by the fix,
+##                        and both spellings are kept on purpose so a screen not yet re-lettered is
+##                        still recognised - see the comment there. Matched against, never drawn.
+##
+## Every on-screen occurrence was substituted for a glyph this harness measures as reachable
+## (tools/ProbeGlyphCandidates.tscn is what chose them). So a NEW warn naming a scenes/ or scripts/
+## line that assigns .text is a real finding, not more of the same.
 const BUNDLED_FONTS: Array[String] = [
 	"res://fonts/Cubao_Free_Wide.otf",
 	"res://fonts/NTBrickSans.otf",
@@ -51,6 +73,8 @@ var _bundled: Array[Font] = []
 var _bundled_names: Array[String] = []
 var _prod: Array[Font] = []
 var _prod_names: Array[String] = []
+var _prod_offline: Array[Font] = []
+var _prod_offline_names: Array[String] = []
 ## codepoint -> {"sites": Array, "count": int, "dev_only": bool, "drawn": bool}
 var _used: Dictionary = {}
 
@@ -70,6 +94,29 @@ func _is_modifier(cp: int) -> bool:
 	if cp >= 0xE0020 and cp <= 0xE007F:
 		return true
 	return false
+
+## The same font object with the operating system's fonts taken away and its own fallback chain
+## left intact - recursively, since a fallback font carries the flag too. This is the legacy
+## Android device modelled honestly: Godot still has fonts/ and whatever the engine ships, and the
+## OS supplies nothing the project can count on.
+##
+## Measuring this is the point. With the system step left on, every chain draws every emoji on this
+## Windows box because Segoe UI Emoji answers, so the report went GREEN while a Label with no font
+## override had an EMPTY fallback list and nothing bundled to fall back TO. That is the reported
+## Android 8 tofu, and it was invisible to the chains this harness had.
+func _offline_probe(font: Font, depth: int = 0) -> Font:
+	var p: Font = font.duplicate()
+	if p is FontFile:
+		(p as FontFile).allow_system_fallback = false
+	elif p is SystemFont:
+		(p as SystemFont).allow_system_fallback = false
+	var chain: Array[Font] = []
+	if depth < 4:
+		for sub in font.fallbacks:
+			if sub is Font:
+				chain.append(_offline_probe(sub as Font, depth + 1))
+	p.fallbacks = chain
+	return p
 
 ## True when this font chain draws the character as Godot's hex-code box.
 ##
@@ -133,13 +180,23 @@ func _ready() -> void:
 		if pf != null:
 			_prod.append(pf)
 			_prod_names.append(path.get_file())
+	# PRODUCTION-OFFLINE: those same chains on a device whose system fonts offer nothing.
+	for i in range(_prod.size()):
+		_prod_offline.append(_offline_probe(_prod[i]))
+		_prod_offline_names.append(_prod_names[i])
 	print("bundled-only chains: ", ", ".join(_bundled_names))
 	print("production chains:   ", ", ".join(_prod_names))
+	print("production chains, OS fonts removed (the legacy-Android model): ",
+		", ".join(_prod_offline_names))
 
 	for d in SCAN_DIRS:
 		_walk(d)
 
 	var drawn_tofu: Array = []
+	## Shipped in fonts/, and still a hex box on a device with no system emoji font, because the
+	## chain that draws it cannot reach the file that has it. A wiring defect, fixable in code -
+	## which is why it fails the run rather than warning.
+	var unreachable: Array = []
 	var os_rescued: Array = []
 	var dev_notes: Array = []
 	var clean: int = 0
@@ -175,14 +232,33 @@ func _ready() -> void:
 			else:
 				os_rescued.append(line2)
 			continue
+		# The glyph is in a file this build ships. Can the chains the game actually draws with get
+		# to it without asking Android for help?
+		var offline_tofu: Array = []
+		for i in range(_prod_offline.size()):
+			if _tofu(_prod_offline[i], cp):
+				offline_tofu.append(_prod_offline_names[i])
+		if not offline_tofu.is_empty():
+			var line3: String = "%s is in %s but %s cannot reach it  %s" % [
+				head, bundled_owner, ", ".join(offline_tofu), where]
+			if bool(rec["dev_only"]):
+				dev_notes.append(line3)
+			else:
+				unreachable.append(line3)
+			continue
 		clean += 1
 
-	var total: int = clean + drawn_tofu.size() + os_rescued.size() + dev_notes.size()
+	var total: int = (clean + drawn_tofu.size() + unreachable.size() + os_rescued.size()
+		+ dev_notes.size())
 	print("distinct non-ASCII codepoints in string literals: ", total)
-	print("shipped in a bundled font and drawn by every production chain: ", clean)
+	print("shipped in a bundled font and drawn by every production chain, OS font or not: ", clean)
 	if not drawn_tofu.is_empty():
 		print("--- HEX BOX ON THIS MACHINE, IN A RUNTIME STRING ---")
 		for l in drawn_tofu:
+			print("[FAIL] ", l)
+	if not unreachable.is_empty():
+		print("--- SHIPPED BUT UNREACHABLE: hex box on a device with no system font for it ---")
+		for l in unreachable:
 			print("[FAIL] ", l)
 	if not os_rescued.is_empty():
 		print("--- DRAWN HERE ONLY BECAUSE WINDOWS SUPPLIES THE GLYPH (legacy Android risk) ---")
@@ -192,10 +268,11 @@ func _ready() -> void:
 		print("--- tools/ only: console output, never rasterised ---")
 		for l in dev_notes:
 			print("[info] ", l)
-	print("RESULT: %d runtime codepoints draw as a hex box, %d depend on the OS font" % [
-		drawn_tofu.size(), os_rescued.size()])
-	print("GLYPH COVERAGE: ", "GREEN" if drawn_tofu.is_empty() else "RED")
-	get_tree().quit(0 if drawn_tofu.is_empty() else 1)
+	print("RESULT: %d draw as a hex box here, %d shipped but unreachable offline, %d depend on the OS font" % [
+		drawn_tofu.size(), unreachable.size(), os_rescued.size()])
+	var bad: bool = not drawn_tofu.is_empty() or not unreachable.is_empty()
+	print("GLYPH COVERAGE: ", "RED" if bad else "GREEN")
+	get_tree().quit(1 if bad else 0)
 
 func _walk(dir_path: String) -> void:
 	var dir := DirAccess.open(dir_path)

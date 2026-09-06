@@ -36,6 +36,7 @@ const PROBE_SKIP := ["RainwaterHarvesting"]
 var game_list: ItemList
 var tier_buttons: Array[Button] = []
 var play_button: Button
+var split_button: Button
 var probe_label: Label
 var result_label: Label
 var status_label: Label
@@ -160,6 +161,18 @@ func _build_ui() -> void:
 	play_button.pressed.connect(_on_play_pressed)
 	right.add_child(play_button)
 
+	# The Lab's co-op half used to need a real second device: with nothing connected it stood
+	# in for the missing peer and reported on the networking instead of letting anyone play.
+	# This runs the authored pair for real, both sides, in two panes in this process. Not
+	# gated on the selection - with an MP game selected it opens the pair that game belongs
+	# to, otherwise the first authored pair.
+	split_button = Button.new()
+	split_button.text = "SPLIT SCREEN - play both sides"
+	split_button.custom_minimum_size = Vector2(0, 64)
+	split_button.add_theme_font_size_override("font_size", 22)
+	split_button.pressed.connect(_on_split_pressed)
+	right.add_child(split_button)
+
 	result_label = Label.new()
 	result_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	result_label.add_theme_font_size_override("font_size", 16)
@@ -194,7 +207,10 @@ func _build_ui() -> void:
 func _collect_games() -> void:
 	_entries.clear()
 	game_list.clear()
-	for game_name in _scan_dir(SP_DIR):
+	# The constants are passed in as the source that is identical in both kinds of build; see
+	# _scan_dir() for why a directory walk alone lists nothing in an export.
+	var sp_known: Array = GameManager.ALL_SINGLEPLAYER_MINIGAMES if GameManager else []
+	for game_name in _scan_dir(SP_DIR, sp_known):
 		_entries.append({"name": game_name, "mp": false,
 			"path": "%s/%s.tscn" % [SP_DIR, game_name]})
 		game_list.add_item("SP  %s" % game_name)
@@ -210,20 +226,56 @@ func _collect_games() -> void:
 	status_label.text = "%d games listed. Select one." % _entries.size()
 
 
-func _scan_dir(dir_path: String) -> Array[String]:
-	var names: Array[String] = []
+## THE DEFECT THIS REPLACES: the Lab listed ZERO single-player games on the phone.
+##
+## This used to be a DirAccess walk keeping every entry whose name ends_with(".tscn") - 25
+## names in the editor and none at all in an exported build. editor/export/
+## convert_text_resources_to_binary is true (the engine default, and unset in project.godot,
+## so it is what the Android build used), so an export stores each Foo.tscn as a binary
+## Foo.scn plus a Foo.tscn.remap stub. Neither name ends with ".tscn", the filter matched
+## nothing, and the SP half of the list was empty with no error anywhere. The MP half
+## survived only because it comes from GameManager.multiplayer_minigames instead. Same root
+## cause as the empty Beat Viewer (scenes/ui/BeatViewer.gd), fixed the same way.
+##
+## `known` is a list of game names from the constants the game itself picks rounds from - a
+## source that reads identically in both kinds of build. The directory walk is demoted to an
+## extra source, accepted in whatever spelling the build reports, so a scene dropped into the
+## folder and not yet added to any constant still shows up in the dev tool that exists to try
+## it. Every candidate is then confirmed with ResourceLoader.exists(), which resolves through
+## the .remap and therefore answers correctly in an export as well as in the editor; that is
+## what keeps a name with no scene behind it out of a list whose rows all call load().
+func _scan_dir(dir_path: String, known: Array = []) -> Array[String]:
+	var seen := {}
+	for g in known:
+		seen[String(g)] = true
 	var dir := DirAccess.open(dir_path)
-	if dir == null:
-		return names
-	dir.list_dir_begin()
-	var f := dir.get_next()
-	while f != "":
-		if not dir.current_is_dir() and f.ends_with(".tscn"):
-			names.append(f.get_basename())
-		f = dir.get_next()
-	dir.list_dir_end()
+	if dir != null:
+		dir.list_dir_begin()
+		var f := dir.get_next()
+		while f != "":
+			if not dir.current_is_dir():
+				var base := _scene_base_name(f)
+				if base != "":
+					seen[base] = true
+			f = dir.get_next()
+		dir.list_dir_end()
+	var names: Array[String] = []
+	for n in seen.keys():
+		if ResourceLoader.exists("%s/%s.tscn" % [dir_path, n]):
+			names.append(String(n))
 	names.sort()
 	return names
+
+
+## A scene file name in any spelling a build can report, reduced to the game name. Editor:
+## "FixLeak.tscn". Exported: "FixLeak.scn" AND "FixLeak.tscn.remap" - both, for the one scene,
+## which is why the caller dedupes through a dictionary. Longest suffixes first, so
+## "FixLeak.tscn.remap" is not left as "FixLeak.tscn" by an earlier match.
+func _scene_base_name(file_name: String) -> String:
+	for suffix in [".tscn.remap", ".scn.remap", ".tscn", ".scn"]:
+		if file_name.ends_with(suffix):
+			return file_name.trim_suffix(suffix)
+	return ""
 
 
 func _refresh_tier_buttons() -> void:
@@ -374,6 +426,51 @@ func _on_play_pressed() -> void:
 	# the intro clips already have their own viewer (Settings -> Beat Viewer), and
 	# what is being judged here is the mechanic.
 	GameManager.launch_pending_minigame()
+
+
+## Open the local split-screen runner on one authored pair.
+##
+## The pair id is handed over on GameLabSplit's own script rather than through GameManager:
+## this is a Lab-to-Lab handoff and has no business in a production autoload. load() returns
+## the same GDScript resource the .tscn references, so the static var written here is the one
+## that screen reads.
+func _on_split_pressed() -> void:
+	if AudioManager:
+		AudioManager.play_click()
+	var set_id: String = _level_set_id_for_selection()
+	if set_id == "":
+		status_label.text = "No authored co-op pair to split - LevelSets is empty."
+		return
+	var split_script: GDScript = load("res://scenes/ui/GameLabSplit.gd")
+	if split_script == null:
+		status_label.text = "GameLabSplit.gd is missing; cannot open split screen."
+		return
+	split_script.set("requested_set_id", set_id)
+	# The sandbox stays OPEN across this: the split runner plays real rounds and they must be
+	# as unrecorded as every other Lab round. GameLabSplit._exit_tree() closes it.
+	get_tree().change_scene_to_file("res://scenes/ui/GameLabSplit.tscn")
+
+
+## Which pair the SPLIT button should open. An MP game selected in the list opens the pair
+## that game is authored into - either side of it - so the button follows the selection rather
+## than ignoring it. Anything else (an SP game, or no selection at all) falls back to the
+## first authored pair, which is why the button is never disabled.
+func _level_set_id_for_selection() -> String:
+	if LevelSets == null:
+		return ""
+	var all: Array = LevelSets.get_all_level_sets()
+	if all.is_empty():
+		return ""
+	var sel := game_list.get_selected_items()
+	if sel.size() > 0 and sel[0] < _entries.size():
+		var entry: Dictionary = _entries[sel[0]]
+		if bool(entry.get("mp", false)):
+			var path: String = str(entry.get("path", ""))
+			for level_set in all:
+				if str(level_set.get("player1_game", "")) == path \
+						or str(level_set.get("player2_game", "")) == path:
+					return str(level_set.get("id", ""))
+	return str(all[0].get("id", ""))
 
 
 func _start_coop(game_name: String) -> void:

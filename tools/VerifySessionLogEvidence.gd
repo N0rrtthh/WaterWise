@@ -297,6 +297,13 @@ func _ready() -> void:
 	_p("run_context_marks_synthetic", bool(rc.get("synthetic", false)),
 		"headless=%s auto_play=%s" % [str(rc.get("headless")), str(rc.get("auto_play"))])
 
+	# Everything above has been asserted; clear the rounds so the export SessionLogger
+	# runs on NOTIFICATION_WM_CLOSE_REQUEST (fired by the quit below) takes the empty-skip
+	# path instead of leaving one synthetic file per harness run in the folder
+	# DefenceVerdict partitions.
+	sl.set("sp_games", [])
+	sl.set("mp_rounds", [])
+
 	_summary()
 
 func _count_session_logs() -> int:

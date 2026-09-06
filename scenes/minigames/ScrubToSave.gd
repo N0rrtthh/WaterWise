@@ -223,7 +223,7 @@ func _update_dirt_visual():
 func _spawn_bubbles(pos: Vector2):
 	for i in range(2):
 		var bubble = Label.new()
-		bubble.text = "○"
+		bubble.text = "⚪"
 		bubble.add_theme_font_size_override("font_size", randi_range(10, 20))
 		bubble.modulate = Color(1, 1, 1, 0.8)
 		bubble.position = pos + Vector2(randf_range(-20, 20), randf_range(-20, 20))

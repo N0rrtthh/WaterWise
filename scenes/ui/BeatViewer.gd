@@ -142,24 +142,87 @@ func _ready() -> void:
 
 
 func _populate_games() -> void:
-	var dir := DirAccess.open(GAMES_DIR)
-	if dir == null:
-		status_label.text = "Cannot open %s" % GAMES_DIR
+	_games = _collect_game_names(_scene_file_listing())
+	if _games.is_empty():
+		status_label.text = "No minigame scenes resolved under %s" % GAMES_DIR
 		return
-	var names: Array[String] = []
-	dir.list_dir_begin()
-	var f := dir.get_next()
-	while f != "":
-		if f.ends_with(".tscn"):
-			names.append(f.trim_suffix(".tscn"))
-		f = dir.get_next()
-	names.sort()
-	_games = names
-	for g in names:
+	for g in _games:
 		var tag := "MP" if MULTIPLAYER_GAMES.has(g) else "SP"
 		var has_beats := _clip_path(g, "Intro") != ""
 		var mark := "" if has_beats else "  !! NO CLIPS"
 		game_list.add_item("%s  [%s]%s" % [g, tag, mark])
+
+
+## THE DEFECT THIS REPLACES: the Beat Viewer came up with an EMPTY list on the phone.
+##
+## The list used to be a DirAccess walk of res://scenes/minigames keeping every entry whose
+## name ends_with(".tscn"). That is 25 names in the editor and ZERO in an exported build:
+## editor/export/convert_text_resources_to_binary is true (the engine default, and unset in
+## project.godot, so it is what the Android build used), so the export stores each Foo.tscn as
+## a binary Foo.scn plus a Foo.tscn.remap stub. Neither of those names ends with ".tscn", the
+## filter matched nothing, and every row downstream - the SP/MP tag, the NO CLIPS mark, the
+## INTRO/WIN/LOSE buttons - had nothing to hang off. Nothing errored, which is why this looked
+## like a rendering fault rather than a listing one.
+##
+## So the list is now built from a source that is IDENTICAL in both kinds of build - the same
+## constants the game itself picks rounds from - and the directory listing is demoted to an
+## extra source, accepted in whatever spelling a build hands it over in:
+##
+##   GameManager.ALL_SINGLEPLAYER_MINIGAMES (24) is the single-player pool.
+##   MULTIPLAYER_GAMES adds RainwaterHarvesting, which is co-op only. Together they are
+##   exactly the 25 scenes on disk, so on this project the scan is currently redundant; it
+##   stays because a scene dropped into the folder and not yet added to either list should
+##   still show up in the dev tool that exists to preview it.
+##
+## Every candidate is then confirmed with ResourceLoader.exists(), which resolves through the
+## .remap and so answers correctly in an export as well as in the editor. That is what keeps a
+## name with no scene behind it out of a list whose rows all call load() eventually.
+func _collect_game_names(listing: PackedStringArray) -> Array[String]:
+	var seen := {}
+	for g in GameManager.ALL_SINGLEPLAYER_MINIGAMES:
+		seen[String(g)] = true
+	for g in MULTIPLAYER_GAMES:
+		seen[String(g)] = true
+	for f in listing:
+		var base := _scene_base_name(String(f))
+		if base != "":
+			seen[base] = true
+	var out: Array[String] = []
+	for n in seen.keys():
+		if ResourceLoader.exists("%s/%s.tscn" % [GAMES_DIR, n]):
+			out.append(String(n))
+	out.sort()
+	return out
+
+
+## A scene file name in any spelling a build can report, reduced to the game name.
+## Editor: "FixLeak.tscn". Exported: "FixLeak.scn" AND "FixLeak.tscn.remap" - both, for the
+## same scene, which is why the caller dedupes. The longest suffixes are tested first so
+## "FixLeak.tscn.remap" is not left as "FixLeak.tscn" by an earlier match.
+func _scene_base_name(file_name: String) -> String:
+	for suffix in [".tscn.remap", ".scn.remap", ".tscn", ".scn"]:
+		if file_name.ends_with(suffix):
+			return file_name.trim_suffix(suffix)
+	return ""
+
+
+## Whatever the filesystem reports for the minigame folder, or nothing at all when it cannot be
+## read. An unreadable folder is no longer a dead end - the constants above already carry the
+## whole list - so this returns an empty listing instead of the "Cannot open" message that used
+## to replace the screen's contents.
+func _scene_file_listing() -> PackedStringArray:
+	var out := PackedStringArray()
+	var dir := DirAccess.open(GAMES_DIR)
+	if dir == null:
+		return out
+	dir.list_dir_begin()
+	var f := dir.get_next()
+	while f != "":
+		if not dir.current_is_dir():
+			out.append(f)
+		f = dir.get_next()
+	dir.list_dir_end()
+	return out
 
 
 func _clip_path(game: String, kind: String) -> String:

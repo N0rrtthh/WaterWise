@@ -39,6 +39,10 @@ func _load_translations() -> void:
 			"en": "MULTIPLAYER",
 			"tl": "MULTIPLAYER"
 		},
+		"multiplayer_locked_hint": {
+			"en": "Finish one round to unlock co-op",
+			"tl": "Tapusin ang isang round para ma-unlock ang co-op"
+		},
 		# Multiplayer departure notices. Produced as KEYS by NetworkManager through
 		# GameManager.set_multiplayer_notice() and rendered by whichever multiplayer screen
 		# comes up first, so the wording follows the current language even when the
@@ -205,15 +209,15 @@ func _load_translations() -> void:
 			"en": "Duration (0 = Unlimited)",
 			"tl": "Tagal (0 = Walang Hangganan)"
 		},
+		"settings_auto_play_duration_hint": {
+			"en": "(0 = ∞, any value)",
+			"tl": "(0 = ∞, kahit anong halaga)"
+		},
 		"settings_show": {
 			"en": "Show",
 			"tl": "Ipakita"
 		},
-		"settings_dev_note": {
-			"en": "Use toggles on mobile (same as F11/F12 on PC).",
-			"tl": "Gamitin ang toggles sa mobile (kapareho ng F11/F12 sa PC)."
-		},
-		
+
 		# Instructions
 		"how_to_play": {
 			"en": "📖 HOW TO PLAY",
@@ -261,9 +265,9 @@ func _load_translations() -> void:
 		# VegetableBath does not have — so it cannot be reused as the real
 		# instruction. This one states the actual three-station pipeline.
 		"vegetable_bath_instructions": {
-			"en": "DRAG: Dirty Basket → Wash Bowl → Clean Basket!"
+			"en": "DRAG: Dirty Basket ➡ Wash Bowl ➡ Clean Basket!"
 				+ "\nDirty in clean = TIME PENALTY! 🥕",
-			"tl": "I-DRAG: Maruming Basket → Palanggana → Malinis na Basket!"
+			"tl": "I-DRAG: Maruming Basket ➡ Palanggana ➡ Malinis na Basket!"
 				+ "\nMarumi sa malinis = PARUSA SA ORAS! 🥕"
 		},
 		"greywater_sorter": {
@@ -376,6 +380,19 @@ func _load_translations() -> void:
 			"en": "TAP ANYWHERE TO START",
 			"tl": "TAP KAHIT SAAN PARA MAGSIMULA"
 		},
+		# Shown in place of tap_to_start while the multiplayer first-play beat still has pages
+		# left, so the prompt does not promise a start the tap will not deliver.
+		"mp_tap_to_continue": {
+			"en": "TAP ANYWHERE TO CONTINUE",
+			"tl": "TAP KAHIT SAAN PARA MAGPATULOY"
+		},
+		# Emoji-free twin of tutorial_tip_prefix. The bulb glyph in that one renders as an
+		# "unknown character" box on the Android 8 test phone, and the multiplayer beat is new
+		# copy, so it does not add to that pile. The singleplayer prefix is left alone.
+		"mp_tutorial_tip_prefix": {
+			"en": "TIP: ",
+			"tl": "PAYO: "
+		},
 		# New Mini-Game Instructions
 		"plug_the_leak_instructions": {
 			"en": "HOLD on leaking pipes to plug them!\nDon't let damage reach 100%! 🔧",
@@ -405,11 +422,11 @@ func _load_translations() -> void:
 			# followed the instruction was always marked wrong.
 			"en": (
 				"DRAG filter layers to the correct slots!"
-				+ "\nTop to bottom: Cloth → Charcoal → Sand → Gravel 🧱"
+				+ "\nTop to bottom: Cloth ➡ Charcoal ➡ Sand ➡ Gravel 🧱"
 			),
 			"tl": (
 				"I-DRAG ang mga layer ng filter sa tamang posisyon!"
-				+ "\nItaas pababa: Tela → Uling → Buhangin → Graba 🧱"
+				+ "\nItaas pababa: Tela ➡ Uling ➡ Buhangin ➡ Graba 🧱"
 			)
 		},
 		"water_plant_instructions": {
@@ -1416,8 +1433,8 @@ func _load_translations() -> void:
 			"tl": "⭐ MAGALING"
 		},
 		"passing": {
-			"en": "✓ PASSING",
-			"tl": "✓ PUMASA"
+			"en": "✔ PASSING",
+			"tl": "✔ PUMASA"
 		},
 		"needs_improvement": {
 			"en": "📚 NEEDS IMPROVEMENT",
@@ -2255,6 +2272,14 @@ func _load_translations() -> void:
 			"en": "Waiting for partner...",
 			"tl": "Hinihintay ang kapareha..."
 		},
+		"mp_waiting_team_progress": {
+			"en": "Team progress: %d / %d",
+			"tl": "Progreso ng team: %d / %d"
+		},
+		"mp_waiting_partner_gain": {
+			"en": "Partner has added +%d since you finished",
+			"tl": "Nakadagdag ng +%d ang kapareha mo"
+		},
 		"mp_your_role": {
 			"en": "Your Role: %s",
 			"tl": "Papel Mo: %s"
@@ -2569,8 +2594,8 @@ func _load_translations() -> void:
 			"tl": "⚠️ BUKAS"
 		},
 		"hud_drum_safe": {
-			"en": "✓ SAFE",
-			"tl": "✓ LIGTAS"
+			"en": "✔ SAFE",
+			"tl": "✔ LIGTAS"
 		},
 		"hud_filters_built": {
 			"en": "🧱 %d / %d filters",
@@ -2647,16 +2672,16 @@ func _load_translations() -> void:
 			"tl": "💧 Nasalo: %d"
 		},
 		"hud_follow": {
-			"en": "← FOLLOW →",
-			"tl": "← SUNDAN →"
+			"en": "⬅ FOLLOW ➡",
+			"tl": "⬅ SUNDAN ➡"
 		},
 		"hud_dirt_percent": {
 			"en": "Dirt: %.0f%%",
 			"tl": "Dumi: %.0f%%"
 		},
 		"hud_correct_count": {
-			"en": "✓ Correct: %d / %d",
-			"tl": "✓ Tama: %d / %d"
+			"en": "✔ Correct: %d / %d",
+			"tl": "✔ Tama: %d / %d"
 		},
 		"hud_swipe_clean": {
 			"en": "⬆️ CLEAN",
@@ -2667,12 +2692,12 @@ func _load_translations() -> void:
 			"tl": "⬇️ MADUMI"
 		},
 		"hud_correct": {
-			"en": "✓ CORRECT!",
-			"tl": "✓ TAMA!"
+			"en": "✔ CORRECT!",
+			"tl": "✔ TAMA!"
 		},
 		"hud_wrong": {
-			"en": "✗ WRONG!",
-			"tl": "✗ MALI!"
+			"en": "✖ WRONG!",
+			"tl": "✖ MALI!"
 		},
 		"hud_watch_green_bucket": {
 			"en": "👀 Watch the GREEN bucket!",
@@ -2687,8 +2712,8 @@ func _load_translations() -> void:
 			"tl": "👆 PINDUTIN ang timbang may tubig!"
 		},
 		"hud_target_arrow": {
-			"en": "← TARGET",
-			"tl": "← TAMANG LEBEL"
+			"en": "⬅ TARGET",
+			"tl": "⬅ TAMANG LEBEL"
 		},
 		"hud_hold_to_fill": {
 			"en": "👆 HOLD TO FILL",
@@ -2739,8 +2764,8 @@ func _load_translations() -> void:
 			"tl": "💧 HUGASAN"
 		},
 		"hud_veggie_clean": {
-			"en": "✓ CLEAN",
-			"tl": "✓ MALINIS"
+			"en": "✔ CLEAN",
+			"tl": "✔ MALINIS"
 		},
 		"hud_pairs_found": {
 			"en": "🧠 %d / %d pairs",
@@ -2791,8 +2816,8 @@ func _load_translations() -> void:
 			"tl": "▶  MAGPATULOY"
 		},
 		"shell_quit_game": {
-			"en": "✕  QUIT GAME",
-			"tl": "✕  UMALIS SA LARO"
+			"en": "✖  QUIT GAME",
+			"tl": "✖  UMALIS SA LARO"
 		},
 		"shell_session_ended": {
 			"en": "SESSION ENDED",
@@ -2855,6 +2880,28 @@ func _load_translations() -> void:
 			"en": "🗑️ Erase All Data",
 			"tl": "🗑️ Burahin Lahat ng Data"
 		},
+		"settings_erase_data_title": {
+			"en": "Erase all data?",
+			"tl": "Burahin lahat ng data?"
+		},
+		"settings_erase_data_warning": {
+			"en": (
+				"This deletes every droplet, unlock, high score and setting on this "
+				+ "device.\nIt cannot be undone."
+			),
+			"tl": (
+				"Buburahin nito ang lahat ng droplet, unlock, high score at setting "
+				+ "sa device na ito.\nHindi ito maibabalik."
+			)
+		},
+		"settings_erase_data_ok": {
+			"en": "Erase everything",
+			"tl": "Burahin lahat"
+		},
+		"cancel": {
+			"en": "Cancel",
+			"tl": "Kanselahin"
+		},
 		"settings_export_logs": {
 			"en": "📤 Export Session Logs",
 			"tl": "📤 I-export ang Session Logs"
@@ -2862,6 +2909,25 @@ func _load_translations() -> void:
 		"mp_session_leaderboard": {
 			"en": "📊 Session Leaderboard",
 			"tl": "📊 Ranggo Ngayong Session"
+		},
+		# "round" is a loanword in this project's Tagalog throughout ("Kanselado ang round"),
+		# so the caption keeps it rather than reaching for "bilog", which is the shape.
+		"mp_round_timer": {
+			"en": "Round:",
+			"tl": "Round:"
+		},
+		# "Karaniwan" rather than the English "Default": unlike "round", "host" and
+		# "multiplayer", this is not a word this project already treats as a loanword, and
+		# VerifyLocalization exists to stop an untranslated string entering as an invisible
+		# note. It reads as "the usual one", which is what the value means here - leave the
+		# round at the length its own scene authored.
+		"mp_round_timer_default": {
+			"en": "Default (30s)",
+			"tl": "Karaniwan (30s)"
+		},
+		"mp_round_timer_host_only": {
+			"en": "Only the host can change the round timer",
+			"tl": "Ang host lang ang makakapagpalit ng haba ng round"
 		},
 		"mp_duration_label": {
 			"en": "Duration:",
@@ -2954,8 +3020,8 @@ func _load_translations() -> void:
 			"tl": "💡 PAYO: "
 		},
 		"hud_perfect_ok": {
-			"en": "✓ OK",
-			"tl": "✓ TAMA"
+			"en": "✔ OK",
+			"tl": "✔ TAMA"
 		},
 		"menu_auto_play_tooltip": {
 			"en": "Enable automated gameplay for single-player performance testing",

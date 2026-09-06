@@ -139,7 +139,7 @@ func _calculate_grade(percentage: float) -> Dictionary:
 		}
 	if percentage >= 60:
 		return {
-			"text": _loc("passing", "✓ PASSING"),
+			"text": _loc("passing", "✔ PASSING"),
 			"color": Color(1.0, 0.7, 0.3)
 		}
 	return {

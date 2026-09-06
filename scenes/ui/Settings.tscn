@@ -129,7 +129,7 @@ theme_override_font_sizes/font_size = 24
 theme_override_styles/normal = SubResource("StyleBoxFlat_button_secondary")
 theme_override_styles/hover = SubResource("StyleBoxFlat_button_secondary")
 theme_override_styles/pressed = SubResource("StyleBoxFlat_button_secondary")
-text = "Filipino → English"
+text = "Filipino ➡ English"
 
 [node name="VolumeLabel" type="Label" parent="CenterContainer/PanelCard/MarginContainer/ScrollContainer/VBoxContainer/GridContainer"]
 layout_mode = 2

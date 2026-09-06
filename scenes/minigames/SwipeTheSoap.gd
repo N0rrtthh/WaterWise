@@ -147,7 +147,7 @@ func _spawn_soap():
 	# Bubbles
 	for i in range(5):
 		var bubble = Label.new()
-		bubble.text = "○"
+		bubble.text = "⚪"
 		bubble.add_theme_font_size_override("font_size", randi_range(12, 24))
 		bubble.modulate = Color(1, 1, 1, 0.7)
 		bubble.position = Vector2(randf_range(-60, 60), randf_range(-40, 40))

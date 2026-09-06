@@ -34,32 +34,66 @@ extends Control
 )
 
 @onready var waiting_panel = $MarginContainer/VBoxContainer/WaitingPanel
-@onready var status_label = $MarginContainer/VBoxContainer/WaitingPanel/VBoxContainer/StatusLabel
+## The waiting room's column lives inside a ScrollContainer, and that is load-bearing rather
+## than cosmetic. Seven rows stack here - status, player list, ready, auto play, start,
+## disconnect, leaderboard - and on mobile five of them are raised to the 48dp touch floor,
+## which is density-dependent: 121 units at 402 dpi, 168 at 560. The column's minimum height
+## reached 1114 units on a 1080-unit screen (measured, Moto E5 Plus shape as host), and
+## because a Control clamps its size UP to its own minimum, that minimum propagated out to
+## the full-rect MarginContainer, whose grow_vertical is GROW_DIRECTION_BOTH - so the
+## overflow was split across BOTH edges and the title and status text at the top were cut
+## off with nothing to scroll. Scrolling vertically drops this column's contributed minimum
+## height to zero, so the screen stops growing past its edges, and the rows that do not fit
+## become reachable instead of lost. horizontal_scroll_mode is DISABLED so the column still
+## publishes its minimum WIDTH; the inner VBox expands in both axes so the authored centre
+## alignment still centres whenever there is room. Measured in tools/VerifyWaitingRoomFit.tscn.
+@onready var waiting_scroll = $MarginContainer/VBoxContainer/WaitingPanel/WaitingScroll
+@onready var status_label = $MarginContainer/VBoxContainer/WaitingPanel/WaitingScroll/VBoxContainer/StatusLabel
 @onready var player_list_container = (
-	$MarginContainer/VBoxContainer/WaitingPanel/VBoxContainer/PlayerListContainer
+	$MarginContainer/VBoxContainer/WaitingPanel/WaitingScroll/VBoxContainer/PlayerListContainer
 )
 @onready var player1_label = (
-	$MarginContainer/VBoxContainer/WaitingPanel/VBoxContainer/PlayerListContainer/Player1Label
+	$MarginContainer/VBoxContainer/WaitingPanel/WaitingScroll/VBoxContainer/PlayerListContainer/Player1Label
 )
 @onready var player2_label = (
-	$MarginContainer/VBoxContainer/WaitingPanel/VBoxContainer/PlayerListContainer/Player2Label
+	$MarginContainer/VBoxContainer/WaitingPanel/WaitingScroll/VBoxContainer/PlayerListContainer/Player2Label
 )
 @onready var ready_checkbox = (
-	$MarginContainer/VBoxContainer/WaitingPanel/VBoxContainer/ReadyCheckbox
+	$MarginContainer/VBoxContainer/WaitingPanel/WaitingScroll/VBoxContainer/ReadyCheckbox
 )
 @onready var auto_play_button = (
-	$MarginContainer/VBoxContainer/WaitingPanel/VBoxContainer/AutoPlayButton
+	$MarginContainer/VBoxContainer/WaitingPanel/WaitingScroll/VBoxContainer/AutoPlayButton
 )
 @onready var start_game_button = (
-	$MarginContainer/VBoxContainer/WaitingPanel/VBoxContainer/StartGameButton
+	$MarginContainer/VBoxContainer/WaitingPanel/WaitingScroll/VBoxContainer/StartGameButton
 )
 @onready var disconnect_button = (
-	$MarginContainer/VBoxContainer/WaitingPanel/VBoxContainer/DisconnectButton
+	$MarginContainer/VBoxContainer/WaitingPanel/WaitingScroll/VBoxContainer/DisconnectButton
 )
 
 # Dynamically created after AutoPlayButton
 var mp_duration_row: HBoxContainer = null
 var mp_duration_spinbox: SpinBox = null
+## The round-timer control that P5 asked for, sitting with the other three session controls
+## (Ready / Auto Play / Start Game) rather than in Settings, because a round clock only means
+## anything while a session exists and both peers have to agree on it.
+##
+## A cycling Button, not a SpinBox. Three reasons, in order of weight:
+##   1. MobileUIManager._on_node_added() raises every BaseButton to the 48dp touch floor as
+##      it enters the tree. A SpinBox is not a BaseButton, so it would need its own sizing
+##      and would still be a 40-unit-tall target on the phones that reported P3.
+##   2. Typing on this screen is the P3 defect: the soft keyboard covers the field. One tap
+##      per step needs no keyboard at all.
+##   3. The values worth having are a short list, and a list rules out the "typed 7, got 5"
+##      snapping trap that both existing SpinBoxes on this project carry comments about.
+##
+## Not persisted, like the auto-play duration above it: the round clock is a per-session
+## choice, and the shipped default (0 = each scene's authored 30 s) is the one a fresh launch
+## should get.
+const ROUND_TIMER_STEPS: Array[float] = [0.0, 15.0, 30.0, 45.0, 60.0, 90.0, 120.0, 180.0]
+
+var round_timer_button: Button = null
+
 var leaderboard_button: Button = null
 var leaderboard_panel: Control = null
 
@@ -181,6 +215,8 @@ func _ready() -> void:
 
 	# Build MP AutoPlay duration row (placed after AutoPlayButton)
 	_create_mp_duration_row()
+	# P5: the round timer belongs with the session controls, not in Settings.
+	_create_round_timer_row()
 	# Build leaderboard button in waiting panel
 	_create_leaderboard_button()
 
@@ -215,7 +251,12 @@ func _create_mp_duration_row() -> void:
 	mp_duration_spinbox = SpinBox.new()
 	mp_duration_spinbox.min_value = 0
 	mp_duration_spinbox.max_value = 120
-	mp_duration_spinbox.step = 1
+	# Same reason as the single-player box in Settings.gd: step is a SNAP, not just
+	# an arrow increment, so a whole-minute step made every fractional duration
+	# unreachable. Both boxes now keep what is typed and step by a minute on the
+	# arrows. The value is broadcast to the partner by _on_mp_duration_changed().
+	mp_duration_spinbox.step = 0
+	mp_duration_spinbox.custom_arrow_step = 1.0
 	mp_duration_spinbox.suffix = " min  (0=∞)"
 	mp_duration_spinbox.custom_minimum_size = Vector2(160, 40)
 	mp_duration_spinbox.allow_greater = false
@@ -229,6 +270,72 @@ func _create_mp_duration_row() -> void:
 	var ap_idx := auto_play_button.get_index()
 	vbox.add_child(mp_duration_row)
 	vbox.move_child(mp_duration_row, ap_idx + 1)
+
+
+func _create_round_timer_row() -> void:
+	var vbox = auto_play_button.get_parent()
+	if not vbox:
+		return
+	round_timer_button = Button.new()
+	round_timer_button.name = "RoundTimerButton"
+	round_timer_button.custom_minimum_size = Vector2(0, 50)
+	round_timer_button.add_theme_font_size_override("font_size", 18)
+	round_timer_button.pressed.connect(_on_round_timer_pressed)
+	# Below the auto-play duration row and above Start Game, so the reading order is
+	# "who is playing, how, for how long, go".
+	var after: Node = mp_duration_row if mp_duration_row else auto_play_button
+	vbox.add_child(round_timer_button)
+	vbox.move_child(round_timer_button, after.get_index() + 1)
+	if NetworkManager and not NetworkManager.mp_round_seconds_changed.is_connected(
+			_on_round_seconds_changed):
+		NetworkManager.mp_round_seconds_changed.connect(_on_round_seconds_changed)
+	_refresh_round_timer_button()
+
+
+## Only the host may change it, and the client is told so by the control instead of finding
+## out when its tap does nothing: NetworkManager.set_mp_round_seconds() refuses a client's
+## write and the sync RPC is @rpc("authority"), so a disabled button here is the truth about
+## what the network layer will accept, not merely a suggestion.
+func _refresh_round_timer_button() -> void:
+	if round_timer_button == null:
+		return
+	var seconds: float = NetworkManager.mp_round_seconds if NetworkManager else 0.0
+	var value_text: String = (
+		Localization.get_text("mp_round_timer_default") if seconds <= 0.0
+		else "%ds" % int(round(seconds))
+	)
+	round_timer_button.text = "%s %s" % [
+		Localization.get_text("mp_round_timer"), value_text
+	]
+	var host_side: bool = (not _is_connected()) or _is_host()
+	round_timer_button.disabled = not host_side
+	round_timer_button.tooltip_text = (
+		"" if host_side else Localization.get_text("mp_round_timer_host_only")
+	)
+
+
+func _on_round_timer_pressed() -> void:
+	if not NetworkManager:
+		return
+	if _is_connected() and not _is_host():
+		return
+	var current: float = NetworkManager.mp_round_seconds
+	var idx: int = 0
+	for i in range(ROUND_TIMER_STEPS.size()):
+		if is_equal_approx(ROUND_TIMER_STEPS[i], current):
+			idx = i
+			break
+	var next: float = ROUND_TIMER_STEPS[(idx + 1) % ROUND_TIMER_STEPS.size()]
+	if AudioManager:
+		AudioManager.play_click()
+	# The button's own caption is refreshed by _on_round_seconds_changed(), which fires for
+	# the host too because the sync is call_local - one code path writes the label whether
+	# the change started here or arrived from the partner's host.
+	NetworkManager.set_mp_round_seconds(next)
+
+
+func _on_round_seconds_changed(_seconds: float) -> void:
+	_refresh_round_timer_button()
 
 func _connect_button_signals() -> void:
 	if not host_button.pressed.is_connected(_on_host_pressed):
@@ -357,6 +464,10 @@ func _show_waiting_panel() -> void:
 	_pull_network_ready_map()
 	_update_player_list()
 	_update_start_button_state()
+	# Which side of the session this peer is on is only known once one exists, and the
+	# round timer is host-only - so its enabled state is re-derived on entry rather than
+	# at build time, when _is_host() is still false on a host that has not pressed Create.
+	_refresh_round_timer_button()
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # BUTTON HANDLERS
@@ -591,7 +702,7 @@ func _build_leaderboard_panel() -> void:
 	hdr_hbox.add_child(hdr_lbl)
 
 	var close_btn = Button.new()
-	close_btn.text = "✕"
+	close_btn.text = "✖"
 	close_btn.custom_minimum_size = Vector2(40, 40)
 	close_btn.add_theme_font_size_override("font_size", 20)
 	close_btn.pressed.connect(func(): leaderboard_panel.visible = false)
@@ -945,6 +1056,11 @@ func _update_translations() -> void:
 	cancel_button.text = _t("cancel")
 	ready_checkbox.text = _t("ready_checkbox")
 	start_game_button.text = _t("start_game")
+	# Both halves of the round-timer caption come from Localization, so a language switch
+	# has to re-render it like the authored labels above. Null-guarded because
+	# _update_translations() runs early in _ready(), before the row is built.
+	if round_timer_button:
+		_refresh_round_timer_button()
 	disconnect_button.text = _t("disconnect")
 	# The subtitle carries either the tagline or the reason the last round ended. It sits above
 	# all three panels, so it is the one label that is visible on the mode-selection view a

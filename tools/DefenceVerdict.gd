@@ -62,7 +62,14 @@ func _ready() -> void:
 			"file": n, "kind": kind, "rounds": recs.size(), "per_action": per_action,
 			"final": str(algo.get("final_difficulty", "?")),
 			"phi": float(algo.get("final_phi", 0.0)),
-			"peak": str(prog.get("peak_difficulty", "-")),
+			# peak_difficulty is deliberately null when no adaptive evaluation ran at
+			# all (an unmeasured tier must not read as "Easy"), and the key IS present,
+			# so get()'s "-" default never applied and two HUMAN rows in this very
+			# listing printed "peak=<null>". Normalised here rather than at the source:
+			# it makes the printed table readable AND revives the != "-" guard in the
+			# usable-log gate below, which str(null) == "<null>" had quietly made dead.
+			"peak": ("-" if prog.get("peak_difficulty") == null
+				else str(prog.get("peak_difficulty"))),
 			"evals": int(prog.get("evaluations", 0)),
 			"three": bool(prog.get("all_three_tiers_reached", false))
 		})

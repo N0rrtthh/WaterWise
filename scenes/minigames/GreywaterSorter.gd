@@ -92,7 +92,7 @@ func _ready():
 	# Score
 	var local_score_label = Label.new()
 	local_score_label.name = "ScoreLabel"
-	local_score_label.text = "✓ Sorted: 0 / %d" % target_sort
+	local_score_label.text = "✔ Sorted: 0 / %d" % target_sort
 	local_score_label.add_theme_font_size_override("font_size", 28)
 	local_score_label.add_theme_color_override("font_color", Color.WHITE)
 	local_score_label.add_theme_color_override("font_outline_color", Color.BLACK)
@@ -229,7 +229,7 @@ func _sort_bucket(bucket: Node2D, to_garden: bool):
 	if correct:
 		sorted_correct += 1
 		record_action(true)
-		get_node("ScoreLabel").text = "✓ Sorted: %d / %d" % [sorted_correct, target_sort]
+		get_node("ScoreLabel").text = "✔ Sorted: %d / %d" % [sorted_correct, target_sort]
 		
 		tween.tween_property(bucket, "position:x", target_x, 0.3)
 		tween.tween_callback(bucket.queue_free)

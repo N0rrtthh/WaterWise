@@ -128,7 +128,7 @@ func _ready():
 	# Score label
 	var local_score_label = Label.new()
 	local_score_label.name = "ScoreLabel"
-	local_score_label.text = _loc("hud_correct_count", "✓ Correct: %d / %d") % [0, target_correct]
+	local_score_label.text = _loc("hud_correct_count", "✔ Correct: %d / %d") % [0, target_correct]
 	local_score_label.add_theme_font_size_override("font_size", 28)
 	local_score_label.add_theme_color_override("font_color", Color.WHITE)
 	local_score_label.add_theme_color_override("font_outline_color", Color.BLACK)
@@ -304,10 +304,10 @@ func _judge_glass(player_says_dirty: bool):
 	if correct:
 		correct_choices += 1
 		record_action(true)
-		get_node("ScoreLabel").text = _loc("hud_correct_count", "✓ Correct: %d / %d") % [correct_choices, target_correct]
+		get_node("ScoreLabel").text = _loc("hud_correct_count", "✔ Correct: %d / %d") % [correct_choices, target_correct]
 		
 		# Success animation
-		_flash_result(_loc("hud_correct", "✓ CORRECT!"), Color.GREEN, -80.0)
+		_flash_result(_loc("hud_correct", "✔ CORRECT!"), Color.GREEN, -80.0)
 		
 		# Slide glass away
 		# Off-screen has to clear the SCALED glass, not the authored one: a fixed -200 left
@@ -330,7 +330,7 @@ func _judge_glass(player_says_dirty: bool):
 		record_action(false)
 		
 		# Wrong animation
-		_flash_result(_loc("hud_wrong", "✗ WRONG!"), Color.RED, -60.0)
+		_flash_result(_loc("hud_wrong", "✖ WRONG!"), Color.RED, -60.0)
 		
 		# Shake and remove
 		current_glass.modulate = Color(1, 0.5, 0.5)

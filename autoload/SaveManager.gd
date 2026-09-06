@@ -60,7 +60,9 @@ var unlocked_content: Dictionary = {
 	"minigames": ["catch_rain", "pipe_puzzle"],
 	"themes": ["default"],
 	"accessories": ["character_default"],
-	"decorations": []
+	"decorations": [],
+	# Story chapters the player has read to the end. See mark_story_chapter_seen().
+	"story_chapters": []
 }
 
 # Achievements
@@ -429,6 +431,7 @@ func _merge_data(data: Dictionary) -> void:
 
 	_ensure_accessory_defaults()
 	_ensure_decoration_defaults()
+	_ensure_story_defaults()
 
 
 ## Field names inside `player` that the rest of the code reads as ints:
@@ -753,6 +756,36 @@ func unlock_decoration(dec_id: String) -> void:
 func is_decoration_unlocked(dec_id: String) -> bool:
 	_ensure_decoration_defaults()
 	return dec_id in unlocked_content.decorations
+
+## ── Story chapters the player has already read ───────────────────────────
+##
+## The reported defect: "The Waking River" played again on every single press of Play. The
+## chapter was picked as (GameManager.minigames_played_this_session / 5) % chapters.size(), and
+## that counter is reset per session - so a player who plays three or four games at a sitting
+## saw chapter 1, and only ever chapter 1, at every launch for the life of the install. Nothing
+## in the game remembered having told the story, so nothing could tell "the intro" from "the
+## intro again": the record has to be on disk, which is what these two functions are.
+##
+## Kept inside unlocked_content because _merge_data() already installs every key there
+## generically behind an Array shape check. An older save simply has no "story_chapters" key,
+## reads back as "nothing seen yet", and needs no SAVE_VERSION bump or migration.
+func _ensure_story_defaults() -> void:
+	if not unlocked_content.has("story_chapters"):
+		unlocked_content["story_chapters"] = []
+
+## Called when a chapter has been read to its last page - not when it is opened, so a player
+## who backs out halfway is shown it again rather than losing it.
+func mark_story_chapter_seen(chapter_id: String) -> void:
+	if chapter_id == "":
+		return
+	_ensure_story_defaults()
+	if chapter_id not in unlocked_content.story_chapters:
+		unlocked_content.story_chapters.append(chapter_id)
+		save_all_data()
+
+func is_story_chapter_seen(chapter_id: String) -> bool:
+	_ensure_story_defaults()
+	return chapter_id in unlocked_content.story_chapters
 
 func toggle_decoration(dec_id: String, enabled: bool) -> void:
 	_ensure_decoration_defaults()

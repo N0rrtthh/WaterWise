@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://cvpausednav01"]
+
+[ext_resource type="Script" path="res://tools/VerifyPausedNavigation.gd" id="1_vpn"]
+
+[node name="VerifyPausedNavigation" type="Node"]
+script = ExtResource("1_vpn")

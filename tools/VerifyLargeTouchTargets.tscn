@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://dh2akvysk6rfc"]
+
+[ext_resource type="Script" path="res://tools/VerifyLargeTouchTargets.gd" id="1_lrgtouch"]
+
+[node name="VerifyLargeTouchTargets" type="Node"]
+script = ExtResource("1_lrgtouch")

@@ -182,6 +182,263 @@ var tutorials: Dictionary = {
 			],
 			"tip": "Tingnan ang lahat ng sulok ng kwarto!"
 		}
+	},
+	## MULTIPLAYER: the first-play how-to-play beat
+	## Keyed "mp_<game key>", where the game key is what
+	## MultiplayerMiniGameBase._mp_game_key() derives from the script filename
+	## (MP_WashCar.gd -> "wash_car"). Namespaced so it cannot collide with the eight
+	## PascalCase singleplayer keys above, and so should_show_tutorial() /
+	## mark_tutorial_shown() can hold both families in one shown_tutorials list.
+	##
+	## Three steps, in the same order for every game, because a first-timer needs them in
+	## that order: what YOU do, what your PARTNER does with it, and what costs a life. The
+	## middle one is the whole reason these exist - the every-round instruction blurb
+	## already covers the action and the numbers, but nothing told a new player that the
+	## thing they are catching is the thing the other player is waiting for, and a co-op
+	## round where neither side knows that reads as two unrelated games.
+	##
+	## No emoji anywhere in this block, deliberately. The singleplayer entries above are
+	## full of them and they render as "unknown character" boxes on the Android 8 test
+	## phone; new copy does not add to that pile.
+	"mp_catch_the_rain": {
+		"en": {
+			"title": "Catch The Rain",
+			"steps": [
+				{ "text": "Drag anywhere to slide your bucket under the falling raindrops. Left and right arrows work too.", "image": "" },
+				{ "text": "Every drop you catch becomes water your partner filters clean. Their points and yours go to the same team meter.", "image": "" },
+				{ "text": "Drops that reach the ground are misses. Too many and the team loses one of its three shared lives.", "image": "" }
+			],
+			"tip": "Park the bucket where the next drop will land instead of chasing the one already falling."
+		},
+		"tl": {
+			"title": "Saluhin ang Ulan",
+			"steps": [
+				{ "text": "I-drag kahit saan para isalya ang timba sa ilalim ng bumabagsak na patak. Pwede rin ang kaliwa at kanan.", "image": "" },
+				{ "text": "Bawat patak na masasalo ay tubig na sasalain ng kapareha mo. Isang team meter lang ang puntos ninyong dalawa.", "image": "" },
+				{ "text": "Ang patak na tumama sa lupa ay miss. Kapag sumobra, mababawasan ang tatlong buhay ng team.", "image": "" }
+			],
+			"tip": "Ipwesto ang timba kung saan babagsak ang susunod na patak, huwag habulin ang kasalukuyang bumabagsak."
+		}
+	},
+	"mp_filter_water": {
+		"en": {
+			"title": "Filter The Water",
+			"steps": [
+				{ "text": "Tap each speck of dirt in the water to filter it out. Every speck is points for the team.", "image": "" },
+				{ "text": "The water arrives from your partner catching rain, so there is nothing to filter until they catch some.", "image": "" },
+				{ "text": "Nothing is lost here if you are slow, but the team target needs both of you, so clear each unit fully.", "image": "" }
+			],
+			"tip": "Clearing every speck in one unit pays a bonus on top of the specks themselves."
+		},
+		"tl": {
+			"title": "Salain ang Tubig",
+			"steps": [
+				{ "text": "I-tap ang bawat dumi sa tubig para masala. Bawat dumi ay puntos para sa team.", "image": "" },
+				{ "text": "Galing sa kaparehang sumasalo ng ulan ang tubig, kaya wala pang sasalain hangga't wala siyang nasasalo.", "image": "" },
+				{ "text": "Walang mawawala kung mabagal ka, pero kailangan kayong dalawa sa team target, kaya linisin nang buo ang yunit.", "image": "" }
+			],
+			"tip": "May dagdag na bonus kapag nalinis ang lahat ng dumi sa isang yunit."
+		}
+	},
+	"mp_catch_rain_aquarium": {
+		"en": {
+			"title": "Catch Rain For The Aquarium",
+			"steps": [
+				{ "text": "Drag anywhere to slide your bucket under the raindrops before they reach the ground.", "image": "" },
+				{ "text": "Every drop you catch is a load your partner pours into the aquarium. One team meter, both of your points.", "image": "" },
+				{ "text": "Missed drops cost the team a shared life once enough of them have hit the ground.", "image": "" }
+			],
+			"tip": "Stay near the middle of the screen: most drops fall there."
+		},
+		"tl": {
+			"title": "Salo ng Ulan para sa Aquarium",
+			"steps": [
+				{ "text": "I-drag kahit saan para isalya ang timba sa ilalim ng patak bago tumama sa lupa.", "image": "" },
+				{ "text": "Bawat patak na masasalo ay ibubuhos ng kapareha mo sa aquarium. Isang team meter, puntos ninyong dalawa.", "image": "" },
+				{ "text": "May mababawas na buhay ng team kapag sumobra ang patak na tumama sa lupa.", "image": "" }
+			],
+			"tip": "Manatili sa gitna ng screen: doon bumabagsak ang karamihan."
+		}
+	},
+	"mp_fill_aquarium": {
+		"en": {
+			"title": "Fill The Aquarium",
+			"steps": [
+				{ "text": "Tap the aquarium to pour in one load of the rainwater your partner caught.", "image": "" },
+				{ "text": "You cannot pour what has not arrived, so watch for your partner's water and pour it the moment it lands.", "image": "" },
+				{ "text": "The water evaporates. If the tank sits empty for too long the team loses a shared life.", "image": "" }
+			],
+			"tip": "Pour as soon as a load arrives; saving them up is what lets the tank run dry."
+		},
+		"tl": {
+			"title": "Punuin ang Aquarium",
+			"steps": [
+				{ "text": "I-tap ang aquarium para ibuhos ang tubig-ulang nasalo ng kapareha mo.", "image": "" },
+				{ "text": "Hindi mo maibubuhos ang wala pa, kaya abangan ang tubig ng kapareha at ibuhos agad pagdating.", "image": "" },
+				{ "text": "Nasisingaw ang tubig. Kapag matagal na walang laman, may mababawas na buhay ng team.", "image": "" }
+			],
+			"tip": "Ibuhos agad pagdating ng tubig; ang pag-iimbak ang nagpapatuyo sa tangke."
+		}
+	},
+	"mp_collect_shower_water": {
+		"en": {
+			"title": "Collect Shower Water",
+			"steps": [
+				{ "text": "You have four buckets. Drag them under the shower water so none of it lands on the floor.", "image": "" },
+				{ "text": "A full bucket sends its load to your partner, who needs it to flush the toilets.", "image": "" },
+				{ "text": "A bucket left under the water after it fills overflows, and enough overflows cost the team a life.", "image": "" }
+			],
+			"tip": "Move a full bucket out of the stream first; an overflowing one is worse than an empty one."
+		},
+		"tl": {
+			"title": "Kolektahin ang Tubig-Shower",
+			"steps": [
+				{ "text": "Apat ang timba mo. I-drag ang mga ito sa ilalim ng tubig-shower para walang matapon sa sahig.", "image": "" },
+				{ "text": "Ang punong timba ay ipapadala sa kapareha mo, na kailangan iyon para maka-flush ng kubeta.", "image": "" },
+				{ "text": "Umaapaw ang timbang puno na pero nasa ilalim pa ng tubig, at may mababawas na buhay kapag sumobra.", "image": "" }
+			],
+			"tip": "Ilabas muna sa buhos ang punong timba; mas masama ang umaapaw kaysa sa walang laman."
+		}
+	},
+	"mp_flush_toilets": {
+		"en": {
+			"title": "Flush The Toilets",
+			"steps": [
+				{ "text": "Tap a dirty toilet to flush it. Each flush spends one load of your partner's shower water.", "image": "" },
+				{ "text": "No water means no flush, so if nothing happens when you tap, your partner has not sent any yet.", "image": "" },
+				{ "text": "A new toilet gets dirty every few seconds. Let too many pile up unflushed and the team loses a life.", "image": "" }
+			],
+			"tip": "Flush the one that has been dirty longest, not the one nearest your thumb."
+		},
+		"tl": {
+			"title": "I-flush ang mga Kubeta",
+			"steps": [
+				{ "text": "I-tap ang maruming kubeta para i-flush. Bawat flush ay isang tubig-shower ng kapareha mo.", "image": "" },
+				{ "text": "Walang tubig, walang flush. Kapag walang nangyari sa tap mo, wala pa siyang naipadala.", "image": "" },
+				{ "text": "Tuwing ilang segundo may bagong kubetang dumudumi. Kapag nagsalansan ang hindi na-flush, mababawasan ng buhay.", "image": "" }
+			],
+			"tip": "Unahin ang pinakamatagal nang marumi, hindi ang pinakamalapit sa hinlalaki mo."
+		}
+	},
+	"mp_collect_laundry_water": {
+		"en": {
+			"title": "Collect Laundry Water",
+			"steps": [
+				{ "text": "Slide your containers under the washing machine streams to catch the water coming out.", "image": "" },
+				{ "text": "Every catch is water your partner mops the floor with, and points on the shared team meter.", "image": "" },
+				{ "text": "A stream you do not catch is a miss, and enough misses cost the team a shared life.", "image": "" }
+			],
+			"tip": "Watch which machine is about to drain and be under it before it starts."
+		},
+		"tl": {
+			"title": "Kolektahin ang Tubig-Labada",
+			"steps": [
+				{ "text": "Isalya ang mga lalagyan sa ilalim ng buga ng washing machine para masalo ang tubig.", "image": "" },
+				{ "text": "Bawat salo ay tubig na ipapangmap ng kapareha mo, at puntos sa team meter.", "image": "" },
+				{ "text": "Ang bugang hindi nasalo ay miss, at may mababawas na buhay ng team kapag sumobra.", "image": "" }
+			],
+			"tip": "Tingnan kung aling makina ang malapit nang magbuga at pumwesto na bago ito magsimula."
+		}
+	},
+	"mp_mop_floor": {
+		"en": {
+			"title": "Mop The Floor",
+			"steps": [
+				{ "text": "Tap a dirty tile to mop it. Each tile costs one load of your partner's laundry water.", "image": "" },
+				{ "text": "If a tap does nothing, there is no water yet - your partner is still collecting it.", "image": "" },
+				{ "text": "Another tile gets dirty every few seconds. Too many dirty at once and the team loses a life.", "image": "" }
+			],
+			"tip": "Clear the tiles that went dirty first; the newest one has the most time left."
+		},
+		"tl": {
+			"title": "Mapin ang Sahig",
+			"steps": [
+				{ "text": "I-tap ang maruming tiles para mapunasan. Bawat tiles ay isang tubig-labada ng kapareha mo.", "image": "" },
+				{ "text": "Kapag walang nangyari sa tap, wala pang tubig - nagko-kolekta pa ang kapareha mo.", "image": "" },
+				{ "text": "Tuwing ilang segundo may bagong tiles na dumudumi. Kapag sabay-sabay na marumi, mababawasan ng buhay.", "image": "" }
+			],
+			"tip": "Unahin ang tiles na naunang dumumi; mas maluwag pa ang oras ng pinakabago."
+		}
+	},
+	"mp_collect_dish_water": {
+		"en": {
+			"title": "Collect Dish Water",
+			"steps": [
+				{ "text": "Drag your buckets under the drops coming off the dishes so none of them spill.", "image": "" },
+				{ "text": "The water you catch goes straight to your partner, who is washing the car with it.", "image": "" },
+				{ "text": "Every drop that hits the floor is a spill, and enough spills cost the team a shared life.", "image": "" }
+			],
+			"tip": "Keep one bucket under the busiest tap instead of moving all of them at once."
+		},
+		"tl": {
+			"title": "Kolektahin ang Hugas-Plato",
+			"steps": [
+				{ "text": "I-drag ang mga timba sa ilalim ng tumutulo mula sa hugas-plato para walang matapon.", "image": "" },
+				{ "text": "Ang tubig na masasalo mo ay dumidiretso sa kaparehang naghuhugas ng kotse.", "image": "" },
+				{ "text": "Bawat patak na tumama sa sahig ay tapon, at may mababawas na buhay ng team kapag sumobra.", "image": "" }
+			],
+			"tip": "Iwan ang isang timba sa ilalim ng pinakamabilis na tulo, huwag igalaw lahat sabay-sabay."
+		}
+	},
+	"mp_wash_car": {
+		"en": {
+			"title": "Wash The Car",
+			"steps": [
+				{ "text": "Tap a dirty section of the car to scrub it with your partner's dish water.", "image": "" },
+				{ "text": "No water means the tap does nothing, so give your partner a moment to collect some.", "image": "" },
+				{ "text": "A section left dirty for too long costs the team a shared life.", "image": "" }
+			],
+			"tip": "Finish one section before starting the next; a half-scrubbed panel still counts as dirty."
+		},
+		"tl": {
+			"title": "Hugasan ang Kotse",
+			"steps": [
+				{ "text": "I-tap ang maruming parte ng kotse para kuskusin gamit ang hugas-plato ng kapareha mo.", "image": "" },
+				{ "text": "Walang tubig, walang mangyayari sa tap. Bigyan ng sandali ang kapareha mong makasalo.", "image": "" },
+				{ "text": "Ang parteng matagal nang marumi ay nagpapabawas ng buhay ng team.", "image": "" }
+			],
+			"tip": "Tapusin ang isang parte bago lumipat; ang kalahating kuskos ay marumi pa rin."
+		}
+	},
+	"mp_wash_vegetables": {
+		"en": {
+			"title": "Wash The Vegetables",
+			"steps": [
+				{ "text": "Drag each vegetable into the sink to wash the dirt off it.", "image": "" },
+				{ "text": "The dirty water from the sink goes to your partner, who uses it on the plants.", "image": "" },
+				{ "text": "A vegetable you never wash is a miss, and enough misses cost the team a shared life.", "image": "" }
+			],
+			"tip": "Drag in a straight line to the sink; the long way round is what runs the clock out."
+		},
+		"tl": {
+			"title": "Hugasan ang mga Gulay",
+			"steps": [
+				{ "text": "I-drag ang bawat gulay papunta sa lababo para maalis ang dumi.", "image": "" },
+				{ "text": "Ang hugas sa lababo ay napupunta sa kaparehang gumagamit nito sa halaman.", "image": "" },
+				{ "text": "Ang gulay na hindi nahugasan ay miss, at may mababawas na buhay ng team kapag sumobra.", "image": "" }
+			],
+			"tip": "I-drag nang diretso sa lababo; ang paliku-liko ang nag-uubos ng oras."
+		}
+	},
+	"mp_water_plants": {
+		"en": {
+			"title": "Water The Plants",
+			"steps": [
+				{ "text": "Tap a plant to pour on it the water your partner sent over.", "image": "" },
+				{ "text": "With no water in hand a tap does nothing, so wait for your partner's next load.", "image": "" },
+				{ "text": "Plants wilt if they are ignored for a few seconds, and enough wilted plants cost the team a life.", "image": "" }
+			],
+			"tip": "Water the plant that is closest to wilting, not the one closest to your thumb."
+		},
+		"tl": {
+			"title": "Diligan ang mga Halaman",
+			"steps": [
+				{ "text": "I-tap ang halaman para ibuhos ang tubig na ipinadala ng kapareha mo.", "image": "" },
+				{ "text": "Kapag walang hawak na tubig, walang mangyayari sa tap. Hintayin ang susunod na padala.", "image": "" },
+				{ "text": "Nalalanta ang halamang napapabayaan ng ilang segundo, at may mababawas na buhay kapag sumobra.", "image": "" }
+			],
+			"tip": "Diligan ang pinakamalapit nang malanta, hindi ang pinakamalapit sa hinlalaki mo."
+		}
 	}
 }
 
@@ -259,8 +516,25 @@ func create_tutorial_popup(game_id: String, parent: Node) -> Control:
 	overlay.name = "TutorialOverlay"
 	
 	# Create panel
+	#
+	# NO set_anchors_preset(PRESET_CENTER) here. It used to be, and it is what put the
+	# tutorial in the corner of a phone screen. PRESET_CENTER sets the four anchors to
+	# 0.5 and then derives offsets from the CURRENT rect - and at this point the panel is
+	# not in the tree and has no rect, so the offsets stayed 0. Anchors 0.5 with offsets 0
+	# pin the panel's TOP-LEFT to the viewport centre and let the body grow right and
+	# down from there. Measured with the geometry probe before the fix, at three shapes:
+	#   1920x1080 -> panel at (960, 540), centre off by (300, 235)
+	#   2400x1080 -> panel at (1200, 540), centre off by (300, 235)   <- the test phone
+	#   1080x2400 -> panel at (960, 2133), centre off by (300, 235)
+	# The offset is always exactly half the panel, i.e. the whole panel hangs off centre;
+	# on the 2400-wide phone that is the far right, which is what was reported. The
+	# overlay above escapes it only because PRESET_FULL_RECT writes zero offsets, which
+	# happen to be the right answer, so it is correct out of the tree too.
+	# It is centred by a CenterContainer further down instead - the same idiom
+	# MultiplayerMiniGameBase already uses for its instruction overlay - which computes
+	# the position from the real size at sort time and re-centres on every resize, so
+	# device rotation and longer Tagalog strings cannot push it off screen again.
 	var panel = PanelContainer.new()
-	panel.set_anchors_preset(Control.PRESET_CENTER)
 	panel.custom_minimum_size = Vector2(600, 400)
 	
 	var style = StyleBoxFlat.new()
@@ -360,16 +634,40 @@ func create_tutorial_popup(game_id: String, parent: Node) -> Control:
 	
 	vbox.add_child(start_btn)
 	
-	overlay.add_child(panel)
+	# FULL_RECT is safe to preset before entering the tree (zero offsets), so the centring
+	# frame is correct from the first frame and the panel gets a real centred rect on the
+	# first sort. Named so a harness can find it.
+	var centre: CenterContainer = CenterContainer.new()
+	centre.name = "TutorialCentre"
+	centre.set_anchors_preset(Control.PRESET_FULL_RECT)
+	centre.add_child(panel)
+	overlay.add_child(centre)
 	parent.add_child(overlay)
 	
 	# Entrance animation
 	overlay.modulate.a = 0
 	panel.scale = Vector2(0.8, 0.8)
+	# Scale about the panel's middle, not its top-left corner. pivot_offset defaults to 0,
+	# so the 0.8 -> 1.0 entrance used to grow out of the corner; that was invisible while
+	# the panel was mis-anchored and would be obvious now that it is centred. Driven off
+	# resized rather than set once because the size is not known until the CenterContainer
+	# sorts, and it changes again on rotation or a language switch.
+	panel.resized.connect(func() -> void: panel.pivot_offset = panel.size * 0.5)
 	var tween = overlay.create_tween()
 	tween.set_parallel(true)
 	tween.tween_property(overlay, "modulate:a", 1.0, 0.3)
-	tween.tween_property(panel, "scale", Vector2(1, 1), 0.3).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	# .from() is load-bearing, not decoration. A Container sort pass rewrites its child's
+	# rect AND resets scale to (1,1); the first sort is queued the moment the panel is
+	# added and runs before this tweener takes its first step, so a tweener that reads its
+	# start value from the property found scale already back at (1,1) and animated 1 -> 1.
+	# Measured: the alpha half ran (a0.00 -> a0.04 over 87ms at 0.1x time scale) while the
+	# scale half read 1.000 on every one of 14 samples, at all three viewport shapes.
+	# Pinning the start value makes the tween the sole author from frame 1; a later sort can
+	# still clip a single frame, but its rest value (1,1) is this tween's end value, so it
+	# cannot leave residue.
+	var pop_in: PropertyTweener = tween.tween_property(panel, "scale", Vector2(1, 1), 0.3)
+	pop_in.from(Vector2(0.8, 0.8))
+	pop_in.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 	
 	return overlay
 

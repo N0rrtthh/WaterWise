@@ -241,7 +241,7 @@ func _check_water_unit_complete() -> void:
 	if filtered_count >= particles_needed:
 		# Water unit filtered!
 		var _water_unit = water_queue.pop_front()
-		add_score(BONUS_PER_UNIT, false)  # Bonus for completing a whole unit
+		add_score(BONUS_PER_UNIT, false, aquarium)  # Bonus for completing a whole unit
 		
 		_log("💧 Water unit filtered! Bonus +%d points" % BONUS_PER_UNIT)
 		

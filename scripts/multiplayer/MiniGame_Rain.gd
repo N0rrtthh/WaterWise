@@ -1,6 +1,10 @@
 class_name MiniGameRain
 extends "res://scripts/multiplayer/MultiplayerMiniGameEffects.gd"
 
+## Bundled pause/play glyphs — the system emoji font has no coverage for
+## "⏸"/"▶" on Android 8 (Moto E5 Plus), where they render as tofu boxes.
+const GlyphIcons = preload("res://scripts/ui/GlyphIcons.gd")
+
 ## 
 ## MINIGAME_RAIN.GD - Dual-Mode Water Reuse Game
 ## 
@@ -962,7 +966,7 @@ func _show_result_screen(victory: bool) -> void:
 func _create_pause_ui() -> void:
 	# Create pause button and pause menu
 	pause_button = Button.new()
-	pause_button.text = ""
+	GlyphIcons.apply_pause_glyph(pause_button, true)
 	pause_button.custom_minimum_size = Vector2(50, 50)
 	pause_button.add_theme_font_size_override("font_size", 32)
 	
@@ -1030,28 +1034,15 @@ func _create_pause_ui() -> void:
 	vbox.add_child(exit_btn)
 
 func _on_pause_button_pressed() -> void:
-	if is_paused:
-		return
-	is_paused = true
-	get_tree().paused = true
-	pause_menu.visible = true
-	pause_button.text = ""
-	# Sync pause to all players
+	# Ask the authority; do not set local state. NetworkManager owns the co-op pause and
+	# answers by calling _on_remote_pause() back on every peer including this one, so a
+	# request it drops (already paused) no longer leaves this HUD out of step with it.
 	if NetworkManager:
-		NetworkManager.rpc("sync_pause_state", true)
-	print(" Game paused by local player")
+		NetworkManager.request_pause()
 
 func _on_resume_pressed() -> void:
-	if not is_paused:
-		return
-	is_paused = false
-	get_tree().paused = false
-	pause_menu.visible = false
-	pause_button.text = ""
-	# Sync resume to all players
 	if NetworkManager:
-		NetworkManager.rpc("sync_pause_state", false)
-	print(" Game resumed by local player")
+		NetworkManager.request_resume()
 
 func _on_exit_pressed() -> void:
 	get_tree().paused = false
@@ -1070,7 +1061,7 @@ func _on_remote_pause() -> void:
 	if pause_menu:
 		pause_menu.visible = true
 	if pause_button:
-		pause_button.text = ""
+		GlyphIcons.apply_pause_glyph(pause_button, false)
 	print(" Game paused by remote player")
 
 func _on_remote_resume() -> void:
@@ -1079,5 +1070,5 @@ func _on_remote_resume() -> void:
 	if pause_menu:
 		pause_menu.visible = false
 	if pause_button:
-		pause_button.text = ""
+		GlyphIcons.apply_pause_glyph(pause_button, true)
 	print(" Game resumed by remote player")

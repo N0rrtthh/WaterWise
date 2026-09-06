@@ -264,7 +264,7 @@ func _create_droplet_character(is_win: bool) -> Node2D:
 		character.add_child(stars_container)
 		for i in range(3):
 			var star = Label.new()
-			star.text = ["⭐", "💫", "✦"][i]
+			star.text = ["⭐", "💫", "✨"][i]
 			star.add_theme_font_size_override("font_size", 18)
 			star.position = Vector2(cos(i * TAU / 3.0) * 26, sin(i * TAU / 3.0) * 12)
 			stars_container.add_child(star)

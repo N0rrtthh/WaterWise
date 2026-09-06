@@ -39,6 +39,11 @@ const PAUSE_GRACE_SECONDS: float = 3.0
 ## Real seconds the tree has been paused with the bot running. Accumulated from
 ## _process's delta, which is real time because this autoload processes always.
 var _paused_seconds: float = 0.0
+## One resume attempt per pause episode. _process() runs while the tree is paused and a
+## co-op resume is a network round trip, so without this the bot sent one request per
+## frame until the state came back - the duplicated "Game resumed" lines in
+## session_2026-09-05T00-27-36.json. Cleared the moment the tree is running again.
+var _resume_requested: bool = false
 
 # Duration settings (in seconds, 0 = unlimited)
 var auto_play_duration: float = 0.0  # 0 = unlimited
@@ -57,8 +62,33 @@ var action_timer: float = 0.0
 var action_interval: float = 0.3  # Default interval between actions
 var drag_target: Vector2 = Vector2.ZERO
 var is_dragging: bool = false
+## The bot's synthetic finger: at most one is down at a time, and it is always
+## lifted when the bot stops driving. See _drive_pointer().
+var _pointer_down: bool = false
+var _pointer_pos: Vector2 = Vector2.ZERO
+## A lift asked for while the tree was paused. Input is not delivered to paused
+## nodes, so the event would be swallowed and TouchInputManager would keep the
+## finger in active_touches forever - the phantom touch its own code warns about.
+## Retried at the top of _process(), which runs while paused.
+var _pointer_release_pending: bool = false
 var swipe_cooldown: float = 0.0
 var tap_cooldown: float = 0.0
+
+## DropletDash lane scorer: how far up the lane an item still counts, in pixels.
+##
+## Items fall at obstacle_speed (200px/s base), the droplet sits at 0.75 * height and
+## a lane step costs 0.12s of tween plus a 0.18s cooldown, so ~0.3s of travel (60px)
+## is the minimum useful horizon. 600px is 3s of fall at base speed: far enough to
+## commit to a collectible two lanes away, near enough that a freshly spawned item
+## cannot outvote one about to land.
+const DASH_LOOKAHEAD_PX: float = 600.0
+## Score a rival lane must beat the current lane by before the bot commits to moving.
+const DASH_SWITCH_MARGIN: float = 0.05
+## Viewport-space margin the synthetic finger keeps from every screen edge.
+##
+## TouchInputManager rejects a touch START inside its 15px edge dead zone on mobile,
+## which would leave the finger unpressed while this manager believed it was down.
+const POINTER_INSET_PX: float = 24.0
 var memory_pairs: Array = []
 
 # Navigation state (used when no game is active — clicks through menus)
@@ -211,10 +241,12 @@ func get_mp_remaining_time() -> float:
 	return max(0.0, mp_auto_play_duration - elapsed)
 
 func _reset_state() -> void:
+	_release_pointer()
 	current_game = null
 	game_name = ""
 	auto_play_strategy = ""
 	_paused_seconds = 0.0
+	_resume_requested = false
 	drag_target = Vector2.ZERO
 	is_dragging = false
 	swipe_cooldown = 0.0
@@ -317,6 +349,11 @@ func _determine_strategy(game_type: String) -> String:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func _process(delta: float) -> void:
+	# A lift deferred by a pause is retried here, ahead of every early return, so the
+	# synthetic finger cannot outlive the pause that swallowed its release.
+	if _pointer_release_pending:
+		_release_pointer()
+
 	# Elapsed FIRST, ahead of every early return. A frozen auto_play_elapsed used
 	# to be the only visible symptom of the driver being stuck, and it froze
 	# because the line that updates it sat behind three of them: a 420 s run
@@ -326,7 +363,7 @@ func _process(delta: float) -> void:
 		if auto_play_duration > 0 and auto_play_elapsed >= auto_play_duration:
 			var dur_str = _format_duration(auto_play_duration)
 			print("🤖 Auto-play duration reached (%s) - Stopping" % dur_str)
-			set_auto_play_enabled(false)
+			_expire_auto_play()
 			return
 
 	# A paused tree is not a state the bot can play in, and it is a state the bot
@@ -338,6 +375,7 @@ func _process(delta: float) -> void:
 			_try_resume_from_pause()
 			return
 		_paused_seconds = 0.0
+		_resume_requested = false
 
 	# MP auto-play: runs independently of the SP auto_play_enabled flag
 	if mp_auto_play_enabled:
@@ -369,6 +407,7 @@ func _process(delta: float) -> void:
 	if current_game and is_instance_valid(current_game) \
 			and not current_game.is_inside_tree():
 		current_game = null
+		_release_pointer()
 	if not current_game or not is_instance_valid(current_game):
 		_navigate_ui(delta)
 		return
@@ -381,6 +420,10 @@ func _process(delta: float) -> void:
 		is_active = current_game.is_playing
 
 	if not is_active:
+		# The round is over or has not started. _navigate_ui() clicks real UI next, so
+		# the finger comes up first: a touch left down reads as a finger resting on the
+		# screen for every game that polls get_touch_count().
+		_release_pointer()
 		_navigate_ui(delta)
 		return
 
@@ -398,6 +441,79 @@ func _process(delta: float) -> void:
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# DEADLINE
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+## The configured duration has to end the SESSION, not just the synthetic finger.
+##
+## Reaching the deadline used to do exactly one thing - clear auto_play_enabled -
+## which stops the bot injecting input and stops nothing else. The round it was in
+## the middle of stayed on screen with its own clock still running, so an unattended
+## run did not end at its configured duration: it ended whenever the round it had
+## already entered happened to finish. The attempt-budget rounds from the fairness
+## rework overrun the furthest, because the clock is not their opponent - with
+## nobody left to tap, one of those runs to MiniGameBase's anti-hang ceiling
+## (ATTEMPT_CEILING_SCALE x the nominal length, never under
+## ATTEMPT_CEILING_MIN_SEC = 45s) before anything ends it.
+##
+## current_game is read BEFORE the flags are touched, because
+## set_auto_play_enabled(false) calls _reset_state(), which nulls it - a deadline
+## handler that clears first has nothing left to end.
+func _expire_auto_play() -> void:
+	var g: Node = current_game
+	set_auto_play_enabled(false)
+	_abort_round(g)
+
+## The MP deadline had the same hole plus one of its own: set_mp_auto_play_enabled()
+## does not reset the driver, so current_game, the chosen strategy and a
+## half-finished drag all survived the stop for the next session to inherit.
+func _expire_mp_auto_play() -> void:
+	var g: Node = current_game
+	set_mp_auto_play_enabled(false)
+	_reset_state()
+	_abort_round(g)
+
+## End the round in progress through THAT ROUND'S OWN quit handler.
+##
+## Not by clearing game_active from out here: each of these handlers does
+## bookkeeping only it knows about, and skipping it is how a session ends up with a
+## round nothing played in the logs, or a partner left waiting on a peer that
+## stopped answering.
+##   - MiniGameBase._on_exit_pressed() reports the round to GameManager with
+##     _report_accuracy(false) - a quit is not a completed objective - stops the
+##     game and chaos timers, shows the tally, then returns to the main menu. Its
+##     own _quitting / _round_ended guards make a second call inert, so racing the
+##     round's real end is safe. pause_menu, which that handler writes without a
+##     check, is live by then: register_game() is called at MiniGameBase.gd:284,
+##     after _setup_ui() built it at 270, so a round the bot knows about is a round
+##     that finished building.
+##   - MultiplayerMiniGameBase._on_quit_pressed() goes through
+##     GameManager.return_to_multiplayer_lobby(), which closes the ENet peer so the
+##     partner is told (server_disconnected) instead of sitting on a dead session.
+##   - the five legacy co-op rounds (MultiplayerMiniGameEffects) carry their own
+##     _on_exit_pressed(), ending the session via NetworkManager.return_to_lobby().
+##
+## Classified by script inheritance rather than by scene path or title, for the same
+## reason ButtonAnimator._is_gameplay_button() is: a table of paths rots silently.
+func _abort_round(g: Node) -> void:
+	if not is_instance_valid(g) or not g.is_inside_tree():
+		return
+	var method: String = ""
+	if g is MiniGameBase or g is MultiplayerMiniGameEffects:
+		method = "_on_exit_pressed"
+	elif g is MultiplayerMiniGameBase:
+		method = "_on_quit_pressed"
+	if method.is_empty() or not g.has_method(method):
+		# Said out loud, never swallowed: a round the deadline could not end is a
+		# round still running after the bot was told to stop.
+		push_warning(("AutoPlay deadline: no quit handler on %s (%s) - "
+			+ "the round was left running") % [g.name, g.get_class()])
+		return
+	print("🤖 Auto-play deadline: ending the round in progress (%s -> %s())"
+		% [g.name, method])
+	g.call(method)
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # PAUSE RECOVERY
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -413,14 +529,38 @@ func _process(delta: float) -> void:
 ## The game's own resume path is preferred so its bookkeeping runs — MiniGameBase
 ## subtracts the paused span from played-seconds there, and clearing the flag
 ## behind its back would leave the overlay on screen and the round's duration wrong.
+##
+## TWO RULES THIS GAINED, both from session_2026-09-05T00-27-36.json.
+##
+## 1. A DELIBERATE pause is left alone. In multiplayer the round's _on_resume_pressed()
+##    is NetworkManager.request_resume(), so this function was un-pausing a co-op round a
+##    player had deliberately paused — which is what "autoplay is not pausable" means.
+##    NetworkManager.is_pause_deliberate() distinguishes a player's press from a pause
+##    with no owner (an app-focus handler, say), and only the latter is the deadlock this
+##    guard exists for.
+##
+## 2. ONE attempt per pause episode. _process() runs while the tree is paused, and a
+##    co-op resume is a network round trip, so the old code sent one resume request per
+##    frame until the state came back — the duplicated consecutive "Game resumed" lines
+##    in that log. NetworkManager now drops the repeats, but the bot should not be
+##    generating them: it asks once and waits for the pause to actually lift.
 func _try_resume_from_pause() -> bool:
+	# A pause a player asked for is theirs to lift. Autoplay keeps its deadlock guard
+	# below for pauses nobody owns, but it no longer fights a human.
+	var nm := get_node_or_null("/root/NetworkManager")
+	if nm and nm.has_method("is_pause_deliberate") and nm.is_pause_deliberate():
+		return false
+
 	var g := current_game
 	if is_instance_valid(g) and g.has_method("_on_resume_pressed"):
 		var overlay = g.get("pause_menu") if "pause_menu" in g else null
 		if overlay == null or (is_instance_valid(overlay) and overlay.visible):
-			g._on_resume_pressed()
-			print("🤖 Auto-play dismissed a pause overlay it did not ask for")
-			_paused_seconds = 0.0
+			if not _resume_requested:
+				_resume_requested = true
+				g._on_resume_pressed()
+				print("🤖 Auto-play dismissed a pause overlay it did not ask for")
+			# Requested and waiting. Reporting true keeps the caller's early-return, so
+			# no synthetic input is injected into a tree that is still frozen.
 			return true
 
 	# Nothing recognisable to dismiss (a pause set by something with no overlay of
@@ -433,6 +573,8 @@ func _try_resume_from_pause() -> bool:
 			% _paused_seconds
 		)
 		get_tree().paused = false
+		if nm and nm.has_method("clear_pause_state"):
+			nm.clear_pause_state()
 		_paused_seconds = 0.0
 		return true
 	return false
@@ -1276,9 +1418,14 @@ func _play_catcher(_delta: float) -> void:
 ## input layer, so no chaos effect handicaps them.
 func _aim_catcher(g: Node, catcher: Node2D, x: float) -> void:
 	var aim := Vector2(x, catcher.position.y)
-	Input.warp_mouse(aim)
 	if g.has_method("_shell_drag"):
 		g.call("_shell_drag", aim)
+		return
+	# No shell handler to call: steer with a real finger instead. This is the arm the
+	# multiplayer catchers land on - MP_CatchTheRain reads _unhandled_input and nothing
+	# else, so the old warp moved its bucket on desktop and nothing at all on a phone.
+	# Injected in SCREEN coordinates because that game maps screen->world itself.
+	_drive_pointer(_screen_from_parent_point(catcher, aim))
 
 # ──────────────────────────────────────────────────────────────────
 # WATER MEMORY
@@ -1537,10 +1684,6 @@ func _play_plug_the_leak(delta: float) -> void:
 				g.set("water_wasted", maxf(float(g.get("water_wasted")) - 12.0, 0.0))
 			if g.has_method("_start_random_leak"):
 				g.call("_start_random_leak")
-	if not any_leaking and pipes.size() > 0:
-		var first_pipe = pipes[0]
-		if is_instance_valid(first_pipe):
-			Input.warp_mouse(first_pipe.position)
 
 # ──────────────────────────────────────────────────────────────────
 # BUCKET BRIGADE
@@ -1567,18 +1710,47 @@ func _play_bucket_brigade(_delta: float) -> void:
 
 # ──────────────────────────────────────────────────────────────────
 # RICE WASH RESCUE
-# The basin follows the mouse X position. Warp mouse X to the pot's
-# X position each frame so the basin tracks the moving pot perfectly.
+# The basin follows the pointer's X. Hold the finger on the pot's X
+# every frame so the basin tracks the moving pot.
+#
+# The pointer is INJECTED, not warped: the basin reads
+# TouchInputManager.get_touch_position(0) (falling back to the mouse),
+# and a cursor warp reaches neither of those on a phone. See
+# _drive_pointer() for the measurements.
 # ──────────────────────────────────────────────────────────────────
 func _play_rice_wash_rescue(_delta: float) -> void:
 	var g := current_game
 	if not is_instance_valid(g):
 		return
-	var pot: Node2D = g.get("pot_node")
-	if pot == null or not is_instance_valid(pot):
+	var basin: Node2D = g.get("basin_node")
+	if basin == null or not is_instance_valid(basin):
 		return
-	var mouse_y: float = get_viewport().get_mouse_position().y
-	Input.warp_mouse(Vector2(pot.position.x, mouse_y))
+	var pot: Node2D = g.get("pot_node")
+	# Intercept the drop that lands NEXT - not the pot that poured it. The pot only
+	# spawns; the catch test is abs(drop.x - basin.x) < 85 evaluated when the drop
+	# reaches basin.y - 30, and a drop stays in the air long enough for the pot to walk
+	# out of that window: on Easy it falls 455px at 350px/s (1.30s) while the pot moves
+	# 120px/s, so a basin glued to the pot is 156px behind the landing point and EVERY
+	# drop misses. Measured: 0 catches, 8 misses, round over on max_misses. Drops fall
+	# straight down, so the lowest one's x IS the interception point.
+	var aim_x: float = basin.position.x
+	var lowest_y: float = -INF
+	var drops: Variant = g.get("water_drops")
+	if drops is Array:
+		for d in (drops as Array):
+			if not is_instance_valid(d) or not (d is Node2D):
+				continue
+			var dy: float = (d as Node2D).position.y
+			if dy > lowest_y:
+				lowest_y = dy
+				aim_x = (d as Node2D).position.x
+	if lowest_y == -INF and pot != null and is_instance_valid(pot):
+		# Nothing falling yet: wait under the spout so the next drop starts close.
+		aim_x = pot.position.x
+	# Aimed at the basin's own row: only X is read by the game, and a y taken from a
+	# cursor-free viewport is 0 - the top edge, inside the dead zone a real finger
+	# would be rejected in.
+	_drive_pointer(_screen_from_parent_point(basin, Vector2(aim_x, basin.position.y)))
 
 # ──────────────────────────────────────────────────────────────────
 # VEGETABLE BATH
@@ -1690,30 +1862,44 @@ func _play_droplet_dash(_delta: float) -> void:
 	var droplet: Node2D = g.get("droplet")
 	if droplet == null or not is_instance_valid(droplet):
 		return
-	var obstacles: Array = g.get("obstacles")
-	# Score each lane (higher = safer, fewer obstacles ahead)
+	# Danger AND reward. Dodging on its own made this the only roster entry whose bot
+	# logged 0% accuracy: record_action(true) fires ONLY when a collectible is caught
+	# (30% of spawns), so a bot that merely avoids obstacles finishes with
+	# correct=0 total=0 - a round indistinguishable from one where nothing moved.
+	# Lanes are lane_width apart (640px at 1920 wide) and both collision tests are
+	# radial at <45px, so only the item's OWN lane can reach the droplet: danger and
+	# reward stay in one lane each instead of bleeding into the neighbours.
 	var lane_scores: Array = []
 	for lane_index in range(lane_count):
 		lane_scores.append(0.0)
-	if obstacles != null:
-		for obs in obstacles:
-			if not is_instance_valid(obs):
+	# Weighted by arrival: an item one frame from the droplet's row decides the lane,
+	# one that just spawned barely counts. An obstacle outweighs a collectible because
+	# a hit both costs an accuracy point and spends one of only 3 lives.
+	for kind in [["obstacles", -3.0], ["collectibles", 1.0]]:
+		var items: Variant = g.get(str(kind[0]))
+		if not (items is Array):
+			continue
+		for it in (items as Array):
+			if not is_instance_valid(it) or not (it is Node2D):
 				continue
-			if obs.position.y > droplet.position.y + 30.0:
+			# Distance still to fall before it reaches the droplet's row. Already past
+			# it (<= 0) means it can no longer be caught or hit.
+			var gap: float = droplet.position.y - (it as Node2D).position.y
+			if gap <= 0.0 or gap > DASH_LOOKAHEAD_PX:
 				continue
-			var obs_lane: int = clamp(int(obs.position.x / lane_width), 0, lane_count - 1)
-			for offset in [-1, 0, 1]:
-				var affected: int = clamp(obs_lane + offset, 0, lane_count - 1)
-				lane_scores[affected] -= 1.0 / float(absi(offset) + 1)
-	# Find the best lane
+			var lane_i: int = clampi(
+				int((it as Node2D).position.x / lane_width), 0, lane_count - 1)
+			lane_scores[lane_i] += float(kind[1]) * (1.0 - gap / DASH_LOOKAHEAD_PX)
+	# Best lane, with a margin so a tie does not make the bot oscillate between two
+	# equally empty lanes and spend every frame mid-tween.
 	var best_lane: int = current_lane
 	var best_score: float = lane_scores[current_lane]
 	for i in range(lane_count):
-		if lane_scores[i] > best_score:
+		if lane_scores[i] > best_score + DASH_SWITCH_MARGIN:
 			best_score = lane_scores[i]
 			best_lane = i
 	if best_lane != current_lane:
-		g.call("_move_lane", sign(best_lane - current_lane))
+		g.call("_move_lane", signi(best_lane - current_lane))
 		tap_cooldown = 0.18
 
 # ──────────────────────────────────────────────────────────────────
@@ -1748,7 +1934,11 @@ const SHELL_BUTTON_WORDS: Array[String] = [
 	"quit", "resume", "restart", "retry", "settings",
 ]
 ## The pause glyph carries no word at all — MiniGameBase draws it as "II".
-const SHELL_BUTTON_GLYPHS: Array[String] = ["ii", "❚❚", "✕", "×"]
+## Both x glyphs are listed on purpose. The close and QUIT buttons were re-lettered from U+2715
+## to U+2716 when the Android 8 tofu fix moved every on-screen glyph onto a bundled font, and this
+## list matches button TEXT exactly: dropping the old one would silently stop recognising any
+## screen not yet re-lettered, and the bot would start pressing its own way out of rounds again.
+const SHELL_BUTTON_GLYPHS: Array[String] = ["ii", "❚❚", "⏸", "✕", "✖", "×"]
 
 
 ## Buttons the bot may legitimately press: on screen for real, enabled, part of
@@ -2096,6 +2286,104 @@ func _play_mp_generic(_delta: float) -> void:
 			tap_cooldown = 0.4
 			return
 
+# ──────────────────────────────────────────────────────────────────
+# POINTER INJECTION
+# The bot's one synthetic finger. Every driver that steers by POSITION
+# rather than by a discrete action points it with _drive_pointer().
+# ──────────────────────────────────────────────────────────────────
+
+## Point the finger at a SCREEN position, pressing first if it is not down yet.
+##
+## Input.warp_mouse() used to be how the position drivers steered, and that is a
+## DisplayServer *cursor* call: a phone has no cursor, so on Android the warp was a
+## silent no-op and every game that reads a pointer saw one that never moved. The
+## RiceWashRescue basin sat on its left clamp for a whole round on the test phone,
+## caught 0 of 8 drops and lost by max misses, while the session log still recorded a
+## played game with 0% accuracy - the reported "autoplay doesnt work on rice wash".
+## Headless has no cursor either, which is what makes it reproducible off-device
+## (tools/VerifyAutoPlayProgress.tscn measured range=0px, mean_err=1219px).
+##
+## A real InputEventScreenTouch/Drag pair works on every platform and reaches both
+## readers this project actually uses: TouchInputManager.active_touches, which
+## RiceWashRescue._process polls, and _input/_unhandled_input handlers, which is the
+## only lever MP_CatchTheRain and MP_CatchRainAquarium have. It also updates the
+## viewport's last-pointer position, and that is exactly what get_mouse_position()
+## returns on a host with no mouse feature - so the pollers are steered too.
+func _drive_pointer(view_pos: Vector2) -> void:
+	var vp := get_viewport()
+	if vp == null:
+		return
+	# Kept clear of the bezel: TouchInputManager rejects a touch START inside its 15px
+	# edge dead zone on mobile, which would leave the finger unpressed while this
+	# manager believed it was down. No driver aims that close to an edge anyway.
+	var r := vp.get_visible_rect()
+	var inset := Vector2(POINTER_INSET_PX, POINTER_INSET_PX)
+	view_pos = view_pos.clamp(r.position + inset, r.end - inset)
+	# Injected events are read as WINDOW coordinates - Viewport turns them back into
+	# viewport space with get_final_transform().affine_inverse() before any node sees
+	# them. Skipping this conversion multiplied every aim by the stretch factor: on a
+	# headless host (64x36 window behind a 1920x1080 viewport) an aim at 300,700
+	# arrived at 9000,21000. Real devices stretch too (1920x1080 base on a 2400x1080
+	# screen), so the same conversion is what makes the aim land on the phone.
+	var win_pos: Vector2 = vp.get_final_transform() * view_pos
+	_pointer_release_pending = false
+	if not _pointer_down:
+		var press := InputEventScreenTouch.new()
+		press.index = 0
+		press.pressed = true
+		press.position = win_pos
+		Input.parse_input_event(press)
+		_pointer_down = true
+		_pointer_pos = win_pos
+		return
+	if win_pos.is_equal_approx(_pointer_pos):
+		return
+	var drag := InputEventScreenDrag.new()
+	drag.index = 0
+	drag.position = win_pos
+	drag.relative = win_pos - _pointer_pos
+	Input.parse_input_event(drag)
+	_pointer_pos = win_pos
+
+## Lift the finger. Called whenever the bot stops driving a live round.
+##
+## A finger left down is the phantom touch TouchInputManager documents:
+## get_touch_count() would report it for the rest of the app's life, and
+## RiceWashRescue would lock its basin to a stale position for the next round.
+func _release_pointer() -> void:
+	if not _pointer_down:
+		_pointer_release_pending = false
+		return
+	# Deferred, not skipped: a paused tree does not deliver input, so lifting here
+	# would clear this manager's flag while TouchInputManager kept the finger.
+	if get_tree() != null and get_tree().paused:
+		_pointer_release_pending = true
+		return
+	var lift := InputEventScreenTouch.new()
+	lift.index = 0
+	lift.pressed = false
+	lift.position = _pointer_pos
+	Input.parse_input_event(lift)
+	_pointer_down = false
+	_pointer_release_pending = false
+
+## Viewport position of a point given in `ci`'s PARENT space - the space `ci.position`
+## itself is in, so a driver can hand over the coordinates it already has.
+##
+## Two hops: parent space -> canvas space (the parent's own global transform, which
+## covers a playfield nested under scaled or offset containers) and canvas space ->
+## viewport space (the canvas transform, which is where a Camera2D on an MP playfield
+## lives). get_viewport_transform() is NOT used here: it is final * canvas, and the
+## final part is _drive_pointer's job, applied once, there.
+func _screen_from_parent_point(ci: Node2D, parent_point: Vector2) -> Vector2:
+	if not is_instance_valid(ci) or not ci.is_inside_tree():
+		return parent_point
+	var world: Vector2 = parent_point
+	var parent := ci.get_parent()
+	if parent is Node2D:
+		world = (parent as Node2D).get_global_transform() * parent_point
+	return ci.get_canvas_transform() * world
+
 func _simulate_click_on_node(node: Node) -> void:
 	## Simulate a mouse click on a node
 	if not is_instance_valid(node):
@@ -2154,7 +2442,7 @@ func _process_mp_auto_play(delta: float) -> void:
 		var mp_elapsed := (Time.get_ticks_msec() - mp_auto_play_start_time) / 1000.0
 		if mp_elapsed >= mp_auto_play_duration:
 			print("🤖 MP Auto-play duration reached (%s) — stopping" % _format_duration(mp_auto_play_duration))
-			set_mp_auto_play_enabled(false)
+			_expire_mp_auto_play()
 			return
 
 	# Drive the registered multiplayer game using the chosen strategy.

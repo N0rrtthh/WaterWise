@@ -185,7 +185,7 @@ func _try_mop(tile: Area2D) -> void:
 	tile.get_node("Visual").color = Color(0.9, 0.9, 0.9)
 	
 	tiles_mopped += 1
-	add_score(10)
+	add_score(10, true, tile)
 	_log("✨ Mopped tile! Total: %d" % tiles_mopped)
 
 func _on_resource_received(_from_player: int, resource_type: String, amount: int, _quality: float) -> void:

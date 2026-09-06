@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://bpfw0verifyperframe"]
+
+[ext_resource type="Script" path="res://tools/VerifyPerFrameWork.gd" id="1_pfw"]
+
+[node name="VerifyPerFrameWork" type="Node"]
+script = ExtResource("1_pfw")

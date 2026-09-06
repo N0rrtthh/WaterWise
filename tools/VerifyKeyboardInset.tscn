@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://b2kbinset7wq1"]
+
+[ext_resource type="Script" path="res://tools/VerifyKeyboardInset.gd" id="1_kbinset"]
+
+[node name="VerifyKeyboardInset" type="Node"]
+script = ExtResource("1_kbinset")

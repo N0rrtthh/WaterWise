@@ -148,6 +148,25 @@ func _ready() -> void:
 ## Noto Emoji font as a fallback on each bundled FontFile resource fixes ALL
 ## emoji labels project-wide in one place (resources are cached, so patching
 ## the loaded instance covers every screen that loads these fonts).
+##
+## THE HALF THAT WAS MISSING, AND WHY IT LOOKED FINE HERE
+##   Patching those two files covers the screens that override their font. Most of the game does
+##   not: the five top-right buttons on InitialScreen set theme_override_font_sizes and no font at
+##   all, and so do most minigame labels, which means they draw with ThemeDB.fallback_font - whose
+##   fallback list was EMPTY. Godot's third and last resort is a system font, and on this Windows
+##   box that is Segoe UI Emoji, so every emoji looked right in the editor and on the desktop
+##   build. On the Moto E5 Plus (Android 8) the system step answers with a 2017-era emoji font or
+##   with nothing, which is the reported "unknown character" box. Nothing was wrong with the
+##   glyphs; the chain that needed them could not reach the file that had them.
+##
+##   Measured, not reasoned: tools/VerifyGlyphCoverage.tscn models a device whose system fonts
+##   supply nothing (production chains with allow_system_fallback off, own fallbacks intact) and
+##   reported 250 codepoints shipped in fonts/ that no production chain could reach - almost all
+##   of them "ThemeDB.fallback_font cannot reach it".
+##
+##   allow_system_fallback is deliberately left ON everywhere. It is now the last resort rather
+##   than the only one, and switching it off would turn glyphs that do render today into boxes on
+##   desktop for no gain.
 func _install_emoji_fallback() -> void:
 	if not ResourceLoader.exists(EMOJI_FONT_PATH):
 		push_warning("ThemeManager: emoji fallback font missing: " + EMOJI_FONT_PATH)
@@ -155,17 +174,42 @@ func _install_emoji_fallback() -> void:
 	var emoji_font: Font = load(EMOJI_FONT_PATH)
 	if emoji_font == null:
 		return
+
+	# The engine's own default font travels inside the binary on every platform, so it is as safe
+	# to fall back to as anything in fonts/. It carries the Latin-1 and Greek characters the two
+	# display faces lack (°, ×, —, …, Φ, σ), which those faces were also getting from Windows.
+	var engine_default: Font = ThemeDB.fallback_font
+
+	# The chain a Label with no font override draws through. This is the one that was empty.
+	if engine_default != null:
+		_append_fallback(engine_default, emoji_font)
+
 	for font_path in BASE_FONT_PATHS:
 		if not ResourceLoader.exists(font_path):
 			continue
 		var base_font: Font = load(font_path)
 		if base_font == null:
 			continue
-		var fallbacks: Array = base_font.fallbacks.duplicate() if base_font.fallbacks else []
-		if emoji_font in fallbacks:
-			continue
-		fallbacks.append(emoji_font)
-		base_font.fallbacks = fallbacks
+		_append_fallback(base_font, emoji_font)
+		if engine_default != null:
+			_append_fallback(base_font, engine_default)
+
+
+## Add one fallback to a font, once. Idempotent because this runs on cached resources: a second
+## ThemeManager (a harness spinning the autoload up again) must not stack duplicates onto a chain
+## the text server then walks on every shaped run.
+func _append_fallback(target: Font, extra: Font) -> void:
+	if target == null or extra == null or target == extra:
+		return
+	var chain: Array[Font] = []
+	if target.fallbacks:
+		for f in target.fallbacks:
+			if f is Font:
+				chain.append(f as Font)
+	if extra in chain:
+		return
+	chain.append(extra)
+	target.fallbacks = chain
 
 
 func _apply_initial_theme() -> void:

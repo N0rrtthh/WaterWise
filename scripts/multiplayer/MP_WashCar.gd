@@ -183,7 +183,7 @@ func _process(delta: float) -> void:
 				section.set_meta("dirty", false)
 				section.set_meta("dirty_elapsed", 0.0)
 				section.get_node("Visual").modulate = Color(0.8, 0.2, 0.2)
-				report_miss_to_host()
+				report_miss_to_host(section)
 				# Put a section back in play. _make_section_dirty() had exactly two callers —
 				# _on_game_start() once, and the tail of a SUCCESSFUL wash — so a player who ran
 				# out of partner water and ate this penalty was left with a spotless car for the
@@ -213,7 +213,7 @@ func _try_wash(section: Area2D) -> void:
 	section.get_node("Visual").modulate = Color(1.0, 1.0, 1.0)  # Clean
 	
 	sections_washed += 1
-	add_score(15)
+	add_score(15, true, section)
 	_log("✨ Washed %s! Total: %d" % [section.get_meta("name"), sections_washed])
 	
 	# Line up the next section to scrub.

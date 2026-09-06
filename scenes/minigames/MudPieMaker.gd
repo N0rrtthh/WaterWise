@@ -224,7 +224,7 @@ func _create_gauge(screen_size: Vector2):
 	gauge_node.add_child(too_wet)
 	
 	var perfect = Label.new()
-	perfect.text = _loc("hud_perfect_ok", "✓ OK")
+	perfect.text = _loc("hud_perfect_ok", "✔ OK")
 	perfect.add_theme_font_size_override("font_size", 22)
 	perfect.add_theme_color_override("font_color", Color.GREEN)
 	MiniGameAssets.outline_text(perfect)

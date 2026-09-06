@@ -938,7 +938,9 @@ func _add_prop_bucket_line(parent: Node2D, pos: Vector2) -> void:
 		parent.add_child(b)
 
 func _add_prop_music_notes(parent: Node2D, pos: Vector2) -> void:
-	var notes = ["♪", "♫", "♩"]
+	# Emoji notes, not U+266A/266B/2669: no bundled font has those three, so on a device with
+	# no system symbol font they draw as hex boxes. tools/ProbeGlyphCandidates.tscn measures it.
+	var notes = ["🎵", "🎶", "🎵"]
 	for i in 3:
 		var n = Label.new()
 		n.name = "Note_%d" % i

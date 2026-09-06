@@ -229,7 +229,7 @@ func _try_flush(toilet: Area2D) -> void:
 	
 	toilets_flushed += 1
 	unflushed_count = _dirty_toilet_count()
-	add_score(10)
+	add_score(10, true, toilet)
 	_log("✨ Flushed toilet! Total: %d" % toilets_flushed)
 
 func _on_resource_received(_from_player: int, resource_type: String, amount: int, _quality: float) -> void:

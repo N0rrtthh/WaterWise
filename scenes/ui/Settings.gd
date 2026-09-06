@@ -12,6 +12,26 @@ const ACTION_BAR_MIN_GAP := 14.0
 const ACTION_BAR_MIN_GAP_MOBILE := 32.0
 const GRID_PATH := SETTINGS_VBOX_PATH + "/GridContainer"
 
+## Compact list rows, in canvas units.
+##
+## MobileUIManager raises every BaseButton to the 48dp touch floor on BOTH axes,
+## which is 126 canvas units on a 420dpi phone. That turned each two-column toggle
+## into a 126x126 square and each tool button into a 126-tall slab, so six
+## accessibility rows plus five tool rows ran far past the card and the menu was
+## mostly empty button. These rows opt out of the floor with
+## MobileUIManager.COMPACT_ROW_META and set their own height instead.
+const COMPACT_ROW_HEIGHT := 56.0
+const COMPACT_TOOL_ROW_HEIGHT := 58.0
+
+## One shared pair of check glyphs for every toggle on this screen.
+##
+## The default theme pairs a solid grey square ("off") with a bare tick and no frame
+## ("on"), so the two states did not read as the same control - the off rows looked
+## like empty grey boxes. These are drawn from one frame, so only the tick changes.
+const CHECK_ICON_SIZE := 28
+static var _check_icon_on: ImageTexture
+static var _check_icon_off: ImageTexture
+
 @onready var language_label = get_node(GRID_PATH + "/LanguageLabel")
 @onready var language_button = get_node(GRID_PATH + "/LanguageButton")
 @onready var volume_label = get_node(GRID_PATH + "/VolumeLabel")
@@ -48,7 +68,6 @@ var dev_mode_check: CheckBox
 var dev_profiler_check: CheckBox
 var dev_algorithm_check: CheckBox
 var auto_play_check: CheckBox
-var mp_auto_play_check: CheckBox
 var autoplay_duration_spinbox: SpinBox
 var dev_stats_button: Button
 var erase_data_button: Button
@@ -387,7 +406,6 @@ func _setup_interaction_polish() -> void:
 		dev_profiler_check,
 		dev_algorithm_check,
 		auto_play_check,
-		mp_auto_play_check,
 		autoplay_duration_spinbox,
 		volume_slider,
 	]
@@ -485,6 +503,78 @@ func _get_settings_vbox() -> VBoxContainer:
 
 	return null
 
+## Draws one state of the shared check glyph. Both states share the frame, so an off
+## row and an on row are recognisably the same control.
+static func _build_check_icon(checked: bool) -> ImageTexture:
+	var s := CHECK_ICON_SIZE
+	var img := Image.create_empty(s, s, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0, 0, 0, 0))
+	var border := Color(0.30, 0.42, 0.56)
+	var fill := Color(0.20, 0.60, 0.95) if checked else Color(1, 1, 1)
+	for y in range(s):
+		for x in range(s):
+			# Clip the four corner blocks so the frame reads as rounded.
+			if (x < 3 or x >= s - 3) and (y < 3 or y >= s - 3):
+				continue
+			var on_edge := x < 2 or y < 2 or x >= s - 2 or y >= s - 2
+			img.set_pixel(x, y, border if on_edge else fill)
+	if checked:
+		_stroke_line(img, Vector2(7, 14), Vector2(12, 19), Color.WHITE)
+		_stroke_line(img, Vector2(12, 19), Vector2(21, 8), Color.WHITE)
+	return ImageTexture.create_from_image(img)
+
+
+## 3px-wide line, plotted directly because Image has no draw calls.
+static func _stroke_line(img: Image, from: Vector2, to: Vector2, col: Color) -> void:
+	var steps := int(maxf(absf(to.x - from.x), absf(to.y - from.y))) * 2
+	for i in range(steps + 1):
+		var p := from.lerp(to, float(i) / float(maxi(steps, 1)))
+		for dy in range(-1, 2):
+			for dx in range(-1, 2):
+				var px := int(round(p.x)) + dx
+				var py := int(round(p.y)) + dy
+				if px >= 0 and py >= 0 and px < img.get_width() and py < img.get_height():
+					img.set_pixel(px, py, col)
+
+
+## Every toggle on this screen gets the same glyphs, the same icon-to-label gap and
+## left-aligned text.
+##
+## Left alignment is the layout half of the label bug: Button centres its text in the
+## leftover width while the check glyph stays pinned left, so a CheckBox stretched
+## wider than its content slid the word "Enable" back underneath the glyph.
+func _normalize_toggle(control: Control) -> void:
+	if control == null or not (control is CheckBox or control is CheckButton):
+		return
+	if _check_icon_on == null:
+		_check_icon_on = _build_check_icon(true)
+	if _check_icon_off == null:
+		_check_icon_off = _build_check_icon(false)
+
+	if control is CheckBox:
+		var box := control as CheckBox
+		box.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		box.add_theme_icon_override("checked", _check_icon_on)
+		box.add_theme_icon_override("unchecked", _check_icon_off)
+		box.add_theme_icon_override("checked_disabled", _check_icon_on)
+		box.add_theme_icon_override("unchecked_disabled", _check_icon_off)
+		box.add_theme_constant_override("h_separation", 12)
+
+	control.set_meta(MobileUIManager.COMPACT_ROW_META, true)
+	control.custom_minimum_size = Vector2(
+		control.custom_minimum_size.x, COMPACT_ROW_HEIGHT
+	)
+
+
+## A normalized, compact toggle row control, built before it enters the tree so
+## MobileUIManager's node_added hook already sees the compact-row marker.
+func _make_toggle(key: String, fallback: String) -> CheckBox:
+	var check := CheckBox.new()
+	_normalize_toggle(check)
+	_register_localized_text_control(check, key, fallback)
+	return check
+
+
 func _setup_accessibility_section() -> void:
 	# Add accessibility options to settings
 	var vbox = _get_settings_vbox()
@@ -533,12 +623,7 @@ func _setup_accessibility_section() -> void:
 	cb_label.add_theme_font_size_override("font_size", 18)
 	acc_grid.add_child(cb_label)
 	
-	colorblind_check = CheckBox.new()
-	_register_localized_text_control(
-		colorblind_check,
-		"settings_enable",
-		"Enable"
-	)
+	colorblind_check = _make_toggle("settings_enable", "Enable")
 	colorblind_check.button_pressed = _get_accessibility_setting("colorblind_mode")
 	colorblind_check.toggled.connect(_on_colorblind_toggled)
 	acc_grid.add_child(colorblind_check)
@@ -553,12 +638,7 @@ func _setup_accessibility_section() -> void:
 	lt_label.add_theme_font_size_override("font_size", 18)
 	acc_grid.add_child(lt_label)
 	
-	large_targets_check = CheckBox.new()
-	_register_localized_text_control(
-		large_targets_check,
-		"settings_enable",
-		"Enable"
-	)
+	large_targets_check = _make_toggle("settings_enable", "Enable")
 	large_targets_check.button_pressed = _get_accessibility_setting("large_touch_targets")
 	large_targets_check.toggled.connect(_on_large_targets_toggled)
 	acc_grid.add_child(large_targets_check)
@@ -573,12 +653,7 @@ func _setup_accessibility_section() -> void:
 	ac_label.add_theme_font_size_override("font_size", 18)
 	acc_grid.add_child(ac_label)
 	
-	audio_cues_check = CheckBox.new()
-	_register_localized_text_control(
-		audio_cues_check,
-		"settings_enable",
-		"Enable"
-	)
+	audio_cues_check = _make_toggle("settings_enable", "Enable")
 	audio_cues_check.button_pressed = _get_accessibility_setting("audio_cues", true)
 	audio_cues_check.toggled.connect(_on_audio_cues_toggled)
 	acc_grid.add_child(audio_cues_check)
@@ -593,12 +668,7 @@ func _setup_accessibility_section() -> void:
 	hp_label.add_theme_font_size_override("font_size", 18)
 	acc_grid.add_child(hp_label)
 
-	haptics_check = CheckBox.new()
-	_register_localized_text_control(
-		haptics_check,
-		"settings_enable",
-		"Enable"
-	)
+	haptics_check = _make_toggle("settings_enable", "Enable")
 	haptics_check.button_pressed = _get_accessibility_setting("haptics_enabled", true)
 	haptics_check.toggled.connect(_on_haptics_toggled)
 	acc_grid.add_child(haptics_check)
@@ -613,12 +683,7 @@ func _setup_accessibility_section() -> void:
 	ss_label.add_theme_font_size_override("font_size", 18)
 	acc_grid.add_child(ss_label)
 	
-	screen_shake_check = CheckBox.new()
-	_register_localized_text_control(
-		screen_shake_check,
-		"settings_enable",
-		"Enable"
-	)
+	screen_shake_check = _make_toggle("settings_enable", "Enable")
 	screen_shake_check.button_pressed = _get_accessibility_setting("screen_shake", true)
 	screen_shake_check.toggled.connect(_on_screen_shake_toggled)
 	acc_grid.add_child(screen_shake_check)
@@ -633,12 +698,7 @@ func _setup_accessibility_section() -> void:
 	pt_label.add_theme_font_size_override("font_size", 18)
 	acc_grid.add_child(pt_label)
 	
-	particles_check = CheckBox.new()
-	_register_localized_text_control(
-		particles_check,
-		"settings_enable",
-		"Enable"
-	)
+	particles_check = _make_toggle("settings_enable", "Enable")
 	particles_check.button_pressed = _get_accessibility_setting("particles", true)
 	particles_check.toggled.connect(_on_particles_toggled)
 	acc_grid.add_child(particles_check)
@@ -653,12 +713,7 @@ func _setup_accessibility_section() -> void:
 	rm_label.add_theme_font_size_override("font_size", 18)
 	acc_grid.add_child(rm_label)
 	
-	reduced_motion_check = CheckBox.new()
-	_register_localized_text_control(
-		reduced_motion_check,
-		"settings_enable",
-		"Enable"
-	)
+	reduced_motion_check = _make_toggle("settings_enable", "Enable")
 	reduced_motion_check.button_pressed = _get_accessibility_setting("reduced_motion")
 	reduced_motion_check.toggled.connect(_on_reduced_motion_toggled)
 	acc_grid.add_child(reduced_motion_check)
@@ -699,12 +754,7 @@ func _setup_dev_mode_section() -> void:
 	dm_label.add_theme_font_size_override("font_size", 18)
 	dev_grid.add_child(dm_label)
 
-	dev_mode_check = CheckBox.new()
-	_register_localized_text_control(
-		dev_mode_check,
-		"settings_enable",
-		"Enable"
-	)
+	dev_mode_check = _make_toggle("settings_enable", "Enable")
 	dev_mode_check.button_pressed = dev_mode_enabled
 	dev_mode_check.toggled.connect(_on_dev_mode_toggled)
 	dev_grid.add_child(dev_mode_check)
@@ -718,12 +768,7 @@ func _setup_dev_mode_section() -> void:
 	profiler_label.add_theme_font_size_override("font_size", 18)
 	dev_grid.add_child(profiler_label)
 
-	dev_profiler_check = CheckBox.new()
-	_register_localized_text_control(
-		dev_profiler_check,
-		"settings_show",
-		"Show"
-	)
+	dev_profiler_check = _make_toggle("settings_show", "Show")
 	dev_profiler_check.button_pressed = bool(
 		_get_dev_setting("dev_show_profiler", false)
 	)
@@ -739,12 +784,7 @@ func _setup_dev_mode_section() -> void:
 	algo_label.add_theme_font_size_override("font_size", 18)
 	dev_grid.add_child(algo_label)
 
-	dev_algorithm_check = CheckBox.new()
-	_register_localized_text_control(
-		dev_algorithm_check,
-		"settings_show",
-		"Show"
-	)
+	dev_algorithm_check = _make_toggle("settings_show", "Show")
 	dev_algorithm_check.button_pressed = bool(
 		_get_dev_setting("dev_show_algorithm_overlay", false)
 	)
@@ -761,12 +801,7 @@ func _setup_dev_mode_section() -> void:
 	ap_label.add_theme_font_size_override("font_size", 18)
 	dev_grid.add_child(ap_label)
 
-	auto_play_check = CheckBox.new()
-	_register_localized_text_control(
-		auto_play_check,
-		"settings_enable",
-		"Enable"
-	)
+	auto_play_check = _make_toggle("settings_enable", "Enable")
 	var save_mgr_ap = get_node_or_null("/root/SaveManager")
 	auto_play_check.button_pressed = bool(
 		save_mgr_ap.get_setting("auto_play_enabled", false)
@@ -791,7 +826,17 @@ func _setup_dev_mode_section() -> void:
 	autoplay_duration_spinbox = SpinBox.new()
 	autoplay_duration_spinbox.min_value = 0
 	autoplay_duration_spinbox.max_value = 180
-	autoplay_duration_spinbox.step = 5
+	# step 0 is Range's "do not snap" mode, so the box keeps whatever is typed - 7, 12,
+	# 2.5 - instead of rounding it to a multiple. It shipped as step = 5, which does not
+	# merely limit the arrows: Range.set_value() snaps, so a tester who typed 7 got 5 and
+	# one who typed 12 got 10 (measured, this engine build). The lowest run they could
+	# ask for was 5 minutes.
+	#
+	# custom_arrow_step keeps the +/- buttons useful at a 0 step, where they would
+	# otherwise move by nothing. max_value still clamps a typed value (200 -> 180), so
+	# "anything" stays inside the range the box advertises.
+	autoplay_duration_spinbox.step = 0
+	autoplay_duration_spinbox.custom_arrow_step = 1.0
 	autoplay_duration_spinbox.suffix = " min"
 	autoplay_duration_spinbox.custom_minimum_size = Vector2(150, 40)
 	autoplay_duration_spinbox.allow_greater = false
@@ -802,89 +847,88 @@ func _setup_dev_mode_section() -> void:
 	duration_hbox.add_child(autoplay_duration_spinbox)
 
 	var duration_hint = Label.new()
-	duration_hint.text = "(0 = ∞)"
+	_register_localized_text_control(
+		duration_hint,
+		"settings_auto_play_duration_hint",
+		"(0 = ∞, any value)"
+	)
 	duration_hint.add_theme_font_size_override("font_size", 14)
 	duration_hint.modulate = Color(0.7, 0.7, 0.7)
 	duration_hbox.add_child(duration_hint)
 	dev_grid.add_child(duration_hbox)
 
-	# MP Auto-Play
-	var mp_ap_label = Label.new()
-	mp_ap_label.text = _loc("settings_auto_play_mp", "🤖 Auto-Play (MP)")
-	mp_ap_label.add_theme_font_size_override("font_size", 18)
-	dev_grid.add_child(mp_ap_label)
+	# MP Auto-Play used to be a third row here. It has moved to the Multiplayer page, next to
+	# Ready / Auto Play / Start Game, and this row is gone rather than duplicated because it
+	# was an UNSYNCED second writer of one piece of session state: the lobby's AutoPlayButton
+	# broadcasts through rpc("_sync_auto_play_state"), while this checkbox called
+	# AutoPlayManager.set_mp_auto_play_enabled() locally and told the partner nothing - so a
+	# player who flipped it in Settings had the bot on their device only, and the round's
+	# ready/auto-start behaviour differed between the two peers. The round-timer control asked
+	# for in the same breath lives there too, for the same reason: both peers must agree.
+	# The single-player rows above stay, since the Multiplayer page cannot host them.
 
-	mp_auto_play_check = CheckBox.new()
-	_register_localized_text_control(
-		mp_auto_play_check,
-		"settings_enable",
-		"Enable"
-	)
-	mp_auto_play_check.button_pressed = AutoPlayManager.mp_auto_play_enabled if AutoPlayManager else false
-	mp_auto_play_check.disabled = not dev_mode_enabled
-	mp_auto_play_check.toggled.connect(_on_mp_auto_play_toggled)
-	dev_grid.add_child(mp_auto_play_check)
+	# The four developer tools below are debug-build only. Being `disabled` when
+	# dev_mode is off still RENDERED them in a shipped APK, so a player opening
+	# Settings saw four greyed-out rows naming the thesis instrumentation, and
+	# flipping the dev-mode toggle above was enough to reach a log exporter and a
+	# minigame sandbox. OS.is_debug_build() is false in a release export, which is
+	# the same gate MobileUIManager.should_show_demo_buttons() already uses.
+	var show_dev_tools := OS.is_debug_build()
 
-	var note = Label.new()
-	_register_localized_text_control(
-		note,
-		"settings_dev_note",
-		"Use toggles on mobile (same as F11/F12 on PC)."
-	)
-	note.add_theme_font_size_override("font_size", 14)
-	note.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	note.modulate = Color(1, 1, 1, 1)
-	vbox.add_child(note)
+	if show_dev_tools:
+		dev_stats_button = _make_tool_button(
+			"settings_dev_stats", "📊 Dev Stats & Export Log"
+		)
+		dev_stats_button.disabled = not dev_mode_enabled
+		dev_stats_button.pressed.connect(_on_dev_stats_pressed)
+		vbox.add_child(dev_stats_button)
 
-	dev_stats_button = Button.new()
-	dev_stats_button.text = _loc("settings_dev_stats", "📊 Dev Stats & Export Log")
-	dev_stats_button.custom_minimum_size = Vector2(0, 60)
-	dev_stats_button.add_theme_font_size_override("font_size", 20)
-	dev_stats_button.disabled = not dev_mode_enabled
-	dev_stats_button.pressed.connect(_on_dev_stats_pressed)
-	vbox.add_child(dev_stats_button)
-
-	var beat_viewer_button := Button.new()
-	beat_viewer_button.text = _loc("settings_beat_viewer", "🎬 Beat Viewer (animation check)")
-	beat_viewer_button.custom_minimum_size = Vector2(0, 60)
-	beat_viewer_button.add_theme_font_size_override("font_size", 20)
-	# Always enabled — it is a read-only preview tool, no dev data involved.
-	beat_viewer_button.pressed.connect(_on_beat_viewer_pressed)
-	vbox.add_child(beat_viewer_button)
-	if dev_stats_button:
+		var beat_viewer_button := _make_tool_button(
+			"settings_beat_viewer", "🎬 Beat Viewer (animation check)"
+		)
+		# Always enabled — it is a read-only preview tool, no dev data involved.
+		beat_viewer_button.pressed.connect(_on_beat_viewer_pressed)
+		vbox.add_child(beat_viewer_button)
 		dev_mode_check.set_meta("beat_viewer_button", beat_viewer_button)
 
-	var game_lab_button := Button.new()
-	game_lab_button.text = _loc("settings_game_lab", "🧪 Game Lab (try any minigame)")
-	game_lab_button.custom_minimum_size = Vector2(0, 60)
-	game_lab_button.add_theme_font_size_override("font_size", 20)
-	# Dev-gated like the other tools below it. Unlike the Beat Viewer this one
-	# PLAYS rounds - it just refuses to record them (GameManager.enter_sandbox).
-	game_lab_button.disabled = not dev_mode_enabled
-	game_lab_button.pressed.connect(_on_game_lab_pressed)
-	vbox.add_child(game_lab_button)
-	dev_mode_check.set_meta("game_lab_button", game_lab_button)
+		var game_lab_button := _make_tool_button(
+			"settings_game_lab", "🧪 Game Lab (try any minigame)"
+		)
+		# Dev-gated like the other tools. Unlike the Beat Viewer this one PLAYS
+		# rounds - it just refuses to record them (GameManager.enter_sandbox).
+		game_lab_button.disabled = not dev_mode_enabled
+		game_lab_button.pressed.connect(_on_game_lab_pressed)
+		vbox.add_child(game_lab_button)
+		dev_mode_check.set_meta("game_lab_button", game_lab_button)
 
-	erase_data_button = Button.new()
-	erase_data_button.text = _loc("settings_erase_data", "🗑️ Erase All Data")
-	erase_data_button.custom_minimum_size = Vector2(0, 60)
-	erase_data_button.add_theme_font_size_override("font_size", 20)
+	erase_data_button = _make_tool_button("settings_erase_data", "🗑️ Erase All Data")
 	erase_data_button.add_theme_color_override("font_color", Color(1.0, 0.3, 0.3))
 	erase_data_button.add_theme_color_override("font_hover_color", Color(1.0, 0.1, 0.1))
 	erase_data_button.disabled = not dev_mode_enabled
 	erase_data_button.pressed.connect(_on_erase_data_pressed)
 	vbox.add_child(erase_data_button)
 
-	if FileExporter.is_external_storage_available():
-		export_data_button = Button.new()
-		export_data_button.text = _loc("settings_export_logs", "📤 Export Session Logs")
-		export_data_button.custom_minimum_size = Vector2(0, 60)
-		export_data_button.add_theme_font_size_override("font_size", 20)
+	if show_dev_tools and FileExporter.is_external_storage_available():
+		export_data_button = _make_tool_button(
+			"settings_export_logs", "📤 Export Session Logs"
+		)
 		export_data_button.disabled = not dev_mode_enabled
 		export_data_button.set_script(load("res://scenes/ui/ExportDataButton.gd"))
 		vbox.add_child(export_data_button)
 
 	_apply_dev_mode_visibility(dev_mode_enabled)
+
+
+## One compact list row in the tools column. Built before it enters the tree so
+## MobileUIManager's node_added hook already sees the compact-row marker and leaves
+## the authored height alone.
+func _make_tool_button(key: String, fallback: String) -> Button:
+	var btn := Button.new()
+	btn.text = _loc(key, fallback)
+	btn.set_meta(MobileUIManager.COMPACT_ROW_META, true)
+	btn.custom_minimum_size = Vector2(0, COMPACT_TOOL_ROW_HEIGHT)
+	btn.add_theme_font_size_override("font_size", 19)
+	return btn
 
 func _get_accessibility_setting(key: String, default_val: bool = false) -> bool:
 	var save_mgr = get_node_or_null("/root/SaveManager")
@@ -986,16 +1030,6 @@ func _on_auto_play_toggled(pressed: bool) -> void:
 	if AutoPlayManager:
 		AutoPlayManager.set_auto_play_enabled(pressed)
 
-func _on_mp_auto_play_toggled(pressed: bool) -> void:
-	if AudioManager:
-		AudioManager.play_click()
-	if not _get_dev_setting("dev_mode", false):
-		if mp_auto_play_check:
-			mp_auto_play_check.set_pressed_no_signal(false)
-		return
-	if AutoPlayManager:
-		AutoPlayManager.set_mp_auto_play_enabled(pressed)
-
 func _get_dev_setting(key: String, default_val: bool = false) -> bool:
 	var save_mgr = get_node_or_null("/root/SaveManager")
 	if save_mgr:
@@ -1016,8 +1050,6 @@ func _apply_dev_mode_visibility(enabled: bool) -> void:
 		auto_play_check.disabled = not enabled
 	if autoplay_duration_spinbox:
 		autoplay_duration_spinbox.editable = enabled
-	if mp_auto_play_check:
-		mp_auto_play_check.disabled = not enabled
 	if dev_stats_button:
 		dev_stats_button.disabled = not enabled
 	# has_meta() first: a NIL default reads as "no default" inside get_meta(), so this
@@ -1053,6 +1085,33 @@ func _on_dev_stats_pressed() -> void:
 func _on_erase_data_pressed() -> void:
 	if AudioManager:
 		AudioManager.play_click()
+	_confirm_erase_all_data()
+
+
+## Erasing is irreversible - reset_all_data() drops droplets, unlocks, high scores,
+## achievements and settings - and it used to run on the first tap of a row sitting
+## directly under the other tool buttons. The dialog is built once and reused so a
+## repeated tap cannot stack copies of it.
+func _confirm_erase_all_data() -> void:
+	var dialog := get_node_or_null("EraseDataConfirm") as ConfirmationDialog
+	if dialog == null:
+		dialog = ConfirmationDialog.new()
+		dialog.name = "EraseDataConfirm"
+		dialog.title = _loc("settings_erase_data_title", "Erase all data?")
+		dialog.dialog_text = _loc(
+			"settings_erase_data_warning",
+			"This deletes every droplet, unlock, high score and setting on this device."
+			+ "\nIt cannot be undone."
+		)
+		dialog.dialog_autowrap = true
+		dialog.ok_button_text = _loc("settings_erase_data_ok", "Erase everything")
+		dialog.get_cancel_button().text = _loc("cancel", "Cancel")
+		dialog.confirmed.connect(_erase_all_data)
+		add_child(dialog)
+	dialog.popup_centered(Vector2i(560, 260))
+
+
+func _erase_all_data() -> void:
 	var save_mgr = get_node_or_null("/root/SaveManager")
 	if save_mgr and save_mgr.has_method("reset_all_data"):
 		save_mgr.reset_all_data()
@@ -1095,11 +1154,11 @@ func _on_dev_mode_toggled(pressed: bool) -> void:
 		# Turn off auto-play when dev mode is disabled
 		if auto_play_check:
 			auto_play_check.set_pressed_no_signal(false)
-		if mp_auto_play_check:
-			mp_auto_play_check.set_pressed_no_signal(false)
 		if AutoPlayManager:
+			# Single player only. The MP bot is switched off from the Multiplayer page, which
+			# broadcasts the change; turning it off from here would leave the partner running a
+			# bot this peer no longer has. Settings no longer writes any MP session state.
 			AutoPlayManager.set_auto_play_enabled(false)
-			AutoPlayManager.set_mp_auto_play_enabled(false)
 
 	_sync_dev_overlay_state()
 
@@ -1445,8 +1504,18 @@ func _apply_text_color_recursive(
 				lbl.modulate = Color(1, 1, 1, 1)
 		elif child is CheckBox or child is CheckButton:
 			var check_col := text_secondary if is_dark else text_primary
-			(child as Control).add_theme_color_override("font_color", check_col)
-			(child as Control).add_theme_color_override(
+			var toggle := child as Control
+			toggle.add_theme_color_override("font_color", check_col)
+			# A toggle that is ON draws in Button's PRESSED mode, so its label takes
+			# font_pressed_color - left at the default theme's white, which is
+			# invisible on this cream card. That is why "Enable" disappeared on
+			# exactly the rows whose box was ticked, while the unticked rows read
+			# fine. All four states now share one colour.
+			toggle.add_theme_color_override("font_pressed_color", check_col)
+			toggle.add_theme_color_override("font_hover_color", check_col)
+			toggle.add_theme_color_override("font_hover_pressed_color", check_col)
+			toggle.add_theme_color_override("font_focus_color", check_col)
+			toggle.add_theme_color_override(
 				"font_disabled_color",
 				check_col.darkened(0.25)
 			)

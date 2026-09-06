@@ -375,7 +375,7 @@ func _on_tap_closed(tap: Node2D):
 	stream.visible = false
 	
 	var alert = tap.get_node("Alert")
-	alert.text = "✓"
+	alert.text = "✔"
 	alert.add_theme_color_override("font_color", Color.GREEN)
 	
 	# Remove after brief delay

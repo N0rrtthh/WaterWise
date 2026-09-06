@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://bxmplptempo01"]
+
+[ext_resource type="Script" path="res://tools/VerifyMPLoopTempo.gd" id="1_mplooptempo"]
+
+[node name="VerifyMPLoopTempo" type="Node"]
+script = ExtResource("1_mplooptempo")

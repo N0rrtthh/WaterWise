@@ -52,7 +52,15 @@ const SHELL_WORDS: Array = [
 	"home", "close", "skip", "settings", "continue",
 ]
 ## The pause glyph carries no word at all -- MiniGameBase draws it as "II".
-const SHELL_GLYPHS: Array = ["ii", "❚❚", "✕", "×"]
+##
+## Both x glyphs are here, and that is not belt-and-braces. The Android 8 tofu fix re-lettered
+## close buttons from U+2715 to U+2716 (no bundled font has U+2715, so it drew as a hex box on the
+## reported device). MultiplayerLobby's close button is a bare glyph with no word on it, so it is
+## caught by THIS list alone: had the old spelling been left here, a bot press on it would have
+## stopped being counted as a hazard and this harness would have gone on passing while the bug it
+## exists to catch came back. U+23F8 is listed for the same reason - it is in the driver's own
+## SHELL_BUTTON_GLYPHS, so a screen using it must be recognised here too.
+const SHELL_GLYPHS: Array = ["ii", "❚❚", "⏸", "✕", "✖", "×"]
 ## Long enough for MiniGameBase._ready() to finish and register.
 const READY_FRAMES: int = 8
 ## How long the driver is given to notice a pause and undo it.

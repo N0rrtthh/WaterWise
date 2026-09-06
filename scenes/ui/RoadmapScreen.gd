@@ -144,8 +144,44 @@ var scroll_hint_label: Label
 var _feedback_tweens: Dictionary = {}
 var _ambient_tweens: Array[Tween] = []
 var _current_tab: String = "singleplayer"  # "singleplayer" | "multiplayer"
+var _tab_bar: HBoxContainer
 var _tab_sp_btn: Button
 var _tab_mp_btn: Button
+
+## Map content pushed down by this much so the first stage - and the tooltip card
+## beside it - start below the fixed header, tab row and Back button. Measured in
+## _measure_chrome_reserve() rather than hardcoded: MobileUIManager raises those
+## buttons to the 48dp touch floor, which is 126 canvas units on a 420dpi phone, so
+## any constant here would be wrong on half the devices. Node 1 used to sit at y=120
+## under a tab row that reached y=192, which hid its "1" badge and put its card across
+## the Single Player / Multiplayer buttons.
+var _content_top_inset: float = 0.0
+
+## Where the first path point and the first stage node sit, relative to the inset.
+const PATH_BASE_TOP := 150.0
+const STAGE_BASE_TOP := 180.0
+
+## Gap between the bottom of the fixed chrome and the top of the map content.
+const CHROME_CONTENT_GAP := 26.0
+
+## How far right of its node a tooltip card reaches (card offset 130 - the container's
+## own 60 origin shift + ~200 of card). The cards all sit on one side now, so the
+## composition is node + card; biasing the path left by half that reach centres the
+## whole group, instead of centring the nodes alone and leaving a card's width of dead
+## space on the left of a 2400-unit canvas.
+const NAME_PANEL_REACH := 270.0
+
+## Where a tooltip card sits relative to its stage container. One fixed side: the old
+## `index % 2` flip put odd cards on the left and even ones on the right with nothing
+## indicating which node a card belonged to.
+const NAME_PANEL_OFFSET := Vector2(130, 30)
+
+## Starting phase of the path's sine. At 0 the first node sat dead on the centre line
+## and every node visible on the first screen bent RIGHT from there, so the whole left
+## half of a 2400-unit canvas was empty until a player scrolled to node 6. A negative
+## phase starts the river left of centre, which puts nodes on both sides of the middle
+## without changing the shape or the spacing.
+const PATH_PHASE_OFFSET := -0.9
 
 const MP_STAGE_TEMPLATE: Array[Dictionary] = [
 	{
@@ -195,17 +231,22 @@ const MP_STAGE_TEMPLATE: Array[Dictionary] = [
 func _ready():
 	_sync_stages_from_progress()
 	screen_size = get_viewport_rect().size
-	total_map_height = max(1800, stages.size() * 200 + 400)
-	
+
+	# Fixed chrome first, so the reserve the map content needs can be measured off the
+	# real header/tab-row/Back rects before any of that content is placed.
+	_create_header()
+	_create_tab_bar()
+	_create_back_button()
+	_create_scroll_hint()
+	_content_top_inset = _measure_chrome_reserve()
+
+	total_map_height = max(1800, stages.size() * 200 + 400) + _content_top_inset
+
 	_create_scroll_container()
 	_create_background()
 	_create_map_path()
 	_create_stage_nodes()
 	_create_decorations()
-	_create_header()
-	_create_tab_bar()
-	_create_back_button()
-	_create_scroll_hint()
 	_start_roadmap_ambient_motion()
 
 	if Localization and Localization.has_signal("language_changed"):
@@ -284,11 +325,51 @@ func _create_scroll_container():
 	scroll_container.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	scroll_container.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_SHOW_NEVER
 	add_child(scroll_container)
-	
+	# Behind the chrome for INPUT, not just for drawing. The fixed header, tab row and
+	# Back button are created before this one now (so the map's top inset can be measured
+	# off their real rects), which left this full-rect container last in tree order - and
+	# Godot picks GUI input in reverse tree order, so it swallowed clicks on the Back
+	# button. z_index only settles what is drawn on top, not what is hit.
+	# tools/VerifyPausedNavigation.tscn catches exactly this.
+	move_child(scroll_container, 0)
+
 	# Content container (taller than screen)
 	map_content = Control.new()
 	map_content.custom_minimum_size = Vector2(screen_size.x, total_map_height)
 	scroll_container.add_child(map_content)
+
+
+## Lowest edge of the fixed chrome, plus a gap. Sizes are read as
+## max(size, combined_minimum_size) because this runs on the same frame the nodes were
+## created, before the first layout pass has resolved size from the minimum.
+func _measure_chrome_reserve() -> float:
+	var bottom := 0.0
+	for node in [header_panel, _tab_bar, back_button]:
+		var ctrl := node as Control
+		if ctrl == null:
+			continue
+		var h := maxf(ctrl.size.y, ctrl.get_combined_minimum_size().y)
+		bottom = maxf(bottom, ctrl.position.y + h)
+	return bottom + CHROME_CONTENT_GAP
+
+
+## Spacing between stages. Derived from the map height WITHOUT the chrome reserve, so
+## adding the reserve shifts the whole column down instead of also stretching it.
+func _stage_spacing() -> float:
+	return (
+		(total_map_height - 300.0 - _content_top_inset)
+		/ float(maxi(stages.size(), 1))
+	)
+
+
+func _path_center_x() -> float:
+	return screen_size.x * 0.5 - NAME_PANEL_REACH * 0.5
+
+
+## Wider snake on wider screens. A flat +-100 drew the path as a narrow ribbon down
+## the middle of a 2400-unit canvas with most of the width unused.
+func _path_amplitude() -> float:
+	return clampf(screen_size.x * 0.14, 90.0, 380.0)
 
 func _create_background():
 	# Sky gradient background (extends full height)
@@ -351,12 +432,13 @@ func _create_map_path():
 	river.antialiased = true
 	
 	var path_points: Array[Vector2] = []
-	var stage_spacing = (total_map_height - 300) / stages.size()
-	
+	var stage_spacing = _stage_spacing()
+	var center_x = _path_center_x()
+	var amplitude = _path_amplitude()
+
 	for i in range(stages.size() + 2):
-		var y = 150 + i * stage_spacing
-		var x_wave = sin(i * 0.7) * 100
-		var x = screen_size.x / 2 + x_wave
+		var y = _content_top_inset + PATH_BASE_TOP + i * stage_spacing
+		var x = center_x + sin(i * 0.7 + PATH_PHASE_OFFSET) * amplitude
 		path_points.append(Vector2(x, y))
 	
 	river.points = PackedVector2Array(path_points)
@@ -379,13 +461,14 @@ func _create_map_path():
 	map_content.add_child(path_line)
 
 func _create_stage_nodes():
-	var stage_spacing = (total_map_height - 300) / stages.size()
-	
+	var stage_spacing = _stage_spacing()
+	var center_x = _path_center_x()
+	var amplitude = _path_amplitude()
+
 	for i in range(stages.size()):
 		var stage = stages[i]
-		var y = 180 + i * stage_spacing
-		var x_wave = sin(i * 0.7) * 100
-		var x = screen_size.x / 2 + x_wave
+		var y = _content_top_inset + STAGE_BASE_TOP + i * stage_spacing
+		var x = center_x + sin(i * 0.7 + PATH_PHASE_OFFSET) * amplitude
 		
 		var node = _create_stage_button(stage, i, Vector2(x, y))
 		map_content.add_child(node)
@@ -473,12 +556,10 @@ func _create_stage_button(stage: Dictionary, index: int, pos: Vector2) -> Contro
 		stars.position = Vector2(60 - stage.stars * 9, 100)
 		container.add_child(stars)
 	
-	# Stage name panel (to the side)
+	# Stage name panel — always on the node's right, so which node a card describes is
+	# never ambiguous.
 	var name_panel = _create_name_panel(stage, index)
-	if index % 2 == 0:
-		name_panel.position = Vector2(130, 30)
-	else:
-		name_panel.position = Vector2(-180, 30)
+	name_panel.position = NAME_PANEL_OFFSET
 	container.add_child(name_panel)
 	
 	# Make interactive (info popup for both unlocked and locked stages)
@@ -653,7 +734,7 @@ func _show_stage_popup(stage: Dictionary, index: int):
 	_build_how_to_play_preview(preview, stage, preview_width)
 
 	var close_btn = Button.new()
-	close_btn.text = "✕ " + _loc("roadmap_close", "CLOSE")
+	close_btn.text = "✖ " + _loc("roadmap_close", "CLOSE")
 	close_btn.custom_minimum_size = Vector2(170, 44)
 	close_btn.add_theme_font_size_override("font_size", 18)
 	close_btn.add_theme_color_override("font_color", Color.WHITE)
@@ -1053,6 +1134,7 @@ func _create_tab_bar() -> void:
 	tab_bar.position = Vector2(screen_size.x * 0.5 - 140.0, 66.0)
 	tab_bar.custom_minimum_size = Vector2(280, 42)
 	add_child(tab_bar)
+	_tab_bar = tab_bar
 
 	_tab_sp_btn = _make_tab_button(_loc("roadmap_tab_singleplayer", "🎮 Single Player"), true)
 	_tab_mp_btn = _make_tab_button(_loc("roadmap_tab_multiplayer", "🤝 Multiplayer"), false)
@@ -1167,12 +1249,13 @@ func _sync_mp_stages() -> void:
 		stages.append(entry)
 
 func _create_mp_stage_nodes() -> void:
-	var stage_spacing = (total_map_height - 300) / stages.size()
+	var stage_spacing = _stage_spacing()
+	var center_x = _path_center_x()
+	var amplitude = _path_amplitude()
 	for i in range(stages.size()):
 		var stage = stages[i]
-		var y = 180 + i * stage_spacing
-		var x_wave = sin(i * 0.7) * 100
-		var x = screen_size.x / 2 + x_wave
+		var y = _content_top_inset + STAGE_BASE_TOP + i * stage_spacing
+		var x = center_x + sin(i * 0.7 + PATH_PHASE_OFFSET) * amplitude
 		var node = _create_mp_stage_button(stage, i, Vector2(x, y))
 		node.name = "Stage_%d" % i
 		map_content.add_child(node)
@@ -1244,7 +1327,7 @@ func _create_mp_stage_button(stage: Dictionary, index: int, pos: Vector2) -> Con
 	container.add_child(players_badge)
 
 	var name_panel = _create_name_panel(stage, index)
-	name_panel.position = Vector2(130, 30) if index % 2 == 0 else Vector2(-180, 30)
+	name_panel.position = NAME_PANEL_OFFSET
 	container.add_child(name_panel)
 
 	var btn = Button.new()
@@ -1295,7 +1378,7 @@ func _create_header():
 
 func _create_back_button():
 	back_button = Button.new()
-	back_button.text = _loc("back", "← Back")
+	back_button.text = _loc("back", "⬅ Back")
 	back_button.custom_minimum_size = Vector2(100, 45)
 	back_button.position = Vector2(15, 10)
 	back_button.z_index = 100
@@ -1335,14 +1418,17 @@ func _create_back_button():
 	add_child(back_button)
 
 func _create_scroll_hint():
-	# Scroll hint at bottom
+	# Scroll hint, bottom LEFT. Centred at the bottom it landed on whichever node the
+	# path happened to put there - on the reported 2400x1080 layout that was node 5's
+	# padlock. The path is biased right of centre, so the left corner is the one region
+	# no node or tooltip card ever reaches.
 	scroll_hint_label = Label.new()
 	scroll_hint_label.text = _loc("roadmap_scroll_to_explore", "↕️ Scroll to explore")
 	scroll_hint_label.add_theme_font_size_override("font_size", 16)
 	scroll_hint_label.add_theme_color_override("font_color", Color(1, 1, 1, 0.75))
 	scroll_hint_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.5))
 	scroll_hint_label.add_theme_constant_override("outline_size", 2)
-	scroll_hint_label.position = Vector2(screen_size.x / 2 - 80, screen_size.y - 35)
+	scroll_hint_label.position = Vector2(24.0, screen_size.y - 46.0)
 	scroll_hint_label.z_index = 50
 	add_child(scroll_hint_label)
 

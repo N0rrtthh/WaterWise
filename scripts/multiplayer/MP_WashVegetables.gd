@@ -235,7 +235,7 @@ func _wash_vegetable() -> void:
 	# CoopAdaptation read. Awarding afterwards published a score short by exactly this
 	# vegetable — measured as 70 against a true 80 by tools/VerifyMPWashWater.tscn — and
 	# drew that short number on the results screen too.
-	add_score(POINTS_PER_VEGGIE)
+	add_score(POINTS_PER_VEGGIE, true, sink_area)
 	
 	# Send dirty water to P2
 	send_resource_to_partner("dirty_water", DIRTY_WATER_PER_VEGGIE, 1.0)

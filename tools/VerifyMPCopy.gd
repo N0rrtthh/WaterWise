@@ -232,6 +232,13 @@ func _team_quota_pass() -> void:
 	var packed := load("res://scenes/multiplayer/MP_CollectDishWater.tscn") as PackedScene
 	var game: Node = packed.instantiate()
 	get_tree().root.add_child(game)
+	# The shared-target broadcast closes the round through get_tree().current_scene, which
+	# the live flow sets by loading the round as a scene. Parented under root instead, the
+	# broadcast would land on this harness and the round would never end - which is the very
+	# thing the two checks below measure. The latch is per-round and nothing else clears it.
+	var scene_before: Node = get_tree().current_scene
+	get_tree().current_scene = game
+	NetworkManager.clear_shared_target()
 	var waited: float = 0.0
 	while waited < 8.0 and (game.get("buckets") == null or (game.get("buckets") as Array).is_empty()):
 		await get_tree().create_timer(0.1).timeout
@@ -266,6 +273,8 @@ func _team_quota_pass() -> void:
 			% [NetworkManager.get_total_score(), int(game.local_score), quota])
 
 	game.set("game_active", false)
+	if scene_before != null and is_instance_valid(scene_before):
+		get_tree().current_scene = scene_before
 	get_tree().root.remove_child(game)
 	game.free()
 	await get_tree().process_frame

@@ -145,7 +145,7 @@ func _create_basin(screen_size: Vector2):
 	basin_node.add_child(rim)
 	
 	var indicator = Label.new()
-	indicator.text = _loc("hud_follow", "← FOLLOW →")
+	indicator.text = _loc("hud_follow", "⬅ FOLLOW ➡")
 	indicator.add_theme_font_size_override("font_size", 20)
 	indicator.add_theme_color_override("font_color", Color.WHITE)
 	indicator.position = Vector2(-60, 55)
@@ -264,7 +264,7 @@ func _spawn_drop():
 
 func _show_catch(pos: Vector2):
 	var effect = Label.new()
-	effect.text = "✓"
+	effect.text = "✔"
 	effect.add_theme_font_size_override("font_size", 36)
 	effect.add_theme_color_override("font_color", Color.GREEN)
 	effect.position = pos + Vector2(-10, -30)

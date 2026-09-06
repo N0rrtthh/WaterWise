@@ -47,7 +47,7 @@ func _on_export_pressed() -> void:
 		# was denied. Re-request it and tell the user what to do.
 		if OS.get_name() == "Android":
 			OS.request_permissions()
-			_show_error("Storage permission is required to export.\n\nA permission dialog has been shown — please tap 'Allow' then press Export again.\n\nIf the dialog did not appear, go to:\nSettings → Apps → WaterWise → Permissions → Storage → Allow")
+			_show_error("Storage permission is required to export.\n\nA permission dialog has been shown — please tap 'Allow' then press Export again.\n\nIf the dialog did not appear, go to:\nSettings ➡ Apps ➡ WaterWise ➡ Permissions ➡ Storage ➡ Allow")
 		else:
 			_show_error("External storage not available. Check permissions.")
 		text = original_text
@@ -72,12 +72,11 @@ func _on_export_pressed() -> void:
 		message += "- Player accuracy & reaction times\n"
 		message += "- Difficulty adaptation data\n\n"
 		message += "Location:\n"
-		message += "Downloads/WaterwiseExports/session_logs/\n\n"
+		message += "Downloads/waterwise/\n\n"
 		message += "How to access:\n"
 		message += "1. Open Files app\n"
 		message += "2. Go to Downloads\n"
-		message += "3. Open WaterwiseExports\n"
-		message += "4. Open session_logs folder\n"
+		message += "3. Open the waterwise folder\n"
 		
 		print("✅ Export successful!")
 		_show_success(message)

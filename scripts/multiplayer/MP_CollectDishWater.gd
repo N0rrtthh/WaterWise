@@ -137,7 +137,7 @@ func _on_drop_caught(area: Area2D, drop: Area2D) -> void:
 		return
 	
 	water_collected += 1
-	add_score(POINTS_PER_DROP)
+	add_score(POINTS_PER_DROP, true, area)
 	# Send 1 unit per drop so P2 gets water immediately each catch
 	send_resource_to_partner("dishwater", 1, 1.0)
 	_log("📤 Sent dish water (total: %d)" % water_collected)

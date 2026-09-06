@@ -148,7 +148,7 @@ func _ready():
 	# Target label
 	var target_label = Label.new()
 	target_label.name = "TargetLabel"
-	target_label.text = _loc("hud_target_arrow", "← TARGET")
+	target_label.text = _loc("hud_target_arrow", "⬅ TARGET")
 	target_label.add_theme_font_size_override("font_size", 18)
 	target_label.add_theme_color_override("font_color", Color(0.2, 0.7, 0.2))
 	MiniGameAssets.outline_text(target_label)

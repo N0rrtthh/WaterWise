@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://cvapdeadline01"]
+
+[ext_resource type="Script" path="res://tools/VerifyAutoPlayDeadline.gd" id="1_apdead"]
+
+[node name="VerifyAutoPlayDeadline" type="Node"]
+script = ExtResource("1_apdead")

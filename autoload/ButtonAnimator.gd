@@ -49,6 +49,29 @@ func _on_node_added(node: Node) -> void:
 			btn.ready.connect(_hook_button.bind(btn), CONNECT_ONE_SHOT)
 
 
+## Is this button part of a round in progress, rather than a menu?
+##
+## Gameplay buttons MUST stay pausable: an in-round pause overlay is the one case
+## where a frozen button is the correct behaviour, and a tap that lands on the
+## playfield behind the overlay must not score. The overlays that have to keep
+## working while a round is paused already set PROCESS_MODE_ALWAYS on themselves
+## (MiniGameBase._create_pause_menu, the HUD pause glyph, and the five co-op pause
+## menus), and their children inherit it - this function never clears that.
+##
+## Decided by SCRIPT INHERITANCE, walking ancestors, not by a list of scene paths: a
+## path table has to be kept in step with every scene ever added and rots silently.
+## Every single-player round descends from MiniGameBase (MicrogameShell included) and
+## every live co-op round from MultiplayerMiniGameBase, with the older debug co-op
+## scenes under scripts/multiplayer/ descending from MultiplayerMiniGameEffects.
+func _is_gameplay_button(button: BaseButton) -> bool:
+	var n: Node = button
+	while n != null:
+		if n is MiniGameBase or n is MultiplayerMiniGameBase 				or n is MultiplayerMiniGameEffects:
+			return true
+		n = n.get_parent()
+	return false
+
+
 func _hook_button(button: BaseButton) -> void:
 	if not is_instance_valid(button):
 		return
@@ -59,6 +82,18 @@ func _hook_button(button: BaseButton) -> void:
 	_button_base_scales[button] = button.scale
 	_button_hovered[button] = false
 	button.pivot_offset = button.size * 0.5
+	if not _is_gameplay_button(button):
+		# A paused tree delivers NO gui input to a PROCESS_MODE_INHERIT Button - not a
+		# swallowed release, zero presses (measured: 0 while paused, 1 unpaused, same
+		# synthetic click). So every menu Back button in the project was dead for as
+		# long as a pause outlived the round that took it, and the player had no way
+		# out of the screen. Pause exists to freeze GAMEPLAY; a menu is not gameplay,
+		# so navigation stays live and the way out is always available.
+		#
+		# Its ButtonAnimator tween follows this process mode (a Tween defaults to
+		# TWEEN_PAUSE_BOUND), so the press animation no longer freezes mid-scale and
+		# leave the button stuck 22% enlarged either.
+		button.process_mode = Node.PROCESS_MODE_ALWAYS
 
 	button.resized.connect(_on_resized.bind(button))
 	button.mouse_entered.connect(_on_hover.bind(button, true))

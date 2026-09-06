@@ -155,7 +155,7 @@ func _on_drop_hit_bucket(area: Area2D, drop: Area2D) -> void:
 	visual.modulate = Color(0.3, 0.6, 1.0, 0.3 + level * 0.2)
 	
 	water_collected += 1
-	add_score(POINTS_PER_DROP)
+	add_score(POINTS_PER_DROP, true, area)
 	
 	drop.queue_free()
 	
