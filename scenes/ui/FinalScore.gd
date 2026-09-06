@@ -7,10 +7,10 @@ extends Control
 # feeds AdaptiveDifficulty (Phi=WMA-CP) and G-Counter CRDT.
 # =====================================================================
 
-@onready var total_score_label = $CenterContainer/VBoxContainer/TotalScoreLabel
-@onready var high_score_label = $CenterContainer/VBoxContainer/HighScoreLabel
-@onready var new_record_label = $CenterContainer/VBoxContainer/NewRecordLabel
-@onready var continue_btn = $CenterContainer/VBoxContainer/ContinueButton
+@onready var total_score_label = $CenterContainer/ScrollContainer/VBoxContainer/TotalScoreLabel
+@onready var high_score_label = $CenterContainer/ScrollContainer/VBoxContainer/HighScoreLabel
+@onready var new_record_label = $CenterContainer/ScrollContainer/VBoxContainer/NewRecordLabel
+@onready var continue_btn = $CenterContainer/ScrollContainer/VBoxContainer/ContinueButton
 
 var _droplet: Node2D = null
 var _play_again_btn: Button = null
@@ -101,7 +101,7 @@ func _apply_game_over_look() -> void:
 	if bg:
 		bg.color = Color(0.11, 0.03, 0.06)  # Deep drying-blood red-dark
 
-	var vbox = $CenterContainer/VBoxContainer
+	var vbox = $CenterContainer/ScrollContainer/VBoxContainer
 	var title = Label.new()
 	title.text = _loc("game_over", "GAME OVER!")
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -131,7 +131,7 @@ func _apply_game_over_look() -> void:
 
 ## Immediate retry: restarts the single-player session in place.
 func _add_try_again_button() -> void:
-	var vbox: VBoxContainer = $CenterContainer/VBoxContainer
+	var vbox: VBoxContainer = $CenterContainer/ScrollContainer/VBoxContainer
 	_play_again_btn = Button.new()
 	_play_again_btn.text = _loc("finalscore_try_again", "TRY AGAIN")
 	var style := StyleBoxFlat.new()
@@ -194,7 +194,7 @@ func _init_labels(_total: int, high: int) -> void:
 # ── Entrance animation ─────────────────────────────────────────────
 
 func _animate_entrance(total: int, _is_record: bool) -> void:
-	var vbox = $CenterContainer/VBoxContainer
+	var vbox = $CenterContainer/ScrollContainer/VBoxContainer
 	vbox.modulate.a = 0.0
 	vbox.position.y += 60
 
@@ -403,7 +403,7 @@ func _build_mascot(total: int, _rounds: Array, force_sad: bool = false) -> void:
 func _build_round_breakdown(rounds: Array) -> void:
 	if rounds.is_empty():
 		return
-	var vbox = $CenterContainer/VBoxContainer
+	var vbox = $CenterContainer/ScrollContainer/VBoxContainer
 
 	# Rank + summary
 	var total = GameManager.session_score if GameManager else 0
@@ -480,7 +480,7 @@ func _build_score_leaderboard() -> void:
 	var scores = _get_sp_top_scores(10)
 	if scores.is_empty():
 		return
-	var vbox = $CenterContainer/VBoxContainer
+	var vbox = $CenterContainer/ScrollContainer/VBoxContainer
 	var spacer = Control.new()
 	spacer.custom_minimum_size = Vector2(0, 12)
 	vbox.add_child(spacer)
@@ -558,7 +558,7 @@ func _get_sp_top_scores(limit: int) -> Array:
 
 
 func _add_mp_play_again_button() -> void:
-	var vbox = $CenterContainer/VBoxContainer
+	var vbox = $CenterContainer/ScrollContainer/VBoxContainer
 
 	# Build the button
 	_play_again_btn = Button.new()

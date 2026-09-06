@@ -717,7 +717,23 @@ func _grid_for_tab(tab: String) -> GridContainer:
 		return cached
 	var grid := GridContainer.new()
 	grid.name = "Grid_%s" % tab
-	grid.columns = 4
+	# Derive column count from actual panel width so the grid fills it
+	# evenly on any resolution instead of bunching to one side.
+	# Card min width = 160px, h_separation = 20px, margins = 30px each side.
+	var available_w: float = 0.0
+	if main_panel and main_panel.size.x > 0:
+		available_w = main_panel.size.x - 60.0
+	else:
+		var vp := get_viewport_rect().size
+		var safe: Dictionary = {}
+		if MobileUIManager and MobileUIManager.has_method("get_safe_area_margins"):
+			var m = MobileUIManager.get_safe_area_margins()
+			if m is Dictionary:
+				safe = m
+		available_w = vp.x - 160.0 - float(safe.get("left", 0.0)) - float(safe.get("right", 0.0)) - 60.0
+	const CARD_MIN_W: float = 160.0
+	const H_SEP: float = 20.0
+	grid.columns = maxi(1, int((available_w + H_SEP) / (CARD_MIN_W + H_SEP)))
 	grid.add_theme_constant_override("h_separation", 20)
 	grid.add_theme_constant_override("v_separation", 20)
 	grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
