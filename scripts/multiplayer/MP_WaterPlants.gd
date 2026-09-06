@@ -217,7 +217,7 @@ func _try_water_plant(plant: Area2D) -> void:
 	# local_score to NetworkManager on the spot, so awarding afterwards reported a
 	# score short by exactly this plant — measured as 7 against a true 8 by
 	# tools/VerifyMPWashWater.tscn.
-	add_score(POINTS_PER_PLANT)
+	add_score(POINTS_PER_PLANT, true, plant)
 	
 	# Check for win condition
 	if plants_watered >= QUOTA_P2:
@@ -280,7 +280,7 @@ func _check_wilted_plants() -> void:
 			if preventable and plants_wilted >= MAX_WILTED:
 				_log("💔 Too many wilted plants - lose 1 life!")
 				plants_wilted = 0
-				report_miss_to_host()
+				report_miss_to_host(plant)
 
 ## Returns a plant to the dry, waterable state and restarts its wilt clock.
 ## Shared by the watered path and the wilted path so neither can strand a plant.

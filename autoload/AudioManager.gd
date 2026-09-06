@@ -201,8 +201,19 @@ func _exit_tree() -> void:
 	## ObjectDB, so shutdown stays clean and real leaks are not masked by ours.
 	## Note: under `--headless` the Dummy audio driver still reports 2 leaked
 	## instances (AudioStreamWAV + AudioStreamPlaybackWAV) regardless of this
-	## cleanup — verified engine-side, since a windowed run of the same build
-	## reports 0. Do not chase that pair; check leak counts windowed.
+	## cleanup. Re-measured on Godot 4.7.2, isolated to BOOT rather than to
+	## gameplay: `--headless --quit` (main scene, no round played) already reports
+	## exactly that pair, and the same `--quit` windowed reports 0. Do not chase it;
+	## subtract 2 from any headless leak count before reading it.
+	##
+	## What that subtraction leaves is NOT always zero. A 10s AutoPlayHarness soak
+	## reports 3 headless and 1 windowed, and the odd one out is a bare
+	## `RefCounted` at reference count 0 - one per minigame round (45s / 3 rounds
+	## reports 5 headless = 2 + 3). It is not this file: driving a minigame directly
+	## through VerifyAutoPlayProgress, which instantiates and frees the game with no
+	## cutscene bridge, score page or scene change, leaks 0 windowed. Unattributed
+	## beyond that, and tiny, but it scales with rounds, so it is a real open item
+	## and not the audio pair.
 	if is_instance_valid(music_player):
 		music_player.stop()
 		music_player.stream = null

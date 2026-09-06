@@ -26,8 +26,32 @@ signal log_exported(file_path: String)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 var session_id: String = ""
-var session_start_unix: float = 0.0
-var session_start_iso: String = ""
+## Started at instantiation, NOT in _ready(). Autoloads run _ready() in declaration
+## order and NetworkManager (declared above SessionLogger) calls log_entry() from its
+## own _ready(), so with the clock started in _ready() that first entry's elapsed_sec
+## was Time.get_unix_time_from_system() - 0.0, i.e. a raw epoch (1788442502.25 in the
+## Android log that exposed this) in a field every other row measures in seconds since
+## launch. Property initialisers run when the autoload is instantiated, which is before
+## any other autoload's _ready() can reach this node.
+var session_start_unix: float = Time.get_unix_time_from_system()
+var session_start_iso: String = Time.get_datetime_string_from_system()
+
+## The ONE file this session writes. One app-open to app-close is one session and must
+## leave one artifact: GameManager finalizes on EVERY return to the menu and each
+## finalize exports, so a timestamped name per export wrote a new cumulative superset
+## each time - one Android session produced four files at 282s/483s/821s/1129s, each a
+## superset of the last. The path is chosen once and rewritten in place, which keeps the
+## crash-safety the repeated export exists for (an app killed by Home still leaves the
+## latest state on disk) without multiplying the artifact.
+var _session_file_path: String = ""
+
+## True once auto-play has driven ANY part of this session. run_context is written at
+## export time from a live read, so a session that switched auto-play on partway through
+## exported auto_play=false for its early files and true for its last one - the same
+## session_id classified both HUMAN and synthetic, which is exactly the partition
+## DefenceVerdict decides evidence on. Sticky, and in the conservative direction: a
+## session a bot played any part of is not a human-played artifact.
+var _auto_play_ever: bool = false
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # GAMEPLAY RECORDS
@@ -45,6 +69,12 @@ var mp_rounds: Array = []
 
 ## Each entry: {scene, elapsed_sec, timestamp}
 var scenes_visited: Array = []
+
+## Last scene key seen by _track_current_scene(); "" until the first scene loads.
+var _last_scene_key: String = ""
+
+## Times this session's file has been rewritten (see _session_file_path).
+var _export_count: int = 0
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # ALGORITHM RECORDS
@@ -73,6 +103,22 @@ var perf_warnings: Array = []
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # RUNNING AGGREGATES (updated by snapshot)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+## Share of frames that must meet the 30FPS floor for fps.passed to be true.
+## The floor itself already carries a 10% tolerance in the frame time it is measured
+## against (PerformanceProfiler.FRAME_BUDGET_MS = 36.67ms), so this is a tolerance on
+## HOW OFTEN the floor may be missed, not on the floor. 95% because a scene transition
+## legitimately costs a handful of frames and a session loads dozens of scenes; the raw
+## percentage is published beside the verdict so a reader can apply a stricter bar.
+const FPS_SUSTAINED_MIN_PCT: float = 95.0
+
+## Below this many measured frames the sustained rate is not evidence and fps.passed
+## publishes null instead of a verdict, exactly as thermal does without a sensor.
+## 300 is ten seconds at the 30FPS floor. It only ever fires on a harness run or an
+## instant-quit launch - a real session is minutes long - and those are precisely the
+## runs that must not be able to claim a pass: a 9-frame headless export was reporting
+## 100% sustained and passed=true at an actual 3FPS.
+const FPS_MIN_FRAMES_FOR_VERDICT: int = 300
 
 var fps_min_session: float = 9999.0
 var fps_max_session: float = 0.0
@@ -135,10 +181,8 @@ func snapf(value: float, decimals: int) -> float:
 func _ready() -> void:
 	get_tree().set_auto_accept_quit(false)
 
-	session_start_unix = Time.get_unix_time_from_system()
-	session_start_iso = Time.get_datetime_string_from_system()
 	session_id = "WW_%s_%04d" % [
-		Time.get_datetime_string_from_system()
+		session_start_iso
 			.replace(":", "").replace("-", "").replace(" ", "_"),
 		randi() % 9999
 	]
@@ -170,10 +214,40 @@ func _connect_signals() -> void:
 			PerformanceProfiler.performance_warning.connect(_on_perf_warning)
 
 func _process(delta: float) -> void:
+	# Latch auto-play the moment it is seen, not at export time. See _auto_play_ever.
+	if not _auto_play_ever and _auto_play_live():
+		_auto_play_ever = true
+
+	_track_current_scene()
+
 	_snapshot_timer += delta
 	if _snapshot_timer >= SNAPSHOT_INTERVAL:
 		_snapshot_timer = 0.0
 		_take_perf_snapshot()
+
+
+## Records a scene visit whenever the tree's current scene changes.
+##
+## record_scene_visit() below is the API for this and NOTHING in the shipped game called
+## it - only tools/VerifyGameLab.gd did - so scenes_visited was [] and
+## scenes_visited_count 0 in every exported log, including one with 50 recorded rounds.
+## Polling the tree is what makes it complete: GameManager.transition_to_scene() is not
+## the only route between scenes (62 direct change_scene_to_file() calls exist across
+## autoload/, scenes/ and scripts/), so instrumenting that one function would have
+## under-reported instead of not reporting.
+func _track_current_scene() -> void:
+	var tree := get_tree()
+	if tree == null:
+		return
+	var cur := tree.current_scene
+	if cur == null:
+		return
+	var path := String(cur.scene_file_path)
+	var key := path if path != "" else String(cur.name)
+	if key == _last_scene_key:
+		return
+	_last_scene_key = key
+	record_scene_visit(key.get_file().get_basename() if path != "" else key)
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_CLOSE_REQUEST:
@@ -217,13 +291,24 @@ func _reaction_time_source() -> String:
 ## True when AutoPlayManager is driving the rounds, i.e. the samples are a bot's,
 ## not a player's. Read live rather than latched so a session that enables auto-play
 ## partway through is still marked.
-func _auto_play_active() -> bool:
+func _auto_play_live() -> bool:
 	var apm := get_node_or_null("/root/AutoPlayManager")
 	if apm == null:
 		return false
 	if apm.has_method("is_auto_play_enabled"):
 		return bool(apm.call("is_auto_play_enabled"))
 	return false
+
+
+## Sticky: true if auto-play was live at any point in this session. _process() latches
+## it, and this also samples live so a caller reached before the first frame still sees
+## an already-running bot.
+func _auto_play_active() -> bool:
+	if _auto_play_ever:
+		return true
+	if _auto_play_live():
+		_auto_play_ever = true
+	return true if _auto_play_ever else false
 
 
 func record_sp_game(
@@ -444,6 +529,7 @@ func get_current_summary() -> Dictionary:
 		"sp_total_score": sp_total_score,
 		"mp_total_score": mp_total_score,
 		"total_droplets": _get_session_droplets_earned(),
+		"scenes_visited": scenes_visited.size(),
 		# SP Algorithm
 		"sp_difficulty": AdaptiveDifficulty.get_current_difficulty() if AdaptiveDifficulty else "N/A",
 		"phi": _get_current_phi(),
@@ -472,6 +558,9 @@ func get_current_summary() -> Dictionary:
 		"algo_latency_max_ms": snapf(lat_max, 3),
 		"battery_mah_per_min": snapf(batt, 3),
 		"battery_source": PerformanceProfiler.battery_source if PerformanceProfiler else "N/A",
+		# Whether cpu_temp_* above came from a real sensor. A reader (and the Dev Stats
+		# ISO list) cannot tell 0.0 "cool" from 0.0 "no sensor on this device" without it.
+		"thermal_source": _thermal_source_str(),
 		"efficiency_vs_dl_pct": _calc_efficiency_pct(),
 		"fps_std_dev": _get_fps_std_dev(),
 		"iso_pass": _check_iso_pass(),
@@ -506,6 +595,14 @@ func get_throttle_events() -> Array:
 ## Plus a trailing "totals" entry.
 func get_mp_leaderboard() -> Array:
 	var rows: Array = []
+	# No rounds, no leaderboard. The totals sentinel used to be appended
+	# unconditionally, so a session that never played multiplayer exported
+	# mp_rounds_played: 0, mp_round_records: [] and a one-row mp_leaderboard holding
+	# round_num: -1 with team_success: true - a zero-round session claiming a team
+	# success. MultiplayerLobby already special-cases "size()==1 and round_num==-1" to
+	# show its empty state, so returning [] is what that caller means by empty.
+	if mp_rounds.is_empty():
+		return rows
 	for r in mp_rounds:
 		rows.append({
 			"round_num": r.get("round_num", 0),
@@ -534,9 +631,12 @@ func get_mp_leaderboard() -> Array:
 ## rounds of either kind carries no measurement, and GameManager finalizes on EVERY
 ## return to the menu, so those exports filled session_logs/ with content-free files -
 ## 31 of 97 at the time this guard was added. Callers that deliberately want the
-## artifact regardless (the DevStats export button, harnesses that assert on the file)
-## pass force=true. Nothing is hidden: the skip is printed, and an empty log never
-## carried anything a reader could use.
+## artifact regardless (harnesses that assert on the file) pass force=true. Nothing is
+## hidden: the skip is printed, and an empty log never carried anything a reader could
+## use.
+##
+## Every call in one session rewrites ONE file (see _session_file_path), so calling this
+## repeatedly cannot multiply the artifact.
 func export_session(force: bool = false) -> String:
 	if not force and sp_games.is_empty() and mp_rounds.is_empty():
 		print("\U0001F4CA SessionLogger: no rounds recorded - export skipped (pass force=true to write anyway)")
@@ -553,6 +653,18 @@ func export_session(force: bool = false) -> String:
 
 	var device_info: Dictionary = {
 		"platform": OS.get_name(),
+		# The OS version was absent from every exported session, and it is the one field
+		# that settles a platform question outright. Android's storage rules change at
+		# API 29, 30 and 33, so a log saying only "moto e5 plus / Android" could not
+		# distinguish a missing runtime permission from a scoped-storage block - the
+		# reader had to guess which of three causes made an export fail.
+		# Three fields because the content is platform-defined and no single one of them
+		# is guaranteed to carry the API level: get_version() is the raw string,
+		# get_version_alias() the human form, get_distribution_name() the OS family.
+		# Desktop control values: "10.0.19045" / "10 (build 19045)" / "Windows".
+		"os_version": OS.get_version(),
+		"os_version_alias": OS.get_version_alias(),
+		"os_distribution": OS.get_distribution_name(),
 		"model": OS.get_model_name(),
 		"processor_count": OS.get_processor_count(),
 		"processor_name": OS.get_processor_name(),
@@ -569,22 +681,119 @@ func export_session(force: bool = false) -> String:
 	var batt := _get_battery_drain()
 	var throttles := _get_throttle_count()
 	var efficiency := _calc_efficiency_pct()
-	var iso_pass := _check_iso_pass()
+
+	# Each criterion first, then the verdict FROM them. This used to publish
+	# PerformanceProfiler._check_iso_compliance(), which judges the last 60 frames
+	# (PerformanceProfiler.fps_avg is a rolling window), while "fps" below reports the
+	# whole session (the mean of every 5-second snapshot). On the Android device that
+	# exposed this the file said fps.passed=false, average_observed=29.5 AND
+	# iso_25010_compliant=true in the same block. A compliance claim must be derivable
+	# from the numbers printed next to it.
+	# "minimum_required: 30" is a SUSTAINED-rate requirement and it used to be tested as
+	# `mean of the FPS series >= 30.0`. That comparison is unsatisfiable on BOTH target
+	# platforms, because on both of them 30 is the CEILING and not the floor:
+	#   Android - MobileUIManager._apply_mobile_performance_profile() sets
+	#             Engine.max_fps = mobile_target_fps (30) as a battery policy, so
+	#             Engine.get_frames_per_second() cannot report more than 30.
+	#   Laptop  - vsync on a 60Hz panel halves to a steady 33.33ms cadence.
+	# A mean can only equal its own ceiling if EVERY sample sits exactly on it, so one
+	# scene-load hitch anywhere in a session failed the whole session and dragged
+	# iso_25010_compliant down with it. Measured on session_2026-05-05T20-32-37.json:
+	# 7510 frames with 44 over the 36.67ms budget (99.41% sustained), all 51 sampled
+	# frame times between 33.33ms and 33.38ms, and the file still said passed=false
+	# because the mean of a series bounded by 30.0 came out at 29.6.
+	# So the criterion is now the sustained rate itself, read from the per-frame
+	# counters PerformanceProfiler already keeps (dropped_frames counts frames slower
+	# than FRAME_BUDGET_MS, excluding STARTUP_WARMUP_SEC). That is per-frame over the
+	# whole session rather than one instant every 5 seconds, and it cannot be rescued
+	# by high peaks the way a mean can. The old mean test is still published beside it
+	# as mean_at_or_above_floor, so this change is auditable from the file alone.
+	# Numerator and denominator come from the same population: both are gated on
+	# STARTUP_WARMUP_SEC. Dividing by total_frames instead mixed populations, because
+	# total_frames counts startup frames that dropped_frames is not allowed to count.
+	var frames_measured := _get_frames_after_warmup()
+	var frames_over := _get_dropped_frames()
+	var sustained_pct := (
+		snapf(100.0 * (1.0 - float(frames_over) / float(frames_measured)), 2)
+		if frames_measured > 0 else 0.0
+	)
+	var fps_mean_pass := fps_avg >= 30.0
+	# Too few frames is not a fail and not a pass. Same rule as thermal below: a
+	# criterion with no measurement behind it publishes null.
+	var fps_evaluated := frames_measured >= FPS_MIN_FRAMES_FOR_VERDICT
+	var fps_pass = (sustained_pct >= FPS_SUSTAINED_MIN_PCT) if fps_evaluated else null
+	var mem_pass := memory_peak_mb <= 200.0
+	var lat_pass := algo_lat_max <= 16.0
+	var thermal_measured := _thermal_source_str() == "sensor"
+	var thermal_pass = (
+		(cpu_temp_peak_c <= 45.0 and throttles == 0) if thermal_measured else null
+	)
+	# Unmeasured thermal does not fail the session and does not pass it either: the
+	# three measured criteria decide, exactly as PerformanceProfiler._check_iso_compliance
+	# does when it has no sensor.
+	# Explicitly typed: thermal_pass is Variant (bool or null), so the compiler cannot
+	# infer the type of an expression that reads it.
+	var iso_pass: bool = (
+		(fps_pass != false) and mem_pass and lat_pass and (thermal_pass != false)
+	)
 
 	var perf_summary: Dictionary = {
 		"iso_25010_compliant": iso_pass,
+		# Which criteria the verdict above was computed from, and which could not be
+		# measured on this device.
+		"iso_criteria": {
+			"fps_passed": fps_pass,
+			"fps_evaluated": fps_evaluated,
+			"memory_passed": mem_pass,
+			"algorithm_latency_passed": lat_pass,
+			"thermal_passed": thermal_pass,
+			"thermal_evaluated": thermal_measured
+		},
 		"fps": {
 			"target": 60,
 			"minimum_required": 30,
-			"minimum_observed": snapf(fps_min_session if fps_min_session < 9999.0 else 0.0, 1),
-			"maximum_observed": snapf(fps_max_session, 1),
+			# The ceiling average_observed is bounded by. Without it a reader cannot
+			# tell 29.6 "the device is struggling" from 29.6 "the device is pinned
+			# at 30". 0 means uncapped (desktop); on mobile it is mobile_target_fps.
+			"engine_max_fps": Engine.max_fps,
+			# All three of these now describe ONE series - the 5-second samples of
+			# PerformanceProfiler.fps_avg that average_observed is the mean of - so
+			# minimum <= average <= maximum holds by construction. They used to mix
+			# two series: the average came from the rolling means while min/max came
+			# from instantaneous fps_current, sampled once per snapshot. Real
+			# exported evidence therefore contradicted itself -
+			# session_2026-09-03T20-10-53.json published min=1.0, max=1.0 and
+			# average=5.7 in the same block. The instantaneous extremes are kept
+			# below under their own names.
+			"minimum_observed": _calc_fps_min(),
+			"maximum_observed": _calc_fps_max(),
 			"average_observed": fps_avg,
-			"passed": fps_avg >= 30.0
+			# The unsmoothed extremes, at the 5-second snapshot instants only.
+			# Narrower evidence than the series above (one frame in ~150), which is
+			# exactly why they are no longer what minimum/maximum_observed report.
+			"instantaneous_minimum": snapf(
+				fps_min_session if fps_min_session < 9999.0 else 0.0, 1),
+			"instantaneous_maximum": snapf(fps_max_session, 1),
+			# Per-frame, whole session, startup excluded - the basis of passed below.
+			"frames_measured": frames_measured,
+			"frames_over_budget": frames_over,
+			"budget_ms": PerformanceProfiler.FRAME_BUDGET_MS,
+			"sustained_at_floor_pct": sustained_pct,
+			"sustained_required_pct": FPS_SUSTAINED_MIN_PCT,
+			# Startup frames are counted here but are not eligible to be over budget, so
+			# this is deliberately NOT the denominator of the rate above. Published so the
+			# two counts can be compared and the excluded warmup is visible.
+			"frames_total_including_warmup": _get_total_frames(),
+			"minimum_frames_for_verdict": FPS_MIN_FRAMES_FOR_VERDICT,
+			"evaluated": fps_evaluated,
+			"mean_at_or_above_floor": fps_mean_pass,
+			# null when evaluated is false: too short a run to make the claim.
+			"passed": fps_pass
 		},
 		"memory": {
 			"budget_mb": 200.0,
 			"peak_mb": snapf(memory_peak_mb, 2),
-			"passed": memory_peak_mb <= 200.0
+			"passed": mem_pass
 		},
 		"thermal": {
 			"threshold_c": 45.0,
@@ -599,12 +808,8 @@ func export_session(force: bool = false) -> String:
 			# PerformanceProfiler's thermal block and _check_iso_compliance, which
 			# both already refuse to judge thermal without sensor data.
 			"thermal_source": _thermal_source_str(),
-			"temperature_evaluated": _thermal_source_str() == "sensor",
-			"passed": (
-				(cpu_temp_peak_c <= 45.0 and throttles == 0)
-				if _thermal_source_str() == "sensor"
-				else null
-			),
+			"temperature_evaluated": thermal_measured,
+			"passed": thermal_pass,
 			# S_clk is a behavioural proxy (FPS/target) and IS measured everywhere,
 			# so the stability half of the criterion is still reported as a bool.
 			"s_clk_stable": throttles == 0
@@ -613,12 +818,30 @@ func export_session(force: bool = false) -> String:
 			"budget_ms": 16.0,
 			"avg_ms": algo_lat_avg,
 			"max_ms": algo_lat_max,
-			"passed": algo_lat_max <= 16.0
+			"passed": lat_pass
 		},
 		"dropped_frames": {
 			"count": _get_dropped_frames(),
 			"total_frames": _get_total_frames(),
 			"drop_rate_pct": drop_rate
+		},
+		# What the ISO overlay cost the frame budget it was measuring. It rebuilt a
+		# 15-line emoji Label once per frame before this, which is why enabling the
+		# profiler on the Moto E5 Plus made the numbers it reported worse. refresh_hz
+		# near 4 means the throttle held; near the frame rate means it did not.
+		"overlay_cost": {
+			"refresh_count": (
+				PerformanceProfiler.overlay_refresh_count if PerformanceProfiler else 0
+			),
+			"refresh_hz": (
+				(float(PerformanceProfiler.overlay_refresh_count)
+					/ PerformanceProfiler.session_elapsed_sec)
+				if PerformanceProfiler and PerformanceProfiler.session_elapsed_sec > 0.0
+				else 0.0
+			),
+			"was_visible": (
+				PerformanceProfiler.overlay_visible if PerformanceProfiler else false
+			)
 		},
 		"battery_efficiency": {
 			"measured_mah_per_min": batt,
@@ -701,7 +924,14 @@ func export_session(force: bool = false) -> String:
 	# ── Full report ───────────────────────────────────────────────────
 	var report: Dictionary = {
 		"waterwise_session_log": true,
-		"schema_version": "2.0",
+		# 2.1 added device.os_version / os_version_alias / os_distribution.
+		# 2.2 reworks performance.fps: engine_max_fps, the sustained-rate fields, and
+		# minimum/maximum_observed now taken from the same series as average_observed
+		# (see the block itself). That part is NOT purely additive - those two keys
+		# changed which series they describe - so a reader comparing files across the
+		# boundary needs the version to know it. No code branches on this string; it is
+		# provenance for a human.
+		"schema_version": "2.2",
 		# Which kind of run produced this file. user:// mixes real play with headless
 		# harness and soak output, and the two are not interchangeable as evidence:
 		# a harness round has no minigame in the tree, so its reaction_time_source is
@@ -712,6 +942,10 @@ func export_session(force: bool = false) -> String:
 			"auto_play": _auto_play_active(),
 			"synthetic": DisplayServer.get_name() == "headless" or _auto_play_active()
 		},
+		# How many times this session's single file has been rewritten. A session
+		# finalizes on every return to the menu, so >1 is normal and does not mean
+		# more than one session is in here.
+		"export_count": _export_count + 1,
 		"session_id": session_id,
 		"session_start": session_start_iso,
 		"session_end": Time.get_datetime_string_from_system(),
@@ -734,16 +968,20 @@ func export_session(force: bool = false) -> String:
 	if user_dir:
 		user_dir.make_dir_recursive("session_logs")
 
-	var dt := Time.get_datetime_string_from_system() \
-		.replace(":", "-").replace(" ", "_")
-	var filename := "user://session_logs/session_%s.json" % dt
+	# The SAME path every time this session exports - chosen once, from the session
+	# start, not from the clock at export time. See _session_file_path.
+	if _session_file_path == "":
+		_session_file_path = "user://session_logs/session_%s.json" % session_start_iso \
+			.replace(":", "-").replace(" ", "_")
+	var filename := _session_file_path
 	var file := FileAccess.open(filename, FileAccess.WRITE)
 
 	if file:
 		file.store_string(JSON.stringify(report, "\t"))
 		file.close()
+		_export_count += 1
 		_last_exported_path = ProjectSettings.globalize_path(filename)
-		print("📊 SessionLogger export: %s" % _last_exported_path)
+		print("📊 SessionLogger export (#%d): %s" % [_export_count, _last_exported_path])
 		log_exported.emit(_last_exported_path)
 		return _last_exported_path
 
@@ -806,6 +1044,25 @@ func _calc_fps_avg() -> float:
 		total += float(s.get("fps_avg", 0.0))
 	return snapf(total / float(perf_snapshots.size()), 1)
 
+## Over the same series _calc_fps_avg() averages, so the published minimum, average
+## and maximum cannot disagree. Falls back to the live rolling average when no
+## snapshot has been taken yet, exactly as _calc_fps_avg() does.
+func _calc_fps_min() -> float:
+	if perf_snapshots.is_empty():
+		return snapf(PerformanceProfiler.fps_avg if PerformanceProfiler else 0.0, 1)
+	var lo := INF
+	for s in perf_snapshots:
+		lo = minf(lo, float(s.get("fps_avg", 0.0)))
+	return snapf(lo, 1)
+
+func _calc_fps_max() -> float:
+	if perf_snapshots.is_empty():
+		return snapf(PerformanceProfiler.fps_avg if PerformanceProfiler else 0.0, 1)
+	var hi := -INF
+	for s in perf_snapshots:
+		hi = maxf(hi, float(s.get("fps_avg", 0.0)))
+	return snapf(hi, 1)
+
 func _calc_drop_rate() -> float:
 	if PerformanceProfiler and PerformanceProfiler.total_frames > 0:
 		return snapf(
@@ -819,6 +1076,11 @@ func _get_throttle_count() -> int:
 
 func _get_dropped_frames() -> int:
 	return PerformanceProfiler.dropped_frames if PerformanceProfiler else 0
+
+## Frames counted under the same warmup gate as dropped_frames, so the two form a
+## ratio over one population. See PerformanceProfiler.frames_after_warmup.
+func _get_frames_after_warmup() -> int:
+	return PerformanceProfiler.frames_after_warmup if PerformanceProfiler else 0
 
 func _get_total_frames() -> int:
 	return PerformanceProfiler.total_frames if PerformanceProfiler else 0

@@ -117,6 +117,23 @@ const HERO_BOUNCE_AMPLITUDE := 8.0
 const MOBILE_HERO_SCALE_MULTIPLIER := 0.82
 const MOBILE_HERO_BOUNCE_MULTIPLIER := 0.72
 
+## How far above the bottom edge the NEXT UNLOCK card has to sit to clear the wave
+## strip, as a fraction of viewport height plus a floor in canvas units.
+##
+## The wave art crests at y = 1017 on a 1080-tall canvas (measured off a capture of
+## this screen), and the card used to be pinned 16 units off the bottom edge - inside
+## the water, with the small "N to go" line reading against moving blue.
+const WAVE_STRIP_CLEARANCE_RATIO := 0.09
+const WAVE_STRIP_CLEARANCE_MIN := 72.0
+
+## Single-player rounds a player finishes before co-op opens up.
+##
+## The main-menu button had no locked state at all: it carried PLAY's gold styling on
+## a fresh save, while the roadmap next to it draws every not-yet-reached stage grey
+## with a padlock. One finished round is the gate, so the button unlocks on the first
+## return to this screen.
+const MULTIPLAYER_UNLOCK_GAMES: int = 1
+
 
 func _ready() -> void:
 	_ensure_fullscreen_backdrop()
@@ -163,6 +180,8 @@ func _ready() -> void:
 	_connect_button_if_needed(roadmap_button, "_on_roadmap_button_pressed")
 	_connect_button_if_needed(settings_button, "_on_settings_button_pressed")
 	_connect_button_if_needed(close_button, "_on_close_popup_pressed")
+
+	_apply_multiplayer_lock_state()
 
 	if TouchInputManager and TouchInputManager.has_method("enable_haptics_for_scene"):
 		TouchInputManager.enable_haptics_for_scene(self)
@@ -308,6 +327,9 @@ func _apply_responsive_layout() -> void:
 		return
 
 	_layout_characters_for_viewport(vp_size)
+	# Runs on desktop too: the card's own height and its clearance from the wave are
+	# not mobile concerns, and everything below this point is.
+	_layout_next_unlock_panel()
 
 	if not _is_mobile_layout():
 		return
@@ -372,13 +394,42 @@ func _apply_responsive_layout() -> void:
 		highscore_panel.offset_top = max(safe_top + 86.0, 140.0)
 		highscore_panel.offset_bottom = highscore_panel.offset_top + 50.0
 
-	if next_unlock_panel:
-		next_unlock_panel.offset_left = safe_left + 14.0
-		next_unlock_panel.offset_right = (
-			next_unlock_panel.offset_left + (220.0 if portrait else 250.0)
-		)
-		next_unlock_panel.offset_bottom = -safe_bottom - 16.0
-		next_unlock_panel.offset_top = next_unlock_panel.offset_bottom - 118.0
+
+## Bottom-left NEXT UNLOCK card: kept clear of the wave strip, and tall enough for
+## the text it actually holds.
+##
+## Two separate clips met at this card. It was pinned 16 units off the bottom edge,
+## which is inside the wave art. Its height was also a flat 118 while the label
+## renders "<item>\n💧 N to go" - two lines - and a PanelContainer whose rect is
+## shorter than its content lets the inner VBox overflow past the panel background
+## rather than shrinking, so the last line was drawn outside the card.
+func _layout_next_unlock_panel() -> void:
+	if not next_unlock_panel:
+		return
+
+	var vp_size = get_viewport_rect().size
+	if vp_size == Vector2.ZERO:
+		return
+
+	var margins = _get_safe_margins()
+	var safe_left = float(margins.get("left", 0.0))
+	var safe_bottom = float(margins.get("bottom", 0.0))
+	var portrait = _is_portrait_viewport(vp_size)
+
+	next_unlock_panel.offset_left = safe_left + 14.0
+	next_unlock_panel.offset_right = (
+		next_unlock_panel.offset_left + (220.0 if portrait else 250.0)
+	)
+
+	var clearance = maxf(
+		WAVE_STRIP_CLEARANCE_MIN, vp_size.y * WAVE_STRIP_CLEARANCE_RATIO
+	)
+	next_unlock_panel.offset_bottom = -(safe_bottom + clearance)
+	# Content-driven so the two-line label always fits inside the panel background.
+	var content_height = next_unlock_panel.get_combined_minimum_size().y
+	next_unlock_panel.offset_top = (
+		next_unlock_panel.offset_bottom - maxf(118.0, content_height + 12.0)
+	)
 
 
 func _on_viewport_resized() -> void:
@@ -1077,11 +1128,17 @@ func _attach_crowd_personality(
 			skirt.color = color.lightened(0.35)
 			skirt.z_index = 1
 			root.add_child(skirt)
-			# Music note above head
+			# Music note, tucked against the top-right of the teardrop so it reads as
+			# a badge on this character. At -56 it floated a clear 16 units clear of
+			# the body apex, which parked it in the middle of the house window art
+			# behind the crowd with nothing visually joining the two.
 			var note = Label.new()
+			note.name = "DancerNote"
 			note.text = "🎵"
-			note.position = Vector2(14 * body_scale, -56 * body_scale)
+			note.position = Vector2(11 * body_scale, -40 * body_scale)
 			note.add_theme_font_size_override("font_size", 14)
+			note.add_theme_color_override("font_outline_color", Color(1, 1, 1, 0.85))
+			note.add_theme_constant_override("outline_size", 3)
 			root.add_child(note)
 		"jogger":
 			# Headband
@@ -1128,7 +1185,7 @@ func _attach_role_prop(root: Node2D, role: String) -> void:
 			prop.position = Vector2(12, 8)
 			var note = Label.new()
 			note.name = "RoleNote"
-			note.text = "♪"
+			note.text = "🎵"
 			note.position = Vector2(30, -28)
 			note.modulate.a = 0.8
 			note.add_theme_font_size_override("font_size", 20)
@@ -1864,6 +1921,8 @@ func _hide_loading_overlay() -> void:
 
 
 func _on_multiplayer_pressed() -> void:
+	if not _is_multiplayer_unlocked():
+		return
 	if AudioManager:
 		AudioManager.play_click()
 	if GameManager and GameManager.has_method("set_game_mode"):
@@ -1872,6 +1931,76 @@ func _on_multiplayer_pressed() -> void:
 		"res://scenes/ui/MultiplayerLobby.tscn",
 		"res://scenes/ui/MultiplayerMenu.tscn"
 	])
+
+
+func _is_multiplayer_unlocked() -> bool:
+	if not SaveManager or not SaveManager.has_method("get_total_games_played"):
+		return true
+	return int(SaveManager.get_total_games_played()) >= MULTIPLAYER_UNLOCK_GAMES
+
+
+## Dims the MULTIPLAYER button and pads a padlock onto it while co-op is still
+## locked, reusing the roadmap's locked-node greys (RoadmapScreen._create_stage_button
+## draws bg 0.5/0.5/0.55 over border 0.4/0.4/0.45) so one screen's "locked" looks like
+## the other's. The button is disabled in that state as well - a control that reads as
+## locked and still navigates is worse than either.
+##
+## The unlock path restores the styleboxes the .tscn authored rather than removing the
+## overrides: those gold boxes ARE theme overrides on this node, so clearing them drops
+## the button to the default theme's grey slab and it stops matching PLAY.
+const MULTIPLAYER_STYLE_STATES: Array[String] = ["normal", "hover", "pressed", "disabled"]
+
+func _apply_multiplayer_lock_state() -> void:
+	if not multiplayer_button:
+		return
+
+	var base_text := str(multiplayer_button.get_meta("base_text", multiplayer_button.text))
+	multiplayer_button.set_meta("base_text", base_text)
+
+	if not multiplayer_button.has_meta("base_styles"):
+		var stash: Dictionary = {}
+		for state in MULTIPLAYER_STYLE_STATES:
+			stash[state] = (
+				multiplayer_button.get_theme_stylebox(state)
+				if multiplayer_button.has_theme_stylebox_override(state)
+				else null
+			)
+		multiplayer_button.set_meta("base_styles", stash)
+
+	if _is_multiplayer_unlocked():
+		var authored: Dictionary = multiplayer_button.get_meta("base_styles", {})
+		for state in MULTIPLAYER_STYLE_STATES:
+			var box = authored.get(state)
+			if box is StyleBox:
+				multiplayer_button.add_theme_stylebox_override(state, box)
+			else:
+				multiplayer_button.remove_theme_stylebox_override(state)
+		multiplayer_button.remove_theme_color_override("font_disabled_color")
+		multiplayer_button.disabled = false
+		multiplayer_button.modulate = Color.WHITE
+		multiplayer_button.text = base_text
+		multiplayer_button.tooltip_text = ""
+		return
+
+	var locked := StyleBoxFlat.new()
+	locked.bg_color = Color(0.5, 0.5, 0.55)
+	locked.border_color = Color(0.4, 0.4, 0.45)
+	locked.border_width_bottom = 6
+	locked.corner_radius_top_left = 25
+	locked.corner_radius_top_right = 25
+	locked.corner_radius_bottom_left = 25
+	locked.corner_radius_bottom_right = 25
+	for state in MULTIPLAYER_STYLE_STATES:
+		multiplayer_button.add_theme_stylebox_override(state, locked)
+	multiplayer_button.add_theme_color_override(
+		"font_disabled_color", Color(0.88, 0.88, 0.9)
+	)
+	multiplayer_button.modulate = Color(0.82, 0.82, 0.82)
+	multiplayer_button.text = "🔒 %s" % base_text
+	multiplayer_button.tooltip_text = _loc(
+		"multiplayer_locked_hint", "Finish one round to unlock co-op"
+	)
+	multiplayer_button.disabled = true
 
 
 func _on_customize_pressed() -> void:
@@ -2031,6 +2160,7 @@ func _update_next_unlock_panel(current_droplets: int) -> void:
 	if next_item.is_empty():
 		next_unlock_progress.value = 100.0
 		next_unlock_label.text = _loc("all_unlocks_owned", "🏆 All items unlocked!")
+		_layout_next_unlock_panel()
 		return
 
 	var next_cost: int = int(next_item.cost)
@@ -2050,6 +2180,8 @@ func _update_next_unlock_panel(current_droplets: int) -> void:
 	var next_name := "%s %s" % [
 		_loc(str(next_item.key), str(next_item.name)), str(next_item.emoji)]
 	next_unlock_label.text = _loc("unlock_droplets_to_go", "%s\n💧 %d to go") % [next_name, remaining]
+	# The label just changed line count, and the card's height is derived from it.
+	_layout_next_unlock_panel()
 
 
 # ── Helpers ─────────────────────────────────────────────────────────

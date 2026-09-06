@@ -143,9 +143,9 @@ func _update_debug_info() -> void:
 		return
 	
 	var info: String = ""
-	info += "═══════════════════════════════════════\n"
+	info += "=======================================\n"
 	info += "        MULTIPLAYER DEBUG INFO\n"
-	info += "═══════════════════════════════════════\n\n"
+	info += "=======================================\n\n"
 	
 	info += "🌐 NETWORK STATUS:\n"
 	info += "  Role: " + ("HOST (Player 1)" if GameManager.is_host else "CLIENT (Player 2)") + "\n"
@@ -176,9 +176,9 @@ func _update_debug_info() -> void:
 	info += "  Lives: " + hearts + " (" + tl + ")\n"
 	info += "  Game Mode: " + GameManager.GameMode.keys()[GameManager.current_game_mode] + "\n\n"
 	
-	info += "═══════════════════════════════════════\n"
+	info += "=======================================\n"
 	info += "Press F3 to copy debug info to clipboard\n"
-	info += "═══════════════════════════════════════\n"
+	info += "=======================================\n"
 	
 	debug_text.text = info
 

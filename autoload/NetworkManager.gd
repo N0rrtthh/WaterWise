@@ -44,6 +44,14 @@ signal round_completed(p1_score: int, p2_score: int, team_total: int)
 
 const DEFAULT_PORT: int = 7777  # UDP Port 7777 (Paper: P2P UDP Port 7777)
 const MAX_PLAYERS: int = 2
+## Seconds each of the 3-2-1 numbers stays on screen before the next one is broadcast.
+## Was a bare 1.0 here, which with the 1.0 s hold on GO in MultiplayerMiniGameBase put four
+## unconditional seconds between "both players tapped" and a playable round - 24 s across a
+## six-round set, on top of two scene loads and two instruction screens. 0.6 s still shows
+## each number for half a second longer than the 0.4 s scale animation that draws it, so the
+## countdown is quicker to read rather than skipped. Host-paced: only the host chains the
+## next tick, so this value alone sets the cadence both peers see.
+const COUNTDOWN_TICK_SECONDS: float = 0.6
 const RECONNECT_GRACE_PERIOD: float = 30.0  # 30 seconds
 ## How long a LIVE ROUND is held open for a peer that just dropped, before the round is
 ## resolved the way it always was (notice + lobby). Deliberately far shorter than the
@@ -421,6 +429,57 @@ func _check_all_players_ready() -> void:
 		both_players_ready.emit()
 		start_countdown()
 
+
+
+## STILL-READING FLAG — why the host needs one
+##
+## The first-play how-to-play beat (MultiplayerMiniGameBase._build_first_play_pages) pages
+## through three taught steps before the every-round blurb, and only the LAST page signals
+## readiness. That was deliberate: one thing to dismiss, one readiness signal. What it does
+## NOT solve on its own is the host's force-start fallback. The host arms a six-second timer
+## when IT finishes dismissing, and six seconds is nothing next to a first-timer reading
+## three pages - so the common asymmetric case (host has played before and taps straight
+## through, partner is new) force-started the reader into a running round, yanked the
+## overlay off their screen mid-sentence, and spent the tutorial key permanently: the beat
+## is marked shown at build time, so they never see it again.
+##
+## A peer that is part-way through the beat says so here. It carries no authority - the
+## host still decides when the round starts - it only tells the host that the missing ready
+## signal is a person reading rather than a lost packet, which are the two cases the
+## fallback could not previously tell apart. Cleared when the beat is dismissed, when the
+## round resets, and implicitly when the peer disconnects (the record leaves `players`).
+func set_local_player_reading(is_reading: bool) -> void:
+	var my_id: int = multiplayer.get_unique_id()
+	if not players.has(my_id):
+		return
+	if bool(players[my_id].get("reading", false)) == is_reading:
+		return
+	players[my_id]["reading"] = is_reading
+	# A client's rpc() reaches the server only, which is the peer that runs the fallback,
+	# so no relay is needed. The host's own state is written on the line above.
+	if is_multiplayer_connected():
+		rpc("_sync_player_reading", my_id, is_reading)
+
+
+@rpc("any_peer", "reliable")
+func _sync_player_reading(peer_id: int, is_reading: bool) -> void:
+	# Same identity check as every other any_peer handler here: the peer being described
+	# arrives as a parameter and is used as a dictionary key, so it has to belong to the
+	# sender. See _sender_owns().
+	if not _sender_owns(peer_id, "_sync_player_reading"):
+		return
+	if players.has(peer_id):
+		players[peer_id]["reading"] = is_reading
+
+
+## True while any player is part-way through a first-play beat. Read by the host's
+## force-start fallback; false for every round after the first, since the beat is not built
+## at all once its tutorial key is spent.
+func any_player_still_reading() -> bool:
+	for p in players.values():
+		if bool(p.get("reading", false)):
+			return true
+	return false
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # AUTO-PLAY SYNC
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -566,6 +625,11 @@ func _register_player(peer_id: int, player_name: String) -> void:
 	
 	# Sync player list to all clients
 	rpc("_sync_player_list", players)
+	# The joiner has to arrive on the host's round clock rather than the shipped default:
+	# the host can set it before anyone connects. Pushed from here, not from
+	# _on_player_connected(), because this is the point at which the client is registered
+	# and its NetworkManager is listening. See mp_round_seconds.
+	rpc_id(peer_id, "_sync_mp_round_seconds", mp_round_seconds)
 	player_connected.emit(peer_id, 2)
 
 @rpc("authority", "reliable")
@@ -748,6 +812,7 @@ func _resolve_lost_peer(as_host: bool) -> void:
 		# a fully frozen lobby (paused=true, lobbies=1) with every button, tween and timer
 		# in it dead.
 		get_tree().paused = false
+		clear_pause_state()
 		get_tree().call_deferred(
 			"change_scene_to_file", host_lobby)
 
@@ -939,6 +1004,85 @@ func are_all_players_ready() -> bool:
 # GAME SESSION
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ROUND LENGTH (host-authoritative)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+## Seconds a co-op round lasts, or 0 for "whatever each scene authored".
+##
+## The control that writes this lives on the Multiplayer page next to Ready / Auto Play /
+## Start Game, not in Settings, and it is host-authoritative for the same reason the pause
+## state is: two peers running different round clocks is the pause race again with a
+## different symptom - one player's timer hits zero while the other is still playing, and
+## the round resolves against a partner who never stopped. So the host writes and broadcasts;
+## a client's own write is refused here AND the sync below is @rpc("authority"), so a
+## client-sent copy is dropped by Godot before it reaches this file.
+##
+## 0 is the shipped default and means "do not touch game_duration at all", so a session that
+## never opens the control gets byte-identical behaviour to before this control existed. All
+## twelve MP scenes author 30 s today.
+var mp_round_seconds: float = 0.0
+
+## Bounds for the control. 10 s is the shortest round in which every one of the twelve games
+## reaches its first spawn; 180 s is three minutes, past which the adaptive-difficulty ramp
+## has nothing further to say. A hand-typed value outside this is pulled inside rather than
+## rejected, so the two peers cannot end up disagreeing about whether it was legal.
+const ROUND_SECONDS_MIN: float = 10.0
+const ROUND_SECONDS_MAX: float = 180.0
+
+signal mp_round_seconds_changed(seconds: float)
+
+
+## Host entry point for the Multiplayer page's round-timer control.
+func set_mp_round_seconds(seconds: float) -> void:
+	if is_multiplayer_connected() and not is_server():
+		_log("⚠️ Only the host sets the round timer")
+		return
+	var clamped: float = sanitize_round_seconds(seconds)
+	if is_equal_approx(clamped, mp_round_seconds):
+		return
+	if is_multiplayer_connected() and is_server():
+		# call_local, so the host's own copy is written by the same body the client runs.
+		rpc("_sync_mp_round_seconds", clamped)
+	else:
+		# Solo on this device (lobby opened before anyone joined): apply directly. The value
+		# is pushed to the joiner in _register_player().
+		_sync_mp_round_seconds(clamped)
+
+
+@rpc("authority", "call_local", "reliable")
+func _sync_mp_round_seconds(seconds: float) -> void:
+	# @rpc("authority") makes Godot drop a client-sent copy on the RECEIVING side, which is
+	# only half the story: "call_local" means a client that called rpc() on this anyway would
+	# still run the body on itself and end up alone on a clock the host never agreed to. So
+	# the sender is checked here as well. 0 is a local call, 1 is the host.
+	var sender: int = multiplayer.get_remote_sender_id() if is_multiplayer_connected() else 0
+	if sender != 0 and sender != 1:
+		_log("⚠️ Ignoring a round-timer sync from peer %d" % sender)
+		return
+	if sender == 0 and is_multiplayer_connected() and not is_server():
+		_log("⚠️ Ignoring a local round-timer write on a client")
+		return
+	var clamped: float = sanitize_round_seconds(seconds)
+	if is_equal_approx(clamped, mp_round_seconds):
+		return
+	mp_round_seconds = clamped
+	mp_round_seconds_changed.emit(clamped)
+	_log("⏱️ Round timer: %s" % ("scene default" if clamped <= 0.0 else "%.0fs" % clamped))
+
+
+## 0 passes through as "scene default"; anything else is pulled inside the advertised range.
+func sanitize_round_seconds(seconds: float) -> float:
+	if seconds <= 0.0:
+		return 0.0
+	return clampf(seconds, ROUND_SECONDS_MIN, ROUND_SECONDS_MAX)
+
+
+## What a round should actually run for, given the length its own scene authored.
+## Called by MultiplayerMiniGameBase after _on_multiplayer_ready() has set game_duration.
+func round_seconds_for(authored: float) -> float:
+	return authored if mp_round_seconds <= 0.0 else mp_round_seconds
+
 func start_game(scenario_id: String) -> void:
 	# Start cooperative game session (host only)
 	if not is_host:
@@ -1021,8 +1165,17 @@ func _reset_round_status() -> void:
 	round_in_progress = false
 	_ready_signal_emitted = false
 	_countdown_started_this_round = false
+	# Both per-round latches go with the round: a stale pause would swallow the first
+	# press of the next one, and a stale shared-target flag would stop the next round
+	# ever closing early.
+	clear_pause_state()
+	clear_shared_target()
 	for peer_id in players.keys():
 		players[peer_id]["ready"] = false
+		# The still-reading flag is per-round too: a peer that was force-started out of its
+		# beat must not carry a stale "still reading" into the next round and hold the
+		# fallback there. See set_local_player_reading().
+		players[peer_id]["reading"] = false
 		player_ready_changed.emit(peer_id, false)
 	_log("🔄 Round status reset")
 
@@ -1071,6 +1224,12 @@ func start_multiplayer_game_pair(p1_scene: String, p2_scene: String, level_set: 
 		assign_round_roles(level_set)
 		rpc("_receive_game_start", str(level_set.get("id", "")), player_roles)
 	
+	# Re-stated with the round it applies to, so "both peers time the same round" is a
+	# property of the start broadcast rather than something inferred from an earlier sync.
+	# Reliable RPCs on one channel are ordered, so this lands before the scene load below,
+	# and _sync_mp_round_seconds() early-returns when the value is already what the peer has.
+	rpc("_sync_mp_round_seconds", mp_round_seconds)
+
 	# Reset round completion state on ALL peers before loading new scenes
 	rpc("_reset_round_status")
 	
@@ -1308,6 +1467,20 @@ func _receive_game_event(event_type: String, data: Dictionary) -> void:
 
 func return_to_lobby() -> void:
 	# Return all players to lobby
+	#
+	# With no live session there is nobody to tell, and the RPC is not merely useless -
+	# it ABORTS the call. Reached from MultiplayerGameOver's only button with the peer
+	# already torn down (the partner left, or the server went away, which is exactly
+	# when a game-over screen is most likely to be what the player is looking at), the
+	# non-host branch became rpc_id(1, ...) addressed to itself and Godot rejected it:
+	# "RPC '_request_return_to_lobby' on yourself is not allowed by selected mode".
+	# Nothing after it ran, so the screen never changed and its Back button did
+	# nothing at all. Measured by tools/VerifyPausedNavigation.tscn, which clicks that
+	# button with no peer up.
+	if not is_multiplayer_connected():
+		_log("↩️ No live session - returning to the lobby locally")
+		_execute_return_to_lobby()
+		return
 	if is_host:
 		rpc("_execute_return_to_lobby")
 	else:
@@ -1326,6 +1499,9 @@ func _execute_return_to_lobby() -> void:
 	game_in_progress = false
 	if get_tree().paused:
 		get_tree().paused = false
+	# The authority's pause bookkeeping goes with the round. Left set, the next round
+	# would open believing a pause was already in force and drop the first press.
+	clear_pause_state()
 	get_tree().change_scene_to_file("res://scenes/ui/MultiplayerLobby.tscn")
 
 	# The teardown stays DEFERRED, and the deferral is load-bearing: this method is
@@ -1787,65 +1963,202 @@ func get_buffer_status() -> Dictionary:
 # SYNCHRONIZED PAUSE SYSTEM
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-func request_pause() -> void:
-	# Request game pause (either player can pause)
-	_log("⏸️ Pause requested by Player %d" % local_player_id)
-	rpc("_execute_pause")
+## One authority, one state, idempotent transitions.
+##
+## The old design had three independent write paths - request_pause() rpc'ing
+## _execute_pause to everyone, request_resume() taking a different route per peer, and
+## a separate legacy sync_pause_state() used by five of the minigames - and none of them
+## checked whether the state was already what they were about to set. Any repeat became
+## another broadcast and another log line.
+##
+## Session log session_2026-09-05T00-27-36.json caught what that costs. Round 20
+## (MP_CollectDishWater) logged Pause->Resume pairs every 100-300 ms for six seconds
+## straight, plus "Game resumed" twice in a row with no pause between. Two things fed it:
+##
+##   1. AutoPlayManager._try_resume_from_pause() calls the round's _on_resume_pressed()
+##      from _process() - which runs while the tree is paused, by design - and in
+##      multiplayer that is NetworkManager.request_resume(). A resume is a network
+##      round trip, so the tree stayed paused for several frames and the bot sent one
+##      request per frame. That is where the duplicate "Game resumed" lines come from.
+##   2. MultiplayerMiniGameBase's HUD pause button ships with text = "" (see
+##      _create_hud), so it is an invisible 50-unit hit area in the top-right corner of
+##      a tap-driven minigame. Gameplay taps landing on it re-paused as fast as the bot
+##      un-paused.
+##
+## Both are fixed at their own site as well, but this is the layer that makes the class
+## of bug impossible: the host owns `_pause_active`, a request that does not change it
+## is dropped before it reaches the wire, and _apply_pause_state() returns early when
+## the incoming state already matches. So one user action produces exactly one
+## transition and exactly one log line, whatever the callers do.
 
-@rpc("any_peer", "call_local", "reliable")
-func _execute_pause() -> void:
-	# Execute pause on all clients
-	get_tree().paused = true
-	_log("⏸️ Game paused")
-	
-	# Notify current scene
-	var current_scene = get_tree().current_scene
-	if current_scene and current_scene.has_method("_on_remote_pause"):
-		current_scene.call("_on_remote_pause")
+## Whether the co-op round is currently paused. Host-authoritative: clients mirror it
+## from _apply_pause_state() and never write it themselves.
+var _pause_active: bool = false
+
+## Who asked for the pause that is currently in force. "" when not paused.
+## A DELIBERATE pause (a player pressing the pause glyph, either side) must survive
+## AutoPlayManager's deadlock guard - that guard exists for pauses with no overlay to
+## dismiss, not for a human deciding to stop. This is what makes autoplay pausable.
+var _pause_source: String = ""
+
+const PAUSE_SOURCE_PLAYER := "player"
+
+
+func is_paused() -> bool:
+	return _pause_active
+
+
+## True while the pause in force came from an explicit player action, on either peer.
+## AutoPlayManager reads this so the bot leaves a human's pause alone.
+func is_pause_deliberate() -> bool:
+	return _pause_active and _pause_source == PAUSE_SOURCE_PLAYER
+
+
+func request_pause(source: String = PAUSE_SOURCE_PLAYER) -> void:
+	# Either player may ask; the host decides. Dropped when already paused, so a
+	# repeated press or a stray double-tap cannot produce a second transition.
+	if _pause_active:
+		return
+	if is_host:
+		_set_pause_authoritative(true, source)
+	else:
+		rpc_id(1, "_request_pause_state", true, source)
+
 
 func request_resume() -> void:
-	# Request game resume (either player can resume, but host has priority)
+	# Resume only ever originates from an explicit user action reaching this function.
+	# Nothing in the pause broadcast path calls it, so a peer receiving a pause can no
+	# longer answer with a resume.
+	if not _pause_active:
+		return
 	if is_host:
-		_log("▶️ Resume requested by host")
-		rpc("_execute_resume")
+		_set_pause_authoritative(false, "")
 	else:
-		_log("▶️ Resume requested by Player %d" % local_player_id)
-		rpc_id(1, "_request_resume_from_client")
+		rpc_id(1, "_request_pause_state", false, "")
+
+
+## The host's decision point. The only place `_pause_active` changes on the authority.
+func _set_pause_authoritative(paused: bool, source: String) -> void:
+	if not is_host:
+		return
+	if _pause_active == paused:
+		return
+	_pause_source = source if paused else ""
+	rpc("_apply_pause_state", paused, _pause_source)
+
 
 @rpc("any_peer", "reliable")
-func _request_resume_from_client() -> void:
-	# Client requests host to resume
-	if is_host:
-		rpc("_execute_resume")
+func _request_pause_state(paused: bool, source: String) -> void:
+	# Client -> host request. Guarded so a client cannot forge a state change for a
+	# peer it does not own, and so a request that matches the current state is dropped
+	# here rather than echoed back out to everyone.
+	if not is_host:
+		return
+	_set_pause_authoritative(paused, source)
 
-@rpc("any_peer", "call_local", "reliable")
-func _execute_resume() -> void:
-	# Execute resume on all clients
-	get_tree().paused = false
-	_log("▶️ Game resumed")
-	
-	# Notify current scene
+
+@rpc("authority", "call_local", "reliable")
+func _apply_pause_state(paused: bool, source: String) -> void:
+	# Idempotent by contract: a repeat of the state already in force is not a
+	# transition, so it neither touches the tree, nor logs, nor notifies the scene.
+	if _pause_active == paused:
+		return
+	_pause_active = paused
+	_pause_source = source
+	get_tree().paused = paused
+
+	_log("⏸️ Game paused" if paused else "▶️ Game resumed")
+
 	var current_scene = get_tree().current_scene
-	if current_scene and current_scene.has_method("_on_remote_resume"):
+	if current_scene == null:
+		return
+	if paused and current_scene.has_method("_on_remote_pause"):
+		current_scene.call("_on_remote_pause")
+	elif not paused and current_scene.has_method("_on_remote_resume"):
 		current_scene.call("_on_remote_resume")
 
+
+## Legacy entry point kept for the five MiniGame_* co-op scripts that call
+## `NetworkManager.rpc("sync_pause_state", bool)` directly. It used to be a second,
+## parallel write path that set no state and only poked the scene; it now funnels into
+## the one authority above so those scenes cannot diverge from it.
 @rpc("any_peer", "call_local", "reliable")
 func sync_pause_state(paused: bool) -> void:
-	# Synchronize pause state across all connected players (legacy)
-	var sender_id = multiplayer.get_remote_sender_id()
-	if sender_id == 0:  # Local call
-		sender_id = multiplayer.get_unique_id()
-	
-	var state_str = "PAUSED" if paused else "RESUMED"
-	_log("🔄 Pause state sync: %s by peer %d" % [state_str, sender_id])
-	
-	# Notify the current scene about remote pause
+	if paused:
+		request_pause(PAUSE_SOURCE_PLAYER)
+	else:
+		request_resume()
+
+
+## Clears the pause bookkeeping when a round or session ends, so a fresh round never
+## starts holding a stale pause (and `is_pause_deliberate()` cannot report a pause that
+## no longer exists).
+func clear_pause_state() -> void:
+	_pause_active = false
+	_pause_source = ""
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# SHARED-TARGET ROUND END
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+## Ends the round on BOTH peers the moment the shared objective is done.
+##
+## `win_quota` in MultiplayerMiniGameBase is a TEAM target measured against the G-Counter
+## total, so once it is met the round's objective is finished for the pair - there is
+## nothing left for the other player to accomplish. It was only ever acted on locally:
+## the peer whose point crossed the line called end_game(true) and the partner kept
+## playing until their own timer expired.
+##
+## session_2026-09-05T00-27-36.json, round 18 (MP_CollectDishWater): "Quota met!
+## (50/50 team)" and "Player ... completed" at t=824.4s, the partner's completion at
+## t=849.1s, "Round Complete" at t=849.1s. Twenty-five seconds in which both scores were
+## already locked in and neither player could affect the result.
+##
+## Only the host decides, so the two peers cannot reach different verdicts from the same
+## G-Counter reading, and `_shared_target_reached` makes it once-per-round.
+var _shared_target_reached: bool = false
+
+
+func report_shared_target_reached(success: bool) -> void:
+	# Called by the peer that observed the team quota being met. Idempotent per round.
+	if _shared_target_reached:
+		return
+	if is_host:
+		_end_round_for_both(success)
+	else:
+		rpc_id(1, "_request_shared_target_end", success)
+
+
+@rpc("any_peer", "reliable")
+func _request_shared_target_end(success: bool) -> void:
+	if not is_host:
+		return
+	_end_round_for_both(success)
+
+
+func _end_round_for_both(success: bool) -> void:
+	if not is_host or _shared_target_reached:
+		return
+	_shared_target_reached = true
+	rpc("_apply_shared_target_end", success)
+
+
+@rpc("authority", "call_local", "reliable")
+func _apply_shared_target_end(success: bool) -> void:
+	_shared_target_reached = true
+	_log("🏁 Shared target reached — closing the round on both peers")
 	var current_scene = get_tree().current_scene
-	if current_scene:
-		if paused and current_scene.has_method("_on_remote_pause"):
-			current_scene.call("_on_remote_pause")
-		elif not paused and current_scene.has_method("_on_remote_resume"):
-			current_scene.call("_on_remote_resume")
+	if current_scene and current_scene.has_method("end_game"):
+		# end_game() already no-ops when the round is not active, so the peer that
+		# triggered this is not double-reported.
+		current_scene.call("end_game", success)
+
+
+func clear_shared_target() -> void:
+	_shared_target_reached = false
+
+
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # SYNCHRONIZED COUNTDOWN
@@ -1878,7 +2191,7 @@ func _execute_countdown(count: int) -> void:
 	_log("⏱️ Countdown: %d" % count)
 	
 	if count > 0:
-		await get_tree().create_timer(1.0).timeout
+		await get_tree().create_timer(COUNTDOWN_TICK_SECONDS).timeout
 		if is_host:
 			rpc("_execute_countdown", count - 1)
 	else:
@@ -2209,6 +2522,11 @@ func _transition_to_next_round() -> void:
 	# needs is the total it starts from, and the host is the one that decides it: the value
 	# below travels with the round-load broadcast, so both peers measure the same quota against
 	# the same baseline.
+	# Re-stated with the round it applies to, so "both peers time the same round" is a
+	# property of the start broadcast rather than something inferred from an earlier sync.
+	# Reliable RPCs on one channel are ordered, so this lands before the scene load below,
+	# and _sync_mp_round_seconds() early-returns when the value is already what the peer has.
+	rpc("_sync_mp_round_seconds", mp_round_seconds)
 	rpc("_load_next_round", level_set, get_total_score(), team_lives, rounds_survived)
 
 @rpc("authority", "call_local", "reliable")

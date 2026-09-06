@@ -350,7 +350,7 @@ theme_override_font_sizes/font_size = 26
 theme_override_styles/normal = SubResource("StyleBoxFlat_back")
 theme_override_styles/hover = SubResource("StyleBoxFlat_back_hover")
 theme_override_styles/pressed = SubResource("StyleBoxFlat_back")
-text = "← BACK"
+text = "⬅ BACK"
 
 [node name="JoinPanel" type="PanelContainer" parent="MarginContainer/VBoxContainer"]
 visible = false
@@ -399,7 +399,7 @@ theme_override_font_sizes/font_size = 24
 theme_override_styles/normal = SubResource("StyleBoxFlat_connect")
 theme_override_styles/hover = SubResource("StyleBoxFlat_connect")
 theme_override_styles/pressed = SubResource("StyleBoxFlat_connect")
-text = "✓ CONNECT"
+text = "✔ CONNECT"
 
 [node name="CancelButton" type="Button" parent="MarginContainer/VBoxContainer/JoinPanel/VBoxContainer/HBoxContainer"]
 custom_minimum_size = Vector2(180, 60)
@@ -410,7 +410,7 @@ theme_override_font_sizes/font_size = 24
 theme_override_styles/normal = SubResource("StyleBoxFlat_cancel")
 theme_override_styles/hover = SubResource("StyleBoxFlat_cancel")
 theme_override_styles/pressed = SubResource("StyleBoxFlat_cancel")
-text = "✕ CANCEL"
+text = "✖ CANCEL"
 
 [node name="WaitingPanel" type="PanelContainer" parent="MarginContainer/VBoxContainer"]
 visible = false
@@ -418,12 +418,19 @@ layout_mode = 2
 size_flags_vertical = 3
 theme_override_styles/panel = SubResource("StyleBoxFlat_panel")
 
-[node name="VBoxContainer" type="VBoxContainer" parent="MarginContainer/VBoxContainer/WaitingPanel"]
+[node name="WaitingScroll" type="ScrollContainer" parent="MarginContainer/VBoxContainer/WaitingPanel"]
 layout_mode = 2
+horizontal_scroll_mode = 0
+follow_focus = true
+
+[node name="VBoxContainer" type="VBoxContainer" parent="MarginContainer/VBoxContainer/WaitingPanel/WaitingScroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
 theme_override_constants/separation = 20
 alignment = 1
 
-[node name="StatusLabel" type="Label" parent="MarginContainer/VBoxContainer/WaitingPanel/VBoxContainer"]
+[node name="StatusLabel" type="Label" parent="MarginContainer/VBoxContainer/WaitingPanel/WaitingScroll/VBoxContainer"]
 layout_mode = 2
 theme_override_colors/font_color = Color(1, 1, 1, 1)
 theme_override_colors/font_outline_color = Color(0.2, 0.4, 0.6, 0.8)
@@ -433,12 +440,12 @@ theme_override_font_sizes/font_size = 26
 text = "⏳ Waiting for players..."
 horizontal_alignment = 1
 
-[node name="PlayerListContainer" type="HBoxContainer" parent="MarginContainer/VBoxContainer/WaitingPanel/VBoxContainer"]
+[node name="PlayerListContainer" type="HBoxContainer" parent="MarginContainer/VBoxContainer/WaitingPanel/WaitingScroll/VBoxContainer"]
 layout_mode = 2
 alignment = 1
 theme_override_constants/separation = 80
 
-[node name="Player1Label" type="Label" parent="MarginContainer/VBoxContainer/WaitingPanel/VBoxContainer/PlayerListContainer"]
+[node name="Player1Label" type="Label" parent="MarginContainer/VBoxContainer/WaitingPanel/WaitingScroll/VBoxContainer/PlayerListContainer"]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.5, 1, 0.6, 1)
 theme_override_colors/font_outline_color = Color(0.1, 0.3, 0.15, 1)
@@ -449,7 +456,7 @@ text = "👤 Player 1
 💧 Collector"
 horizontal_alignment = 1
 
-[node name="Player2Label" type="Label" parent="MarginContainer/VBoxContainer/WaitingPanel/VBoxContainer/PlayerListContainer"]
+[node name="Player2Label" type="Label" parent="MarginContainer/VBoxContainer/WaitingPanel/WaitingScroll/VBoxContainer/PlayerListContainer"]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.5, 0.8, 1, 1)
 theme_override_colors/font_outline_color = Color(0.15, 0.3, 0.45, 1)
@@ -460,7 +467,7 @@ text = "👤 Player 2
 🚿 User"
 horizontal_alignment = 1
 
-[node name="ReadyCheckbox" type="CheckBox" parent="MarginContainer/VBoxContainer/WaitingPanel/VBoxContainer"]
+[node name="ReadyCheckbox" type="CheckBox" parent="MarginContainer/VBoxContainer/WaitingPanel/WaitingScroll/VBoxContainer"]
 layout_mode = 2
 size_flags_horizontal = 4
 theme_override_colors/font_color = Color(1, 0.95, 0.4, 1)
@@ -471,7 +478,7 @@ theme_override_font_sizes/font_size = 32
 theme_override_styles/normal = SubResource("StyleBoxFlat_ready")
 text = "✋ I'M READY!"
 
-[node name="AutoPlayButton" type="Button" parent="MarginContainer/VBoxContainer/WaitingPanel/VBoxContainer"]
+[node name="AutoPlayButton" type="Button" parent="MarginContainer/VBoxContainer/WaitingPanel/WaitingScroll/VBoxContainer"]
 custom_minimum_size = Vector2(320, 65)
 layout_mode = 2
 size_flags_horizontal = 4
@@ -486,7 +493,7 @@ theme_override_styles/pressed = SubResource("StyleBoxFlat_autoplay")
 toggle_mode = true
 text = "🤖 AUTO PLAY"
 
-[node name="StartGameButton" type="Button" parent="MarginContainer/VBoxContainer/WaitingPanel/VBoxContainer"]
+[node name="StartGameButton" type="Button" parent="MarginContainer/VBoxContainer/WaitingPanel/WaitingScroll/VBoxContainer"]
 visible = false
 custom_minimum_size = Vector2(350, 80)
 layout_mode = 2
@@ -501,7 +508,7 @@ theme_override_styles/hover = SubResource("StyleBoxFlat_start")
 theme_override_styles/pressed = SubResource("StyleBoxFlat_start")
 text = "🎮 START GAME!"
 
-[node name="DisconnectButton" type="Button" parent="MarginContainer/VBoxContainer/WaitingPanel/VBoxContainer"]
+[node name="DisconnectButton" type="Button" parent="MarginContainer/VBoxContainer/WaitingPanel/WaitingScroll/VBoxContainer"]
 custom_minimum_size = Vector2(220, 50)
 layout_mode = 2
 size_flags_horizontal = 4

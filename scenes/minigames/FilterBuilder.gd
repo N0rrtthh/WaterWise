@@ -81,7 +81,7 @@ func _ready():
 	game_instruction_text = (
 		Localization.get_text("filter_builder_instructions")
 		if Localization
-		else "DRAG layers in correct order!\nCloth → Charcoal → Sand → Gravel 🧱"
+		else "DRAG layers in correct order!\nCloth ➡ Charcoal ➡ Sand ➡ Gravel 🧱"
 	)
 	game_duration = 30.0
 	game_mode = "quota"

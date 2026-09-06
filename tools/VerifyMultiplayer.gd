@@ -92,6 +92,21 @@ var partner_events: Array = []
 var water_arrivals: Array = []
 var overflow_seen: Array = [false]
 
+## Latched by _on_remote_pause() / _on_remote_resume() at the bottom of this file, which
+## NetworkManager._execute_pause()/_execute_resume() call on get_tree().current_scene.
+##
+## Latched rather than sampled because a pause is TRANSIENT. The pause check used to poll
+## get_tree().paused inside a 2 s window opened by the host's own clock, and the client
+## sends its resume 1 s after its pause: when the client timeline ran even 0.4 s ahead -
+## which it does, since the client anchors on connection_succeeded and the host on
+## player_connected one RTT later - both had already been applied before the host's
+## window opened, and the host reported "paused=false" for behaviour its own log showed
+## working two lines earlier. Also records whether the tree really was paused at the
+## instant of the notification, so the original claim (the pause is synchronous, not just
+## announced) is still asserted, at a moment that cannot drift.
+var pause_notices: Array = []
+var resume_notices: Array = []
+
 func _ready() -> void:
 	var role := _resolve_role()
 	print("")
@@ -349,16 +364,21 @@ func _run_host() -> void:
 	# by the player who paused it.
 	tree.create_timer(12.6).timeout.connect(func() -> void:
 		await eventually.call("client's pause request paused the host too",
-			func() -> bool: return tree.paused, 2.0,
-			func() -> String: return "paused=%s" % str(tree.paused))
+			func() -> bool: return (pause_notices.size() >= 1
+				and bool(pause_notices[0])), 2.0,
+			func() -> String: return ("notices=%d tree_was_paused=%s paused_now=%s"
+				% [pause_notices.size(),
+					str(pause_notices[0]) if pause_notices.size() > 0 else "-",
+					str(tree.paused)]))
 	)
 
 	# ── t=13.6  only the host resumes; the client's request round-tripped ──
 	# Bounded at 2.5 s so it cannot outlast the pause phase it is meant to end.
 	tree.create_timer(13.6).timeout.connect(func() -> void:
 		await eventually.call("client's resume request round-tripped through the host",
-			func() -> bool: return not tree.paused, 2.5,
-			func() -> String: return "paused=%s" % str(tree.paused))
+			func() -> bool: return resume_notices.size() >= 1 and not tree.paused, 2.5,
+			func() -> String: return "notices=%d paused=%s" % [
+				resume_notices.size(), str(tree.paused)])
 	)
 
 	# ── t=14.6  a client game event reached the host's live scene ──
@@ -951,3 +971,17 @@ func on_partner_event(event_type: String, data: Dictionary) -> void:
 func on_water_received(water_data: Dictionary) -> void:
 	water_arrivals.append(water_data)
 	print("  [scene] on_water_received(%s)" % str(water_data.get("type", "?")))
+
+
+func _on_remote_pause() -> void:
+	# What a real round uses to raise its pause overlay, so defining it here tests the
+	# notification as well as the pause. The recorded value is the tree state AT the
+	# notification: NetworkManager sets get_tree().paused = true immediately above this
+	# call, so a false here would mean the pause was announced without being applied.
+	pause_notices.append(get_tree().paused)
+	print("  [scene] _on_remote_pause(tree.paused=%s)" % str(get_tree().paused))
+
+
+func _on_remote_resume() -> void:
+	resume_notices.append(get_tree().paused)
+	print("  [scene] _on_remote_resume(tree.paused=%s)" % str(get_tree().paused))

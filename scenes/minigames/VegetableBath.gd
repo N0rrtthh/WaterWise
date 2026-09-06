@@ -96,7 +96,7 @@ func _ready():
 	# authored. _loc() keeps the English literal as the fallback for the case
 	# where the table is not up yet (tools/SceneLoadCheck instantiates that way).
 	game_name = _loc("vegetable_bath", "Vegetable Bath")
-	var fallback := "DRAG: Dirty Basket → Wash Bowl → Clean Basket!\n"
+	var fallback := "DRAG: Dirty Basket ➡ Wash Bowl ➡ Clean Basket!\n"
 	fallback += "Dirty in clean = TIME PENALTY! 🥕"
 	game_instruction_text = _loc("vegetable_bath_instructions", fallback)
 	game_duration = 25.0
@@ -203,7 +203,7 @@ func _create_clean_basket(screen_size: Vector2):
 	clean_basket.add_child(basket)
 	
 	var lbl = Label.new()
-	lbl.text = _loc("hud_veggie_clean", "✓ CLEAN")
+	lbl.text = _loc("hud_veggie_clean", "✔ CLEAN")
 	lbl.add_theme_font_size_override("font_size", 20)
 	lbl.add_theme_color_override("font_color", Color(0.2, 0.6, 0.2))
 	MiniGameAssets.outline_text(lbl)

@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://bxmptutbeat01"]
+
+[ext_resource type="Script" path="res://tools/VerifyMPTutorialBeat.gd" id="1_mptutbeat"]
+
+[node name="VerifyMPTutorialBeat" type="Node"]
+script = ExtResource("1_mptutbeat")

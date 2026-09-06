@@ -734,7 +734,7 @@ func _spawn_outro_droplet() -> void:
 		_water_droplet.add_child(stars_container)
 		for i in 3:
 			var star = Label.new()
-			star.text = ["⭐", "💫", "✦"][i]
+			star.text = ["⭐", "💫", "✨"][i]
 			star.add_theme_font_size_override("font_size", 14)
 			star.position = Vector2(cos(i * TAU / 3.0) * 20, sin(i * TAU / 3.0) * 8)
 			stars_container.add_child(star)
@@ -1190,7 +1190,7 @@ func _add_outcome_sorted_buckets(parent: Node2D) -> void:
 		b.position = Vector2(-50 + i * 100, 30)
 		parent.add_child(b)
 		var check = Label.new()
-		check.text = "✓"
+		check.text = "✔"
 		check.add_theme_font_size_override("font_size", 12)
 		check.add_theme_color_override("font_color", Color.WHITE)
 		check.position = Vector2(-50 + i * 100, 20)
@@ -1299,7 +1299,7 @@ func _add_outcome_closed_tap(parent: Node2D, pos: Vector2) -> void:
 	parent.add_child(faucet)
 	# Green checkmark
 	var check = Label.new()
-	check.text = "✓"
+	check.text = "✔"
 	check.add_theme_font_size_override("font_size", 14)
 	check.add_theme_color_override("font_color", Color(0.2, 0.8, 0.3))
 	check.position = pos + Vector2(-4, -18)

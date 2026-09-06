@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://b1icochm5bb2i"]
+
+[ext_resource type="Script" path="res://tools/VerifyWaitingRoomFit.gd" id="1_wrfit"]
+
+[node name="VerifyWaitingRoomFit" type="Node"]
+script = ExtResource("1_wrfit")

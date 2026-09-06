@@ -231,7 +231,14 @@ func _dismiss(tag: String) -> void:
 	if not mg.game_started.is_connected(_on_game_started):
 		mg.game_started.connect(_on_game_started)
 	print("  [%s] dismissing instructions at t=%.1fs" % [role, _now()])
-	mg.call("_on_instruction_dismissed")
+	# The first-play beat pages inside this same overlay, so one tap only turns a page -
+	# readiness is signalled on the LAST page. A player taps until the overlay is gone.
+	var taps: int = 0
+	while taps < 8 and not bool(mg.get("_instruction_dismissed")):
+		mg.call("_on_instruction_dismissed")
+		taps += 1
+		await get_tree().process_frame
+	print("  [%s] %d tap(s) to clear the overlay" % [role, taps])
 
 
 func _scene_path() -> String:

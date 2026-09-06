@@ -487,7 +487,25 @@ func _setup_ui() -> void:
 	panel_style.shadow_color = Color(0, 0, 0, 0.3)
 	panel_style.shadow_size = 15
 	main_panel.add_theme_stylebox_override("panel", panel_style)
-	main_panel.custom_minimum_size = Vector2(800, 550)
+	# Sized to the viewport, not to a fixed 800x550. The tab row and the Back button
+	# are BaseButtons, so MobileUIManager raises them to the 48dp touch floor - 126
+	# canvas units on a 420dpi phone instead of the authored 60 - and inside a fixed
+	# 550-unit panel that left the item grid about 100 units tall: one clipped strip of
+	# the first row, which is why the selected card looked empty and the prices under
+	# each item were nowhere to be seen. A card row measures ~274 units for the same
+	# reason, so the panel has to be near full height for two rows to land whole.
+	var vp := get_viewport_rect().size
+	var safe: Dictionary = {}
+	if MobileUIManager and MobileUIManager.has_method("get_safe_area_margins"):
+		var margins = MobileUIManager.get_safe_area_margins()
+		if margins is Dictionary:
+			safe = margins
+	var safe_v := float(safe.get("top", 0.0)) + float(safe.get("bottom", 0.0))
+	var safe_h := float(safe.get("left", 0.0)) + float(safe.get("right", 0.0))
+	main_panel.custom_minimum_size = Vector2(
+		clampf(vp.x - 160.0 - safe_h, 640.0, 1180.0),
+		clampf(vp.y - 64.0 - safe_v, 460.0, 1020.0)
+	)
 	main_panel.set_anchors_preset(Control.PRESET_CENTER)
 	main_panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
 	main_panel.grow_vertical = Control.GROW_DIRECTION_BOTH
@@ -497,12 +515,15 @@ func _setup_ui() -> void:
 	margin.set_anchors_preset(Control.PRESET_FULL_RECT)
 	margin.add_theme_constant_override("margin_left", 30)
 	margin.add_theme_constant_override("margin_right", 30)
-	margin.add_theme_constant_override("margin_top", 25)
-	margin.add_theme_constant_override("margin_bottom", 25)
+	# Trimmed from 25/15 to give the grid back the height the 48dp tab and Back
+	# buttons take: two full card rows now fit above the fold instead of the second
+	# row being sliced through.
+	margin.add_theme_constant_override("margin_top", 14)
+	margin.add_theme_constant_override("margin_bottom", 14)
 	main_panel.add_child(margin)
-	
+
 	var vbox = VBoxContainer.new()
-	vbox.add_theme_constant_override("separation", 15)
+	vbox.add_theme_constant_override("separation", 12)
 	margin.add_child(vbox)
 	
 	# Title row
@@ -558,12 +579,8 @@ func _setup_ui() -> void:
 	vbox.add_child(scroll)
 	_scroll_container = scroll
 	
-	grid_container = GridContainer.new()
-	grid_container.columns = 4
-	grid_container.add_theme_constant_override("h_separation", 20)
-	grid_container.add_theme_constant_override("v_separation", 20)
-	grid_container.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	scroll.add_child(grid_container)
+	# The item grids are created per tab and cached — see _grid_for_tab(). Nothing is
+	# parented here.
 	
 	# Back button
 	back_button = Button.new()
@@ -681,13 +698,85 @@ func _set_tab_visual(
 		button.add_theme_stylebox_override("pressed", inactive_style)
 		button.add_theme_color_override("font_color", Color(0.3, 0.3, 0.3))
 
+## One grid per tab, built once and then only shown/hidden.
+##
+## _update_display() used to queue_free() every card and rebuild the whole tab on each
+## click. The Minigames tab is 24 cards, each a PanelContainer holding an emoji Label at
+## font size 48 plus a styled Button, so a tab switch was ~100 node constructions, 24
+## StyleBoxFlat allocations, a fresh text-shaping pass per emoji, and then
+## _animate_grid_reveal() starting one Tween per card. On the Moto E5 Plus that is the
+## "shop tab switching causes lag" report.
+##
+## Cached grids are dropped by _invalidate_tab() whenever that tab's DATA changes - a
+## purchase, an equip, a decoration toggle - so nothing can show a stale card.
+var _tab_grids: Dictionary = {}
+
+func _grid_for_tab(tab: String) -> GridContainer:
+	var cached = _tab_grids.get(tab)
+	if cached != null and is_instance_valid(cached):
+		return cached
+	var grid := GridContainer.new()
+	grid.name = "Grid_%s" % tab
+	grid.columns = 4
+	grid.add_theme_constant_override("h_separation", 20)
+	grid.add_theme_constant_override("v_separation", 20)
+	grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	grid.visible = false
+	_scroll_container.add_child(grid)
+	_tab_grids[tab] = grid
+	return grid
+
+
+## Forces `tab` (default: the visible one) to rebuild next time it is shown. Call this
+## before _update_display() from anything that changes what a card should SAY - a
+## purchase, an equip, a language switch - or the cache will happily re-show the old one.
+func _invalidate_tab(tab: String = "") -> void:
+	# Annotated, not inferred: current_tab is untyped, so the ternary has no set type.
+	var key: String = tab if tab != "" else current_tab
+	var cached = _tab_grids.get(key)
+	if cached != null and is_instance_valid(cached):
+		# Hidden now, not just at end of frame: queue_free() leaves the node parented
+		# until then, and the replacement grid is empty for two frames while it builds,
+		# so without this the dropped cards would draw over the gap.
+		cached.visible = false
+		cached.queue_free()
+	_tab_grids.erase(key)
+
+
+## Every tab, for a change that crosses all of them (language).
+func _invalidate_all_tabs() -> void:
+	for key in _tab_grids.keys():
+		var cached = _tab_grids[key]
+		if cached != null and is_instance_valid(cached):
+			cached.visible = false
+			cached.queue_free()
+	_tab_grids.clear()
+
+
 func _update_display() -> void:
-	# Clear existing items
-	for child in grid_container.get_children():
-		child.queue_free()
-	
+	if _scroll_container == null:
+		return
+
+	var grid := _grid_for_tab(current_tab)
+	var needs_build: bool = grid.get_child_count() == 0
+
+	# Hide the others rather than freeing them: that is the whole point of the cache.
+	for tab_name in _tab_grids:
+		var other = _tab_grids[tab_name]
+		if other != null and is_instance_valid(other):
+			other.visible = (tab_name == current_tab)
+
+	# The card builders all append to `grid_container`, so point it at the tab being
+	# filled instead of threading a parameter through four _show_* functions.
+	grid_container = grid
+
+	if not needs_build:
+		# Already built: nothing to construct, nothing to animate, and the interaction
+		# targets were bound the first time round.
+		return
+
 	await get_tree().process_frame
-	
+
 	if current_tab == "characters":
 		_show_characters()
 	elif current_tab == "minigames":
@@ -758,8 +847,14 @@ func _create_character_card(data: Dictionary) -> PanelContainer:
 	name_label.text = _get_character_name(str(data.id), str(data.name))
 	name_label.add_theme_font_size_override("font_size", 18)
 	name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	if not data.unlocked:
-		name_label.add_theme_color_override("font_color", Color(0.5, 0.5, 0.5))
+	# Both states get an explicit colour. Only the LOCKED branch used to set one, so an
+	# owned item's name fell back to the default theme's near-white on a near-white
+	# card and was invisible - which is why the equipped first slot read as an empty
+	# highlighted box with no label.
+	name_label.add_theme_color_override(
+		"font_color",
+		Color(0.5, 0.5, 0.5) if not data.unlocked else Color(0.20, 0.24, 0.30)
+	)
 	vbox.add_child(name_label)
 	
 	# Cost/Status
@@ -806,7 +901,8 @@ func _create_character_card(data: Dictionary) -> PanelContainer:
 		buy_btn.add_theme_color_override("font_color", Color.WHITE)
 		buy_btn.pressed.connect(_on_buy_character.bind(data.id))
 		vbox.add_child(buy_btn)
-	
+		_add_lock_badge(card, int(data.cost))
+
 	return card
 
 func _create_mini_droplet(color: Color, unlocked: bool) -> Node2D:
@@ -855,15 +951,33 @@ func _create_mini_droplet(color: Color, unlocked: bool) -> Node2D:
 	smile.default_color = Color(0.2, 0.2, 0.2)
 	droplet.add_child(smile)
 	
-	# Lock overlay if not unlocked
-	if not unlocked:
-		var lock = Label.new()
-		lock.text = "🔒"
-		lock.add_theme_font_size_override("font_size", 24)
-		lock.position = Vector2(-12, -12)
-		droplet.add_child(lock)
-	
+	# No padlock here: it is a corner badge on the card now (_add_lock_badge), so a
+	# locked character's art stays visible instead of being covered by it.
 	return droplet
+
+
+## Top-right corner badge for a locked card: the padlock plus what the item costs.
+##
+## The padlock used to be drawn at the centre of the item art (a 24pt label at the
+## droplet's own origin), so every locked character was a grey blob with a lock over
+## its face and no price anywhere the player could see. As a corner badge the art stays
+## readable, and carrying the cost means a locked card states what it is saving toward
+## even before the buy button below it is reached.
+func _add_lock_badge(card: PanelContainer, cost: int) -> void:
+	var holder := MarginContainer.new()
+	holder.name = "LockBadge"
+	holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	holder.add_theme_constant_override("margin_top", 6)
+	holder.add_theme_constant_override("margin_right", 8)
+	card.add_child(holder)
+
+	var badge := Label.new()
+	badge.text = "🔒 💧%d" % cost
+	badge.add_theme_font_size_override("font_size", 13)
+	badge.add_theme_color_override("font_color", Color(0.32, 0.34, 0.40))
+	badge.size_flags_horizontal = Control.SIZE_SHRINK_END
+	badge.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	holder.add_child(badge)
 
 func _create_minigame_card(data: Dictionary) -> PanelContainer:
 	var card = PanelContainer.new()
@@ -893,9 +1007,13 @@ func _create_minigame_card(data: Dictionary) -> PanelContainer:
 	
 	# Icon
 	var icon = Label.new()
-	icon.text = data.icon if data.unlocked else "🔒"
+	# The item's own art in both states. Swapping it for a padlock hid what was
+	# actually on offer; the padlock is a corner badge now (_add_lock_badge).
+	icon.text = data.icon
 	icon.add_theme_font_size_override("font_size", 48)
 	icon.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	if not data.unlocked:
+		icon.modulate = Color(0.62, 0.62, 0.66)
 	vbox.add_child(icon)
 	
 	# Name
@@ -903,8 +1021,14 @@ func _create_minigame_card(data: Dictionary) -> PanelContainer:
 	name_label.text = _get_minigame_name(str(data.id), str(data.name))
 	name_label.add_theme_font_size_override("font_size", 16)
 	name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	if not data.unlocked:
-		name_label.add_theme_color_override("font_color", Color(0.5, 0.5, 0.5))
+	# Both states get an explicit colour. Only the LOCKED branch used to set one, so an
+	# owned item's name fell back to the default theme's near-white on a near-white
+	# card and was invisible - which is why the equipped first slot read as an empty
+	# highlighted box with no label.
+	name_label.add_theme_color_override(
+		"font_color",
+		Color(0.5, 0.5, 0.5) if not data.unlocked else Color(0.20, 0.24, 0.30)
+	)
 	vbox.add_child(name_label)
 	
 	# Cost/Status
@@ -931,7 +1055,8 @@ func _create_minigame_card(data: Dictionary) -> PanelContainer:
 		buy_btn.add_theme_color_override("font_color", Color.WHITE)
 		buy_btn.pressed.connect(_on_buy_minigame.bind(data.id))
 		vbox.add_child(buy_btn)
-	
+		_add_lock_badge(card, int(data.cost))
+
 	return card
 
 func _create_accessory_card(data: Dictionary) -> PanelContainer:
@@ -961,17 +1086,27 @@ func _create_accessory_card(data: Dictionary) -> PanelContainer:
 	card.add_child(vbox)
 
 	var icon = Label.new()
-	icon.text = data.icon if data.unlocked else "🔒"
+	# The item's own art in both states. Swapping it for a padlock hid what was
+	# actually on offer; the padlock is a corner badge now (_add_lock_badge).
+	icon.text = data.icon
 	icon.add_theme_font_size_override("font_size", 48)
 	icon.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	if not data.unlocked:
+		icon.modulate = Color(0.62, 0.62, 0.66)
 	vbox.add_child(icon)
 
 	var name_label = Label.new()
 	name_label.text = _get_accessory_name(str(data.id), str(data.name))
 	name_label.add_theme_font_size_override("font_size", 15)
 	name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	if not data.unlocked:
-		name_label.add_theme_color_override("font_color", Color(0.5, 0.5, 0.5))
+	# Both states get an explicit colour. Only the LOCKED branch used to set one, so an
+	# owned item's name fell back to the default theme's near-white on a near-white
+	# card and was invisible - which is why the equipped first slot read as an empty
+	# highlighted box with no label.
+	name_label.add_theme_color_override(
+		"font_color",
+		Color(0.5, 0.5, 0.5) if not data.unlocked else Color(0.20, 0.24, 0.30)
+	)
 	vbox.add_child(name_label)
 
 	if data.unlocked:
@@ -1017,6 +1152,7 @@ func _create_accessory_card(data: Dictionary) -> PanelContainer:
 		buy_btn.add_theme_color_override("font_color", Color.WHITE)
 		buy_btn.pressed.connect(_on_buy_accessory.bind(str(data.id)))
 		vbox.add_child(buy_btn)
+		_add_lock_badge(card, int(data.cost))
 
 	return card
 
@@ -1055,6 +1191,7 @@ func _on_use_character(char_id: String) -> void:
 	if save_mgr and save_mgr.has_method("set_selected_character"):
 		save_mgr.set_selected_character(char_id)
 		_selected_character_id = char_id
+	_invalidate_tab("characters")
 	_update_display()
 
 func _on_buy_character(char_id: String) -> void:
@@ -1081,6 +1218,7 @@ func _on_buy_character(char_id: String) -> void:
 				else:
 					_show_insufficient_funds()
 			_update_currency_display()
+			_invalidate_tab("characters")
 			_update_display()
 			break
 
@@ -1111,6 +1249,7 @@ func _on_buy_minigame(game_id: String) -> void:
 				else:
 					_show_insufficient_funds()
 			_update_currency_display()
+			_invalidate_tab("minigames")
 			_update_display()
 			break
 
@@ -1142,6 +1281,7 @@ func _on_buy_accessory(accessory_id: String) -> void:
 					_show_insufficient_funds()
 
 			_update_currency_display()
+			_invalidate_tab("accessories")
 			_update_display()
 			break
 
@@ -1157,6 +1297,7 @@ func _on_equip_accessory(accessory_id: String) -> void:
 	if save_mgr and save_mgr.has_method("set_selected_accessory"):
 		save_mgr.set_selected_accessory(accessory_id)
 
+	_invalidate_tab("accessories")
 	_update_display()
 
 func _update_currency_display() -> void:
@@ -1238,19 +1379,23 @@ func _create_decoration_card(data: Dictionary) -> PanelContainer:
 	card.add_child(vbox)
 
 	var icon = Label.new()
-	icon.text = data.icon if data.unlocked else "🔒"
+	# The item's own art in both states. Swapping it for a padlock hid what was
+	# actually on offer; the padlock is a corner badge now (_add_lock_badge).
+	icon.text = data.icon
 	icon.add_theme_font_size_override("font_size", 48)
 	icon.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	if not data.unlocked:
+		icon.modulate = Color(0.62, 0.62, 0.66)
 	vbox.add_child(icon)
 
 	var name_label = Label.new()
 	name_label.text = _get_decoration_name(str(data.id), str(data.name))
 	name_label.add_theme_font_size_override("font_size", 16)
 	name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	if not data.unlocked:
-		name_label.add_theme_color_override(
-			"font_color", Color(0.5, 0.5, 0.5)
-		)
+	name_label.add_theme_color_override(
+		"font_color",
+		Color(0.5, 0.5, 0.5) if not data.unlocked else Color(0.20, 0.24, 0.30)
+	)
 	vbox.add_child(name_label)
 
 	if data.unlocked:
@@ -1283,6 +1428,7 @@ func _create_decoration_card(data: Dictionary) -> PanelContainer:
 			_on_buy_decoration.bind(str(data.id))
 		)
 		vbox.add_child(buy_btn)
+		_add_lock_badge(card, int(data.cost))
 
 	return card
 
@@ -1318,6 +1464,7 @@ func _on_buy_decoration(dec_id: String) -> void:
 				else:
 					_show_insufficient_funds()
 			_update_currency_display()
+			_invalidate_tab("decorations")
 			_update_display()
 			break
 
@@ -1341,6 +1488,8 @@ func _on_back_pressed() -> void:
 
 func _on_language_changed(_new_lang: String) -> void:
 	_refresh_localized_ui()
+	# Every card's label came from Localization, so no cached tab is still correct.
+	_invalidate_all_tabs()
 	_update_display()
 
 

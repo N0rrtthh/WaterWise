@@ -8,7 +8,52 @@ class_name FileExporter
 ## Works on Android and desktop platforms that expose Downloads.
 ## ═══════════════════════════════════════════════════════════════════
 
-const EXPORT_FOLDER_NAME = "WaterwiseExports"
+## Lowercase, and the folder the user was told to look in. Android's Files app and the
+## MTP view both show Downloads/, so the export must land one level under it - a deeper
+## path (or a differently-cased one the user has to guess) is not reachable on a
+## non-rooted phone. Session logs go straight in here rather than in a session_logs
+## subfolder for the same reason: one tap from Downloads.
+const EXPORT_FOLDER_NAME = "waterwise"
+
+## The one Android permission this file needs. Spelled out rather than hidden behind a
+## helper elsewhere so a grep for the permission lands on the code that uses it.
+const ANDROID_WRITE_PERM: String = "android.permission.WRITE_EXTERNAL_STORAGE"
+
+## Asked at most once per run: OS.request_permission() raises a system dialog, and one per
+## export tap would be its own defect.
+static var _perm_requested: bool = false
+
+
+## Legacy Android (API 23-28) refuses every write into the public Downloads folder until
+## the user grants this at runtime - a manifest entry alone is not a grant. It was not
+## being asked for anywhere in the project, so on those devices the export could only
+## ever report "No files exported", and those are precisely the phones this build targets.
+##
+## Deliberately NOT a gate. From API 30 an app may create its own files in Downloads with
+## no permission at all, and from API 33 this one cannot be granted even if asked for - so
+## a false here must not stop the attempt, or modern phones would lose an export that
+## already works. Ask when it is missing, then let the write speak for itself.
+static func ensure_storage_permission() -> bool:
+	if OS.get_name() != "Android":
+		return true
+	if OS.get_granted_permissions().has(ANDROID_WRITE_PERM):
+		return true
+	if not _perm_requested:
+		_perm_requested = true
+		# Asynchronous: the dialog outlives this call, so THIS export may still fail.
+		# _permission_hint() is what tells the player that, instead of a bare failure.
+		OS.request_permission(ANDROID_WRITE_PERM)
+	return false
+
+
+## Appended to the failure messages so a permission denial reads as a permission denial
+## rather than as a missing folder. Empty wherever the permission is not the issue.
+static func _permission_hint() -> String:
+	if OS.get_name() != "Android":
+		return ""
+	if OS.get_granted_permissions().has(ANDROID_WRITE_PERM):
+		return ""
+	return " Storage permission is not granted yet - allow it, then tap Export again."
 
 static func _get_session_logger() -> Node:
 	var loop = Engine.get_main_loop()
@@ -48,10 +93,12 @@ static func _get_session_log_dir() -> String:
 
 ## Export save file to Downloads folder
 static func export_save_file() -> Dictionary:
+	# Legacy Android needs a runtime grant before the first write into Downloads.
+	ensure_storage_permission()
 	var result = {"success": false, "path": "", "error": ""}
 	
 	if not is_external_storage_available():
-		result.error = "Downloads folder not available"
+		result.error = "Downloads folder not available." + _permission_hint()
 		return result
 	
 	# Read save file from internal storage
@@ -89,10 +136,12 @@ static func export_save_file() -> Dictionary:
 
 ## Export ONLY session logs and metrics (no save files or settings)
 static func export_session_data_only() -> Dictionary:
+	# Legacy Android needs a runtime grant before the first write into Downloads.
+	ensure_storage_permission()
 	var result = {"success": false, "path": "", "error": "", "files_exported": 0}
 	
 	if not is_external_storage_available():
-		result.error = "Downloads folder not available"
+		result.error = "Downloads folder not available." + _permission_hint()
 		return result
 
 	# Ensure a log exists for the current session before copying.
@@ -117,10 +166,12 @@ static func export_session_data_only() -> Dictionary:
 
 ## Export all session logs to Downloads folder
 static func export_session_logs() -> Dictionary:
+	# Legacy Android needs a runtime grant before the first write into Downloads.
+	ensure_storage_permission()
 	var result = {"success": false, "path": "", "error": "", "files_exported": 0}
 	
 	if not is_external_storage_available():
-		result.error = "Downloads folder not available"
+		result.error = "Downloads folder not available." + _permission_hint()
 		return result
 	
 	# Check if session logs exist
@@ -148,7 +199,7 @@ static func export_session_logs() -> Dictionary:
 				file.close()
 				
 				# Write to external storage
-				var external_path = _get_external_path("session_logs/" + file_name)
+				var external_path = _get_external_path(file_name)
 				if not external_path.is_empty():
 					var export_file = FileAccess.open(external_path, FileAccess.WRITE)
 					if export_file:
@@ -165,16 +216,18 @@ static func export_session_logs() -> Dictionary:
 		result.files_exported = exported_count
 		result.path = _get_external_base_path()
 	else:
-		result.error = "No files exported. Check permissions."
+		result.error = "No files exported to Downloads." + _permission_hint()
 	
 	return result
 
 ## Export all game data (save + logs + settings)
 static func export_all_data() -> Dictionary:
+	# Legacy Android needs a runtime grant before the first write into Downloads.
+	ensure_storage_permission()
 	var result = {"success": false, "path": "", "error": "", "files_exported": 0}
 	
 	if not is_external_storage_available():
-		result.error = "Downloads folder not available"
+		result.error = "Downloads folder not available." + _permission_hint()
 		return result
 	
 	var total_exported = 0
@@ -205,16 +258,18 @@ static func export_all_data() -> Dictionary:
 		result.files_exported = total_exported
 		result.path = export_path
 	else:
-		result.error = "No files exported. Check permissions or no data exists."
+		result.error = "No files exported - no data, or no permission." + _permission_hint()
 	
 	return result
 
 ## Export settings file
 static func export_settings_file() -> Dictionary:
+	# Legacy Android needs a runtime grant before the first write into Downloads.
+	ensure_storage_permission()
 	var result = {"success": false, "path": "", "error": ""}
 	
 	if not is_external_storage_available():
-		result.error = "Downloads folder not available"
+		result.error = "Downloads folder not available." + _permission_hint()
 		return result
 	
 	var internal_path = "user://waterwise_settings.json"
@@ -300,10 +355,12 @@ static func get_export_location_message() -> String:
 
 ## Create a summary file with export info
 static func create_export_summary() -> Dictionary:
+	# Legacy Android needs a runtime grant before the first write into Downloads.
+	ensure_storage_permission()
 	var result = {"success": false, "path": "", "error": ""}
 	
 	if not is_external_storage_available():
-		result.error = "Downloads folder not available"
+		result.error = "Downloads folder not available." + _permission_hint()
 		return result
 	
 	var summary = "WATERWISE GAME DATA EXPORT\n"
@@ -372,7 +429,7 @@ static func create_session_export_summary() -> Dictionary:
 	summary += "SESSION LOG FILES:\n"
 	summary += dash + "\n"
 	
-	var export_dir = _get_external_base_path() + "/session_logs"
+	var export_dir = _get_external_base_path()
 	var dir = DirAccess.open(export_dir)
 	var total_size = 0
 	var file_count = 0
@@ -393,8 +450,8 @@ static func create_session_export_summary() -> Dictionary:
 	summary += "\n" + dash + "\n"
 	summary += "Total Files: " + str(file_count) + "\n"
 	summary += "Total Size: " + str(total_size) + " bytes\n\n"
-	summary += "Location: Downloads/" + EXPORT_FOLDER_NAME + "/session_logs/\n"
-	summary += "Access: Open Files app → Downloads → " + EXPORT_FOLDER_NAME + " → session_logs\n\n"
+	summary += "Location: Downloads/" + EXPORT_FOLDER_NAME + "/\n"
+	summary += "Access: Open Files app → Downloads → " + EXPORT_FOLDER_NAME + "\n\n"
 	summary += "WHAT'S IN THESE FILES:\n"
 	summary += "- Game performance metrics (FPS, memory, CPU)\n"
 	summary += "- Player accuracy and reaction times\n"

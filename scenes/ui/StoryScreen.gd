@@ -9,6 +9,11 @@ extends Control
 signal story_finished
 
 var _chapters: Array = []
+
+const STORY_DATA_PATH: String = "res://data/story/chapters.json"
+## Id of the one chapter the inline fallback below carries; kept equal to the first id in
+## chapters.json on purpose. See read_chapter_ids().
+const FALLBACK_CHAPTER_ID: String = "ch1_awakening"
 var _current_chapter: Dictionary = {}
 var _current_page: int = 0
 var _bg: ColorRect
@@ -20,6 +25,8 @@ var _tap_hint: Label
 var _container: VBoxContainer
 var _is_animating: bool = false
 var _is_finishing: bool = false
+## Set once this screen has written its chapter to the save file. See _mark_current_chapter_seen().
+var _chapter_marked_seen: bool = false
 var _tap_hint_pulse: Tween = null
 var _safety_timer: Timer = null
 var _is_mobile: bool = false
@@ -48,9 +55,36 @@ func _ready() -> void:
 	if _is_mobile:
 		_start_safety_timer()
 
+## The chapter ids, in authored order, without building a screen. GameManager asks this before
+## it creates the full-screen overlay: with every chapter already read there is nothing to show,
+## and creating the layer anyway would put a black CanvasLayer on the glass for the frame it
+## takes _show_current_page() to notice {} and emit story_finished. One frame is still a visible
+## flash on the reported device.
+##
+## Ids only, so this stays a cheap file read - the selection itself (which chapter, which page,
+## which language) remains get_next_unlocked_chapter()'s job.
+static func read_chapter_ids() -> Array[String]:
+	var ids: Array[String] = []
+	var f := FileAccess.open(STORY_DATA_PATH, FileAccess.READ)
+	if f:
+		var json := JSON.new()
+		var err := json.parse(f.get_as_text())
+		f.close()
+		if err == OK and json.data is Dictionary:
+			for chapter in json.data.get("chapters", []):
+				if chapter is Dictionary:
+					var id := str(chapter.get("id", ""))
+					if id != "":
+						ids.append(id)
+	if ids.is_empty():
+		# The same single chapter the inline fallback in _load_story_data() carries, so a build
+		# that lost the JSON is still answered consistently by both paths.
+		ids.append(FALLBACK_CHAPTER_ID)
+	return ids
+
 func _load_story_data() -> void:
 	# Try loading from the packed JSON file first.
-	var file := FileAccess.open("res://data/story/chapters.json", FileAccess.READ)
+	var file := FileAccess.open(STORY_DATA_PATH, FileAccess.READ)
 	if file:
 		var json := JSON.new()
 		var err := json.parse(file.get_as_text())
@@ -108,18 +142,40 @@ func _load_story_data() -> void:
 			}
 		]
 
+## The first chapter this player has never finished, or {} when the story is used up.
+##
+## THE DEFECT THIS REPLACES
+##   The chapter used to be picked as (minigames_played_this_session / 5) % _chapters.size().
+##   That counter is session-local: it is 0 at every launch. So the answer at every press of
+##   Play was index 0, "The Waking River", forever - and a player who plays fewer than five
+##   games at a sitting never advanced past it at all. The reported symptom ("the intro plays
+##   every time") and the hidden one (chapters 2-6 unreachable in normal play) are the same
+##   line of code.
+##
+## The progression is now the save file, so it survives the process: each chapter is handed out
+## once, in order, and {} means there is nothing left to show. Callers already treat {} as "no
+## story" - _show_current_page() emits story_finished immediately on it, and
+## GameManager._should_show_story() checks for it before building an overlay at all - so the
+## overlay stops being created once the six chapters are read rather than being created empty.
 func get_next_unlocked_chapter() -> Dictionary:
-	var games_played := 0
-	if GameManager:
-		games_played = GameManager.minigames_played_this_session
 	if _chapters.is_empty():
 		return {}
-	
-	# Endless looping logic: 1 chapter every 5 games
-	@warning_ignore("integer_division")
-	var chapter_index = (games_played / 5) % _chapters.size()
-	_current_chapter = _chapters[chapter_index]
-	return _current_chapter
+	for chapter in _chapters:
+		if not (chapter is Dictionary):
+			continue
+		var id := str(chapter.get("id", ""))
+		# A chapter with no id cannot be recorded as seen, so it would replay forever - the
+		# exact bug being fixed. Skipped instead, and warned about, since only authored data
+		# can cause it.
+		if id == "":
+			push_warning("StoryScreen: chapter without an \"id\" skipped; it could never " \
+				+ "be marked as read.")
+			continue
+		if SaveManager and SaveManager.is_story_chapter_seen(id):
+			continue
+		_current_chapter = chapter
+		return _current_chapter
+	return {}
 
 func set_chapter(chapter: Dictionary) -> void:
 	_current_chapter = chapter
@@ -291,10 +347,31 @@ func _finish_story() -> void:
 		return
 	_is_finishing = true
 	_stop_tap_hint_pulse()
+	# Recorded HERE, at the top, and not after the fade below. Two reasons, both of which would
+	# reintroduce the replay bug: the caller frees this node's whole CanvasLayer as soon as
+	# story_finished fires, and a tween killed by that free never emits `finished`, so anything
+	# written under the await is not guaranteed to run at all. Marking before the animation also
+	# means the safety timer's auto-advance path (30 s, for a stuck screen) records the chapter
+	# just the same - a player who sat through it once should not be shown it again because the
+	# tap that would have ended it never arrived.
+	_mark_current_chapter_seen()
 	var tween := create_tween()
 	tween.tween_property(self, "modulate:a", 0.0, 0.5)
 	await tween.finished
 	story_finished.emit()
+
+## Idempotent, so the safety timer firing on top of a normal finish cannot append twice
+## (SaveManager also guards, but this keeps the "seen once" record a property of this screen
+## rather than of the store's implementation).
+func _mark_current_chapter_seen() -> void:
+	if _chapter_marked_seen:
+		return
+	var id := str(_current_chapter.get("id", ""))
+	if id == "":
+		return
+	_chapter_marked_seen = true
+	if SaveManager:
+		SaveManager.mark_story_chapter_seen(id)
 
 func _exit_tree() -> void:
 	_stop_tap_hint_pulse()

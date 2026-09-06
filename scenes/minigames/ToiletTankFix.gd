@@ -218,7 +218,7 @@ func _ready():
 	
 	# Target zone indicator
 	var zone_label = Label.new()
-	zone_label.text = _loc("hud_target_arrow", "← TARGET")
+	zone_label.text = _loc("hud_target_arrow", "⬅ TARGET")
 	zone_label.add_theme_font_size_override("font_size", 18)
 	zone_label.add_theme_color_override("font_color", Color(0.2, 0.7, 0.2))
 	MiniGameAssets.outline_text(zone_label)

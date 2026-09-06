@@ -2008,7 +2008,7 @@ func _create_pause_menu():
 
 	# ── QUIT Button ──────────────────────────────────────────────────
 	var exit_btn = Button.new()
-	exit_btn.text = _loc("shell_quit_game", "✕  QUIT GAME")
+	exit_btn.text = _loc("shell_quit_game", "✖  QUIT GAME")
 	exit_btn.custom_minimum_size = Vector2(260, 64)
 	var exit_style = StyleBoxFlat.new()
 	exit_style.bg_color = Color(0.55, 0.2, 0.2, 0.85)

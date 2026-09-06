@@ -39,6 +39,7 @@ const PORT: int = 7807
 
 var results: Array = []
 var game: Node = null
+var _scene_before: Node = null
 
 
 func _ready() -> void:
@@ -67,6 +68,21 @@ func _open(scene_path: String, ready_probe: String) -> bool:
 		return false
 	game = packed.instantiate()
 	get_tree().root.add_child(game)
+	# TWO PIECES OF PER-ROUND STATE THE LIVE FLOW SUPPLIES AND THIS FILE HAS TO
+	#
+	# current_scene is how NetworkManager._apply_shared_target_end() finds the round to
+	# close when the shared quota is met - one of five places it resolves the round that
+	# way. The live flow gets there through change_scene_to_file(); rounds parented under
+	# root leave current_scene pointing at the harness, which has no end_game(), so the
+	# broadcast lands nowhere and the round plays on with its target already met (measured
+	# as "ended after 20 adds (quota 100 pts)").
+	#
+	# _shared_target_reached is a once-per-round latch that _reset_round_status() clears
+	# between rounds in the live flow. Nothing clears it between rounds played inside one
+	# process, so without this the FIRST round to meet its quota is the last one that can.
+	_scene_before = get_tree().current_scene
+	get_tree().current_scene = game
+	NetworkManager.clear_shared_target()
 	var waited: float = 0.0
 	while waited < 8.0:
 		var probe = game.get(ready_probe)
@@ -78,6 +94,10 @@ func _open(scene_path: String, ready_probe: String) -> bool:
 
 
 func _close() -> void:
+	# Restored first: current_scene must not be left pointing at a node about to be freed.
+	if _scene_before != null and is_instance_valid(_scene_before):
+		get_tree().current_scene = _scene_before
+	_scene_before = null
 	if game != null and is_instance_valid(game):
 		game.set("game_active", false)
 		get_tree().root.remove_child(game)

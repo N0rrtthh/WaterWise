@@ -215,6 +215,18 @@ func _check_quota_not_prewon() -> void:
 			return
 		var game: Node = packed.instantiate()
 		get_tree().root.add_child(game)
+		# The round-end path this gate's negative control depends on goes through the
+		# tree's CURRENT SCENE, not through the node that scored: the shared-target fix
+		# from P1 ends a round with NetworkManager._apply_shared_target_end(), whose body
+		# is `get_tree().current_scene.call("end_game", ...)` so that the partner who did
+		# NOT score the crossing point is closed out too. _shipped_load() above has since
+		# handed that slot to a decoy, so without this line the end lands on a node with no
+		# end_game() and the round under test keeps running - the negative control failed
+		# for that reason and not because the baseline was missing. Restored below.
+		get_tree().current_scene = game
+		# Per-round latch, cleared through the product's own reset so the two halves of this
+		# loop cannot depend on which ran first.
+		NetworkManager.clear_shared_target()
 		# Built, not started: the plants are what _on_multiplayer_ready() spawns, and
 		# win_quota is set in the same call, so a non-empty board is the signal that the
 		# round this gate is about to score actually exists.
@@ -246,5 +258,8 @@ func _check_quota_not_prewon() -> void:
 				"quota %d, round score %d (= the session total), still running: %s"
 					% [quota, NetworkManager.get_round_score(), str(still_running)])
 		game.set("game_active", false)
+		# Hand the slot back to this harness before the round is freed, so the tree is not
+		# left calling a freed node its current scene.
+		get_tree().current_scene = self
 		game.queue_free()
 		await _frames(3)

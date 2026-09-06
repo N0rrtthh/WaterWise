@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://bqm3f7xhtlv2n"]
+
+[ext_resource type="Script" path="res://tools/VerifyMPFeedback.gd" id="1_mpfeedback"]
+
+[node name="VerifyMPFeedback" type="Node"]
+script = ExtResource("1_mpfeedback")

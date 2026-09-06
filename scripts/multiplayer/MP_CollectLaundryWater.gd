@@ -176,7 +176,7 @@ func _on_water_caught(area: Area2D, stream: Area2D) -> void:
 	visual.modulate = Color(0.6, 0.7, 0.9, 0.3 + current * 0.1)
 	
 	water_collected += 1
-	add_score(POINTS_PER_CATCH)
+	add_score(POINTS_PER_CATCH, true, area)
 	stream.queue_free()
 	
 	if current >= capacity:

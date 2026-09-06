@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://bxmprndtmr001"]
+
+[ext_resource type="Script" path="res://tools/VerifyMPRoundTimer.gd" id="1_mprndtmr"]
+
+[node name="VerifyMPRoundTimer" type="Node"]
+script = ExtResource("1_mprndtmr")

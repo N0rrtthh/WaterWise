@@ -506,6 +506,19 @@ func _ready() -> void:
 	# Measurements are in canvas units, so the canvas has to be the shipping one. Headless brings
 	# it up square (1920x1920), which would stretch every viewport-relative target vertically, so
 	# this harness runs windowed - the same reason tools/VisualProbe.tscn does.
+	#
+	# Windowed, the window ALSO has to be asked for the shipping shape. Launching without
+	# --headless lands on the desktop work area (1920x1035 here: screen minus taskbar), and
+	# aspect=expand turns that into a 1975x1080 canvas - which fails the guard below and, worse,
+	# would put _stretch_ratio() at something other than 1.0 and silently skew the dpi/ratio
+	# injection _measure_floors() depends on. tools/AuditMobileUI.gd resizes the window for each
+	# of its seven profiles and gets exactly what it asks for, so the note further up about
+	# window_set_size() being inert is true of the FULLSCREEN mode project.godot ships, not of a
+	# windowed run: SaveManager._apply_fullscreen_setting() has already forced
+	# WINDOW_MODE_WINDOWED by the time this runs (saved "fullscreen": false).
+	if DisplayServer.get_name() != "headless":
+		DisplayServer.window_set_size(Vector2i(1920, 1080))
+		await _frames(6)
 	var base := Vector2(
 		float(ProjectSettings.get_setting("display/window/size/viewport_width", 1920)),
 		float(ProjectSettings.get_setting("display/window/size/viewport_height", 1080)))

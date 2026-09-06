@@ -61,16 +61,50 @@ const DEVICES: Array = [
 	{"name": "21:9 6.7in", "w": 2560, "h": 1080, "diag": 6.7,
 		"cut": {"left": 110.0, "right": 0.0, "top": 0.0, "bottom": 44.0}},
 	{"name": "4:3 tab 9.7in", "w": 2048, "h": 1536, "diag": 9.7},
+	# The two devices the session logs came from, at the densities their panels imply.
+	# The generic profiles above bracket them on shape but not on density, and density is
+	# what drives the 48dp touch floor and therefore every container minimum size.
+	{"name": "Moto E5 Plus", "w": 2160, "h": 1080, "diag": 6.0,
+		"cut": {"left": 0.0, "right": 0.0, "top": 0.0, "bottom": 48.0}},
+	{"name": "Poco X3", "w": 2400, "h": 1080, "diag": 6.67,
+		"cut": {"left": 0.0, "right": 0.0, "top": 0.0, "bottom": 44.0}},
 ]
 
 const SCENES: Array = [
 	"res://scenes/ui/InitialScreen.tscn",
 	"res://scenes/ui/MainMenu.tscn",
 	"res://scenes/ui/MultiplayerMenu.tscn",
+	"res://scenes/ui/MultiplayerLobby.tscn",
 	"res://scenes/ui/Settings.tscn",
 	"res://scenes/ui/FinalScore.tscn",
 	"res://scenes/ui/UnlockablesScreen.tscn",
 ]
+
+## Screens that show more than one panel in the same scene. Auditing a scene only in the
+## state it opens in measured MultiplayerLobby's mode-select buttons at nine device shapes
+## and never looked at the waiting room or the join form - and the waiting room is where the
+## reported clipping was: its column is seven rows tall, five of them raised to the
+## density-dependent 48dp floor, so it overflowed on both reported phones while the three
+## mode-select buttons fitted everywhere. Each entry names a method on the scene root that
+## puts it into that state; "" is the state the scene opens in. Depth for the waiting room
+## specifically - both roles, a density band, reachability of every row - lives in
+## tools/VerifyWaitingRoomFit.tscn; this table is what makes the general sweep see the panel
+## at all.
+const PANEL_STATES: Dictionary = {
+	"MultiplayerLobby": [
+		{"call": "", "label": "mode select"},
+		{"call": "_show_join_panel", "label": "join form"},
+		{"call": "_show_waiting_panel", "label": "waiting room"},
+	],
+}
+
+
+## The states to audit for one scene: its own list, or the single default state.
+func _states_for(path: String) -> Array:
+	var key := path.get_file().get_basename()
+	if PANEL_STATES.has(key):
+		return PANEL_STATES[key]
+	return [{"call": "", "label": ""}]
 
 var _rows: Array = []
 var _worst_dp: float = 99999.0
@@ -142,12 +176,26 @@ func _touch_targets(root: Node, out: Array) -> void:
 ## reported three overlapping pairs on every device: grid cards whose rects run
 ## past the bottom of their ScrollContainer and under the panel's Back button,
 ## where they are clipped away and untouchable.
+## Where a Control is actually drawn, ancestor scale included.
+##
+## Control.get_global_rect() pairs a TRANSFORMED position with an UNTRANSFORMED size, so a
+## control inside a scaled ancestor measures smaller than it draws - and this audit's
+## clipping check used it. MainMenu reported "clipped 0" on every device profile while the
+## title screen's EXIT button hung 78 units off the bottom of a 1080-unit screen at real
+## phone densities, because the VBox above it carries MobileUIManager's 1.5x mobile scale.
+## The touch-target size check a few lines below always multiplied by the transform scale;
+## the clipping and overlap checks did not. Measured in tools/VerifyMenuFit.tscn.
+func _canvas_rect(c: Control) -> Rect2:
+	var x := c.get_global_transform_with_canvas()
+	return Rect2(x.origin, c.size * x.get_scale())
+
+
 func _effective_rect(ctrl: Control) -> Rect2:
-	var r := ctrl.get_global_rect()
+	var r := _canvas_rect(ctrl)
 	var p := ctrl.get_parent()
 	while p != null:
 		if p is Control and (p as Control).clip_contents:
-			r = r.intersection((p as Control).get_global_rect())
+			r = r.intersection(_canvas_rect(p as Control))
 			if r.size.x <= 0.0 or r.size.y <= 0.0:
 				return Rect2()
 		p = p.get_parent()
@@ -167,13 +215,15 @@ func _in_scroll(ctrl: Node) -> bool:
 	return false
 
 
-func _audit_scene(path: String, d: Dictionary, mui: Node) -> Dictionary:
+func _audit_scene(path: String, d: Dictionary, mui: Node, state: Dictionary) -> Dictionary:
+	var label: String = str(state.get("label", ""))
 	var res := {
-		"scene": path.get_file().get_basename(),
+		"scene": path.get_file().get_basename() + ("" if label == "" else " " + label),
 		"device": d["name"],
 		"targets": 0, "too_small": 0, "clipped": 0, "overlaps": 0,
 		"min_dp": 99999.0, "min_name": "", "smallest_canvas": Vector2.ZERO,
 		"scrolled_off": 0, "clip_names": [], "overlap_names": [], "small_names": [],
+		"exempt": 0,
 	}
 
 	var inst: Node = (load(path) as PackedScene).instantiate()
@@ -188,6 +238,11 @@ func _audit_scene(path: String, d: Dictionary, mui: Node) -> Dictionary:
 	# adaptation had not run.
 	if mui != null:
 		mui.adapt_scene_for_mobile(inst)
+	# Put the scene into the panel state under audit before the settle below, so the 45
+	# frames measure the resting layout OF THAT PANEL rather than of the one it opened in.
+	var state_call: String = str(state.get("call", ""))
+	if state_call != "" and inst.has_method(state_call):
+		inst.call(state_call)
 	# 45 frames, not 10. UnlockablesScreen builds its grid after two awaits and
 	# then runs _animate_grid_reveal(), and the first version of this probe
 	# measured mid-tween - visible in sizes like 154.0052 x 147.089. Touch targets
@@ -215,16 +270,26 @@ func _audit_scene(path: String, d: Dictionary, mui: Node) -> Dictionary:
 	var rects: Array = []
 	for b in targets:
 		var ctrl := b as Control
-		var sz: Vector2 = ctrl.size * ctrl.get_global_transform().get_scale()
+		var sz: Vector2 = ctrl.size * ctrl.get_global_transform_with_canvas().get_scale()
 		var dp_x := _dp(sz.x * ratio, dpi)
 		var dp_y := _dp(sz.y * ratio, dpi)
 		var smaller: float = minf(dp_x, dp_y)
-		if smaller < float(res["min_dp"]):
-			res["min_dp"] = smaller
-			res["min_name"] = str(inst.get_path_to(ctrl))
-			res["smallest_canvas"] = sz
-		if smaller < MIN_TOUCH_DP:
-			res["too_small"] = int(res["too_small"]) + 1
+		# Rows the scene deliberately sized itself (MobileUIManager.COMPACT_ROW_META)
+		# are counted, named and reported, but kept out of the 48dp tally and out of
+		# min_dp - otherwise the whole summary reads as a regression whose cause is a
+		# design decision rather than a defect. Settings' accessibility and dev lists
+		# carry the marker: at the 48dp floor each two-column toggle measured 126x126
+		# and the list ran several screens long, so the rows were shrunk on purpose.
+		# They still take part in the clipping and overlap checks below.
+		if b.has_meta("mobile_compact_row"):
+			res["exempt"] = int(res["exempt"]) + 1
+		else:
+			if smaller < float(res["min_dp"]):
+				res["min_dp"] = smaller
+				res["min_name"] = str(inst.get_path_to(ctrl))
+				res["smallest_canvas"] = sz
+			if smaller < MIN_TOUCH_DP:
+				res["too_small"] = int(res["too_small"]) + 1
 
 		var gr := _effective_rect(ctrl)
 		if gr.size.x <= 0.0 or gr.size.y <= 0.0:
@@ -268,6 +333,25 @@ func _run() -> void:
 		print("  REFUSING: window resizing and Control layout need a real window.")
 		_tree().quit(2)
 		return
+
+	# OPT-IN SECOND STATE: the same 81 combinations with the "Large Touch Targets"
+	# accessibility toggle on. That toggle raises the floor from 48dp to
+	# MobileUIManager.LARGE_TOUCH_TARGET_DP, which grows every standalone button by
+	# about a third, so the question it has to answer is not whether targets are big
+	# enough - they are, by construction - but whether anything CLIPS or OVERLAPS once
+	# they are. Written into the in-memory settings dictionary rather than through
+	# SaveManager.set_setting(), which would persist it to waterwise_settings.json and
+	# leave the player's own preference flipped by a test run.
+	var large_targets: bool = "--large-targets" in OS.get_cmdline_user_args()
+	if large_targets:
+		var save_mgr := get_node_or_null("/root/SaveManager")
+		if save_mgr and save_mgr.get("settings") != null:
+			save_mgr.settings["large_touch_targets"] = true
+		var acc_mgr := get_node_or_null("/root/AccessibilityManager")
+		if acc_mgr:
+			acc_mgr.large_touch_targets = true
+	print("  large touch targets    : %s" % ("ON" if large_targets \
+		else "off  (pass -- --large-targets to audit the other state)"))
 
 	# Force the mobile code path on desktop. Without this, is_mobile stays false,
 	# _resolve_button_min_size() returns the desktop 44x44 and
@@ -326,34 +410,39 @@ func _run() -> void:
 		for path in SCENES:
 			if not ResourceLoader.exists(path):
 				continue
-			var r: Dictionary = await _audit_scene(path, d, mui)
-			_rows.append(r)
-			var flag := "ok  "
-			if int(r["too_small"]) > 0 or int(r["clipped"]) > 0:
-				flag = "FAIL"
-			print("      %s %-20s targets %2d  below-48dp %2d  clipped %2d  scrolled-off %2d  overlap %2d  smallest %.0fx%.0f units = %.1fdp (%s)"
-				% [flag, r["scene"], r["targets"], r["too_small"], r["clipped"],
-					r["scrolled_off"], r["overlaps"],
-					r["smallest_canvas"].x, r["smallest_canvas"].y,
-					r["min_dp"], r["min_name"]])
-			if int(r["clipped"]) > 0:
-				print("           clipped: %s (canvas %s)" % [str(r["clip_names"]).substr(0, 220), str(canvas)])
-			if int(r["overlaps"]) > 0:
-				print("           overlap: %s" % str(r["overlap_names"]).substr(0, 300))
+			for state in _states_for(path):
+				var r: Dictionary = await _audit_scene(path, d, mui, state)
+				_rows.append(r)
+				var flag := "ok  "
+				if int(r["too_small"]) > 0 or int(r["clipped"]) > 0:
+					flag = "FAIL"
+				print("      %s %-29s targets %2d  below-48dp %2d  exempt %2d  clipped %2d  scrolled-off %2d  overlap %2d  smallest %.0fx%.0f units = %.1fdp (%s)"
+					% [flag, r["scene"], r["targets"], r["too_small"], r["exempt"],
+						r["clipped"], r["scrolled_off"], r["overlaps"],
+						r["smallest_canvas"].x, r["smallest_canvas"].y,
+						r["min_dp"], r["min_name"]])
+				if int(r["clipped"]) > 0:
+					print("           clipped: %s (canvas %s)" % [str(r["clip_names"]).substr(0, 220), str(canvas)])
+				if int(r["overlaps"]) > 0:
+					print("           overlap: %s" % str(r["overlap_names"]).substr(0, 300))
 
 	var tot_small := 0
 	var tot_clip := 0
 	var tot_over := 0
 	var tot_targets := 0
+	var tot_exempt := 0
 	for r in _rows:
 		tot_small += int(r["too_small"])
 		tot_clip += int(r["clipped"])
 		tot_over += int(r["overlaps"])
 		tot_targets += int(r["targets"])
+		tot_exempt += int(r["exempt"])
 	print("  -- SUMMARY --")
-	print("  %d target measurements across %d scene/device combinations"
+	print("  %d target measurements across %d screen-state/device combinations"
 		% [tot_targets, _rows.size()])
 	print("  below the 48dp minimum : %d" % tot_small)
+	print("  exempt compact rows    : %d (scene-sized list rows, not judged against 48dp)"
+		% tot_exempt)
 	print("  clipped by the viewport: %d" % tot_clip)
 	print("  overlapping pairs      : %d" % tot_over)
 	print("  worst target anywhere  : %.1fdp at %s" % [_worst_dp, _worst_where])

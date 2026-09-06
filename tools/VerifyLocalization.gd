@@ -83,6 +83,12 @@ const INTENTIONAL_IDENTICAL: Array[String] = [
 	# five lines up, and "Hood" is the word for that car panel in both languages — the
 	# descriptive gloss ("Takip ng Makina") does not fit the 150-unit panel.
 	"mp_lb_col_p1", "mp_lb_col_p2", "mp_lb_round_num", "mp_car_hood",
+	# Established loanwords: the Multiplayer page's round-timer caption is the "round"
+	# entry above with a colon on it - this project's Filipino has used the loanword
+	# throughout ("Kanselado ang round"), and "bilog" is the shape. Its VALUE label
+	# (mp_round_timer_default) is translated rather than listed, since "default" is not
+	# one of the words this table treats that way.
+	"mp_round_timer",
 	# Format-only strings
 	"leaderboard_score_row", "finalscore_round_row", "finalscore_top_score_row",
 	"story_page_indicator", "mini_results_accuracy_line", "mini_results_time_line",

@@ -259,7 +259,14 @@ func _dismiss(tag: String) -> void:
 			"current_scene = %s" % _scene_path())
 		return
 	print("  [%s] dismissing %s at t=%.1fs" % [role, tag, _now()])
-	mg.call("_on_instruction_dismissed")
+	# See VerifyCountdownOnce._dismiss: the first-play beat pages inside this overlay, and
+	# only the last page signals readiness.
+	var taps: int = 0
+	while taps < 8 and not bool(mg.get("_instruction_dismissed")):
+		mg.call("_on_instruction_dismissed")
+		taps += 1
+		await get_tree().process_frame
+	print("  [%s] %d tap(s) to clear the overlay" % [role, taps])
 
 
 func _dismiss_round2() -> void:
@@ -270,7 +277,7 @@ func _dismiss_round2() -> void:
 		if not mg.game_started.is_connected(_on_game_started_r2):
 			mg.game_started.connect(_on_game_started_r2)
 	r2_dismiss_t = _now()
-	_dismiss("round 2")
+	await _dismiss("round 2")
 
 
 func _on_game_started_r2() -> void:

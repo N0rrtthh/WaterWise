@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://camenufit4wq2"]
+
+[ext_resource type="Script" path="res://tools/VerifyMenuFit.gd" id="1_menufit"]
+
+[node name="VerifyMenuFit" type="Node"]
+script = ExtResource("1_menufit")

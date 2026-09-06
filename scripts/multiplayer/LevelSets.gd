@@ -21,7 +21,7 @@ const LEVEL_SETS = [
 		"player1_role": "Vegetable Washer",
 		"player2_role": "Plant Waterer",
 		"connection_type": "resource_transfer",
-		"connection_description": "P1's dirty water from washing → P2 waters plants"
+		"connection_description": "P1's dirty water from washing ➡ P2 waters plants"
 	},
 	{
 		"id": "shower_water_reuse",
@@ -32,7 +32,7 @@ const LEVEL_SETS = [
 		"player1_role": "Shower Water Collector",
 		"player2_role": "Toilet Flusher",
 		"connection_type": "resource_transfer",
-		"connection_description": "P1's shower water → P2 flushes toilets"
+		"connection_description": "P1's shower water ➡ P2 flushes toilets"
 	},
 	{
 		"id": "rain_aquarium",
@@ -43,7 +43,7 @@ const LEVEL_SETS = [
 		"player1_role": "Rain Catcher",
 		"player2_role": "Aquarium Keeper",
 		"connection_type": "resource_transfer",
-		"connection_description": "P1's rainwater → P2 fills aquarium"
+		"connection_description": "P1's rainwater ➡ P2 fills aquarium"
 	},
 	{
 		"id": "laundry_water_reuse",
@@ -54,7 +54,7 @@ const LEVEL_SETS = [
 		"player1_role": "Laundry Water Collector",
 		"player2_role": "Floor Mopper",
 		"connection_type": "resource_transfer",
-		"connection_description": "P1's laundry water → P2 mops floors"
+		"connection_description": "P1's laundry water ➡ P2 mops floors"
 	},
 	{
 		"id": "dishwater_car_wash",
@@ -65,7 +65,7 @@ const LEVEL_SETS = [
 		"player1_role": "Dish Water Collector",
 		"player2_role": "Car Washer",
 		"connection_type": "resource_transfer",
-		"connection_description": "P1's dish water → P2 washes car"
+		"connection_description": "P1's dish water ➡ P2 washes car"
 	},
 	{
 		## The sixth pair, added because both of its games were unreachable without it: 12 MP_*.tscn
@@ -81,7 +81,7 @@ const LEVEL_SETS = [
 		"player1_role": "Rain Catcher",
 		"player2_role": "Water Filterer",
 		"connection_type": "resource_transfer",
-		"connection_description": "P1's caught rain → P2 filters it clean"
+		"connection_description": "P1's caught rain ➡ P2 filters it clean"
 	}
 ]
 

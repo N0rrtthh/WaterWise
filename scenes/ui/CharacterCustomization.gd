@@ -10,6 +10,8 @@ const BG_PLATFORM = preload("res://assets/bg_layers/platform.png")
 const BG_WAVES_1 = preload("res://assets/bg_layers/waves_1.png")
 const BG_WAVES_2 = preload("res://assets/bg_layers/waves_2.png")
 const BG_WAVES_3 = preload("res://assets/bg_layers/waves_3.png")
+const BACKDROP_BLUR_SHADER = preload("res://shaders/backdrop_blur.gdshader")
+const UI_GRAYSCALE_SHADER = preload("res://shaders/ui_grayscale.gdshader")
 
 const CHARACTER_PRESETS: Array[Dictionary] = [
 	{"id": "droppy_blue", "name": "Droppy", "hat": "💧", "color": Color(0.3, 0.6, 1.0)},
@@ -56,6 +58,9 @@ var _left_arrow: Button
 var _right_arrow: Button
 var _accessory_grid: HBoxContainer
 var _accessory_buttons: Dictionary = {}
+## One dot per character, so the arrows say how far the carousel runs. There was no
+## indicator at all: the two arrows looked like they could scroll forever.
+var _carousel_dots: Array[Label] = []
 var _bob_tween: Tween
 var _bg_layers: Control
 var _bg_tint: ColorRect
@@ -159,6 +164,14 @@ func _setup_waterville_background() -> void:
 	_bg_tint.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_bg_tint.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_bg_tint.z_index = 10
+	# Blur + scrim over the Waterville layers, so the preview card in front of them is
+	# the focus. This rect is the LAST child of _bg_layers (z -20 relative), which means
+	# the screen texture the shader samples holds the background art and nothing of the
+	# foreground UI - the UI sits at z 0 and is drawn after.
+	var blur_mat := ShaderMaterial.new()
+	blur_mat.shader = BACKDROP_BLUR_SHADER
+	blur_mat.set_shader_parameter("radius", 5.0)
+	_bg_tint.material = blur_mat
 	_bg_layers.add_child(_bg_tint)
 
 	_apply_background_theme()
@@ -297,11 +310,16 @@ func _apply_background_theme() -> void:
 			else Color(0.64, 0.79, 0.91, 1.0)
 		)
 	if _bg_tint:
-		_bg_tint.color = (
-			Color(1.0, 1.0, 1.0, 0.06)
-			if not is_dark
-			else Color(0.18, 0.30, 0.45, 0.18)
-		)
+		# Scrim strength lives in the shader now, not in ColorRect.color: the material
+		# writes COLOR outright, so the node's own colour is never read.
+		var mat := _bg_tint.material as ShaderMaterial
+		if mat:
+			mat.set_shader_parameter(
+				"scrim",
+				Color(0.85, 0.92, 0.98, 0.42)
+				if not is_dark
+				else Color(0.16, 0.27, 0.42, 0.55)
+			)
 
 
 func _apply_ui_theme() -> void:
@@ -414,6 +432,27 @@ func _build_runtime_ui() -> void:
 	_right_arrow.pressed.connect(_on_next_character)
 	carousel_row.add_child(_right_arrow)
 
+	# Position indicator, directly under the arrow row.
+	var dots_row = HBoxContainer.new()
+	dots_row.name = "CarouselDots"
+	dots_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	dots_row.add_theme_constant_override("separation", 10)
+	dots_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root_vbox.add_child(dots_row)
+
+	_carousel_dots.clear()
+	for _i in range(CHARACTER_PRESETS.size()):
+		var dot = Label.new()
+		dot.text = "⚫"
+		dot.add_theme_font_size_override("font_size", 14)
+		# The dots sit on the background art, not on a panel, so they carry their own
+		# outline to stay readable over hills, house and platform alike.
+		dot.add_theme_color_override("font_outline_color", Color(1, 1, 1, 0.85))
+		dot.add_theme_constant_override("outline_size", 3)
+		dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		dots_row.add_child(dot)
+		_carousel_dots.append(dot)
+
 	# Character name
 	_name_label = Label.new()
 	_name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -447,7 +486,7 @@ func _build_runtime_ui() -> void:
 	for acc in ACCESSORIES:
 		var btn = Button.new()
 		var acc_id := str(acc.id)
-		btn.text = "%s %s" % [acc.icon, _get_accessory_name(acc_id, str(acc.name))]
+		btn.text = _accessory_button_text(acc_id, str(acc.icon), str(acc.name))
 		btn.custom_minimum_size = Vector2(100, 46)
 		btn.toggle_mode = true
 		btn.add_theme_font_override("font", UI_FONT)
@@ -486,12 +525,77 @@ func _build_runtime_ui() -> void:
 	_back_button.custom_minimum_size = Vector2(200, 50)
 	_back_button.add_theme_font_override("font", UI_FONT)
 	_back_button.add_theme_font_size_override("font_size", 20)
-	_back_button.text = _loc("back", "← BACK")
+	_back_button.text = _loc("back", "⬅ BACK")
 	_back_button.pressed.connect(_on_back_pressed)
 	action_row.add_child(_back_button)
 
+	_style_action_buttons()
+
 	_setup_interaction_feedback()
 	_apply_ui_theme()
+
+
+## APPLY LOOK is the primary action and BACK is the way out, but both shipped with the
+## default theme's identical grey slab, so the screen offered no hint which one commits
+## the change. Filled accent versus muted outline is the same primary/secondary split
+## Settings already uses for its own BACK/EXIT pair.
+func _style_action_buttons() -> void:
+	var is_dark := _is_dark_mode_enabled()
+
+	var primary := StyleBoxFlat.new()
+	primary.bg_color = Color(0.16, 0.62, 0.36) if not is_dark else Color(0.20, 0.68, 0.42)
+	primary.border_width_bottom = 6
+	primary.border_color = primary.bg_color.darkened(0.35)
+	for corner in ["top_left", "top_right", "bottom_left", "bottom_right"]:
+		primary.set("corner_radius_%s" % corner, 14)
+
+	var secondary := StyleBoxFlat.new()
+	secondary.bg_color = (
+		Color(0.96, 0.98, 1.0, 0.9) if not is_dark else Color(0.22, 0.33, 0.48, 0.92)
+	)
+	secondary.border_width_left = 2
+	secondary.border_width_right = 2
+	secondary.border_width_top = 2
+	secondary.border_width_bottom = 2
+	secondary.border_color = (
+		Color(0.44, 0.56, 0.70) if not is_dark else Color(0.62, 0.74, 0.88)
+	)
+	for corner in ["top_left", "top_right", "bottom_left", "bottom_right"]:
+		secondary.set("corner_radius_%s" % corner, 14)
+
+	_apply_button_states(
+		_save_button, primary, Color.WHITE, Color(0.86, 0.92, 0.88)
+	)
+	_apply_button_states(
+		_back_button,
+		secondary,
+		Color(0.18, 0.30, 0.44) if not is_dark else Color(0.92, 0.96, 1.0),
+		Color(0.55, 0.60, 0.66)
+	)
+
+
+## Same box for every interactive state, with hover/pressed derived from it, so a
+## button cannot fall back to the default theme in one of them.
+func _apply_button_states(
+	btn: Button, base: StyleBoxFlat, text_col: Color, disabled_col: Color
+) -> void:
+	if not btn:
+		return
+	var hover := base.duplicate() as StyleBoxFlat
+	hover.bg_color = base.bg_color.lightened(0.07)
+	var pressed := base.duplicate() as StyleBoxFlat
+	pressed.bg_color = base.bg_color.darkened(0.12)
+	var disabled := base.duplicate() as StyleBoxFlat
+	disabled.bg_color = base.bg_color.lerp(Color(0.62, 0.62, 0.64), 0.6)
+
+	btn.add_theme_stylebox_override("normal", base)
+	btn.add_theme_stylebox_override("hover", hover)
+	btn.add_theme_stylebox_override("pressed", pressed)
+	btn.add_theme_stylebox_override("focus", base)
+	btn.add_theme_stylebox_override("disabled", disabled)
+	for state in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color"]:
+		btn.add_theme_color_override(state, text_col)
+	btn.add_theme_color_override("font_disabled_color", disabled_col)
 
 
 func _input(event: InputEvent) -> void:
@@ -644,6 +748,7 @@ func _update_carousel(direction: int) -> void:
 		)
 		_save_button.disabled = true
 	_update_accessory_buttons()
+	_update_carousel_dots()
 
 
 func _get_current_accessory(char_id: String) -> String:
@@ -699,10 +804,77 @@ func _update_accessory_buttons() -> void:
 		var owned = _is_accessory_unlocked(acc_id)
 		btn.disabled = not owned
 		btn.button_pressed = (acc_id == current_acc)
-		if owned:
-			btn.modulate = Color(1, 1, 1, 1)
-		else:
-			btn.modulate = Color(0.6, 0.6, 0.6, 0.8)
+		_style_accessory_button(btn, owned, acc_id == current_acc)
+
+
+## Three states, visually distinct.
+##
+## Every thumbnail used to share the default theme's grey slab, separated only by
+## `modulate`: 1.0 for owned and 0.6 for locked. On this pale screen that read as one
+## row of washed-out boxes with no way to tell locked from merely unselected. Owned now
+## gets a legible light card, the equipped one an accent fill, and locked a desaturated
+## card plus the padlock its label already carries.
+func _style_accessory_button(btn: Button, owned: bool, selected: bool) -> void:
+	if not btn:
+		return
+
+	var box := StyleBoxFlat.new()
+	for corner in ["top_left", "top_right", "bottom_left", "bottom_right"]:
+		box.set("corner_radius_%s" % corner, 10)
+	box.border_width_left = 2
+	box.border_width_right = 2
+	box.border_width_top = 2
+	box.border_width_bottom = 2
+
+	var text_col := Color(0.16, 0.26, 0.38)
+	if not owned:
+		box.bg_color = Color(0.86, 0.87, 0.89, 0.95)
+		box.border_color = Color(0.66, 0.67, 0.70)
+		text_col = Color(0.42, 0.44, 0.48)
+	elif selected:
+		box.bg_color = Color(0.20, 0.60, 0.95)
+		box.border_color = Color(0.10, 0.40, 0.72)
+		text_col = Color.WHITE
+	else:
+		box.bg_color = Color(0.98, 0.99, 1.0)
+		box.border_color = Color(0.52, 0.64, 0.78)
+
+	_apply_button_states(btn, box, text_col, text_col)
+
+	# Grayscale needs a shader: the thumbnails are colour-font emoji, which `modulate`
+	# dims without desaturating, so a locked hat stayed as vivid as an owned one.
+	if owned:
+		btn.material = null
+		btn.modulate = Color.WHITE
+	else:
+		if not (btn.material is ShaderMaterial):
+			var mat := ShaderMaterial.new()
+			mat.shader = UI_GRAYSCALE_SHADER
+			btn.material = mat
+		btn.modulate = Color(1, 1, 1, 0.92)
+
+
+## Label for one accessory thumbnail, padlocked while it is not owned. Shared by the
+## build pass and the language-change refresh so the two cannot drift.
+func _accessory_button_text(acc_id: String, icon: String, fallback_name: String) -> String:
+	var label := "%s %s" % [icon, _get_accessory_name(acc_id, fallback_name)]
+	if not _is_accessory_unlocked(acc_id):
+		return "🔒 %s" % label
+	return label
+
+
+## Highlights the dot for the character now on screen.
+func _update_carousel_dots() -> void:
+	for i in range(_carousel_dots.size()):
+		var dot := _carousel_dots[i]
+		if dot == null or not is_instance_valid(dot):
+			continue
+		var active := i == _carousel_index
+		dot.add_theme_color_override(
+			"font_color",
+			Color(0.13, 0.42, 0.76) if active else Color(0.42, 0.52, 0.64, 0.85)
+		)
+		dot.add_theme_font_size_override("font_size", 20 if active else 14)
 
 
 func _is_accessory_unlocked(acc_id: String) -> bool:
@@ -856,7 +1028,7 @@ func _update_translations() -> void:
 	if _save_button:
 		_save_button.text = _loc("apply_look", "APPLY LOOK")
 	if _back_button:
-		_back_button.text = _loc("back", "← BACK")
+		_back_button.text = _loc("back", "⬅ BACK")
 	_refresh_accessory_button_texts()
 
 
@@ -904,9 +1076,11 @@ func _refresh_accessory_button_texts() -> void:
 		var btn := _accessory_buttons[acc_id] as Button
 		if not btn:
 			continue
-		btn.text = "%s %s" % [str(acc.icon), _get_accessory_name(acc_id, str(acc.name))]
+		btn.text = _accessory_button_text(acc_id, str(acc.icon), str(acc.name))
 
 
 func _on_theme_changed(_is_dark: bool) -> void:
 	_apply_background_theme()
 	_apply_ui_theme()
+	_style_action_buttons()
+	_update_accessory_buttons()

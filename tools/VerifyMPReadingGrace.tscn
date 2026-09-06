@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://bxmpreadgrc01"]
+
+[ext_resource type="Script" path="res://tools/VerifyMPReadingGrace.gd" id="1_mpreadgrc"]
+
+[node name="VerifyMPReadingGrace" type="Node"]
+script = ExtResource("1_mpreadgrc")

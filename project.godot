@@ -42,6 +42,7 @@ ButtonAnimator="*res://autoload/ButtonAnimator.gd"
 SessionLogger="*res://autoload/SessionLogger.gd"
 AutoPlayManager="*res://autoload/AutoPlayManager.gd"
 ScreenScaler="*res://autoload/ScreenScaler.gd"
+_mcp_game_helper="*res://addons/godot_ai/runtime/game_helper.gd"
 
 [display]
 

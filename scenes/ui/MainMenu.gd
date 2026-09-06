@@ -111,7 +111,7 @@ func _create_autoplay_toggle() -> void:
 	var dot := Label.new()
 	dot.name = "AutoPlayDot"
 	var is_on: bool = AutoPlayManager.is_auto_play_enabled() if AutoPlayManager else false
-	dot.text = "●"
+	dot.text = "⚫"
 	dot.add_theme_font_size_override("font_size", 18)
 	dot.add_theme_color_override("font_color",
 		Color(0.2, 0.9, 0.3) if is_on else Color(0.55, 0.55, 0.55))

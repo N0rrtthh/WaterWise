@@ -1,6 +1,10 @@
 class_name MultiplayerMiniGameBase
 extends Node2D
 
+## Bundled pause/play glyphs — the system emoji font has no coverage for
+## "⏸"/"▶" on Android 8 (Moto E5 Plus), where they render as tofu boxes.
+const GlyphIcons = preload("res://scripts/ui/GlyphIcons.gd")
+
 ## 
 ## MULTIPLAYER MINIGAME BASE CLASS
 ## 
@@ -37,6 +41,13 @@ const FONT_BODY: Font = preload("res://fonts/NTBrickSans.otf")
 # 
 
 var game_active: bool = false
+## Set by _on_quit_pressed() the moment this round begins leaving, so the second caller
+## does nothing. There are now two: the pause menu's QUIT button, whose Button stays
+## enabled while return_to_multiplayer_lobby() tears the session down, and
+## AutoPlayManager's duration deadline, which can land on the same frame as a tap.
+## Running the teardown twice closes an already-closed ENet peer and asks for a second
+## scene change.
+var _quitting: bool = false
 var game_started_time: int = 0
 ## Milliseconds this round has spent frozen, and when the current freeze began (0
 ## when running). Subtracted by elapsed_play_seconds(); see there for why.
@@ -79,12 +90,65 @@ var background_layer: CanvasLayer = null
 ## household games build). Authored once here so the five copies agree.
 
 const HUD_PANEL_OFFSET: Vector2 = Vector2(20.0, 100.0)
+
+## How long "GO!" stays up after the last countdown tick before the round is playable. Was a
+## bare 1.0, which is 0.6 s of nothing after the 0.4 s scale animation that draws the word -
+## dead time paid on every round of every set. Each peer runs this locally off its own GO
+## tick, so shortening it shortens both by the same amount and does not widen the skew
+## between them. Kept longer than the animation on purpose: a GO that vanishes before it
+## finishes drawing reads as a dropped frame.
+const GO_HOLD_SECONDS: float = 0.45
+
+## How long the host waits for a partner's ready signal before force-starting the round.
+## Unchanged at 6 s for the ordinary case, where a missing signal means a lost packet.
+const PARTNER_READY_FALLBACK_SECONDS: float = 6.0
+
+## The same deadline while a peer has told us it is still reading a first-play beat. Six
+## seconds is nothing next to three pages of instructions, and the peer that gets
+## force-started loses that round's tutorial permanently - the key is marked shown when the
+## pages are built. This is a ceiling, not a wait: the round starts the instant the partner
+## readies. It only stops the host from force-starting a person who is visibly mid-sentence,
+## while still capping the case where that person walks away.
+const READING_GRACE_SECONDS: float = 60.0
+
+## How often the fallback re-checks. Coarse on purpose - it is a safety net, not a clock -
+## and it costs one SceneTree timer per tick during the wait only.
+const FALLBACK_POLL_SECONDS: float = 0.5
+
 var countdown_label: Label
 var waiting_overlay: Control
+## The "waiting for partner" line on the results overlay, held so it can be refreshed
+## with the partner's live contribution instead of standing still. See
+## _update_waiting_progress().
+var _waiting_progress_label: Label
+## Partner's share of the team total at the moment this peer finished, so the overlay can
+## report what they have added SINCE rather than their running total.
+var _partner_score_at_finish: int = 0
 var pause_menu: Control
+## The HUD pause/resume toggle. Held so _on_remote_pause/_on_remote_resume can swap its
+## glyph, which is what tells the player which way the button will act next.
+var pause_button: Button
 var instruction_overlay: Control
 var timer_label: Label
 var _instruction_dismissed: bool = false  # Guard against re-entry in _on_instruction_dismissed
+## First-play how-to-play beat: the pages of text shown in the instruction overlay ahead of
+## the every-round blurb, and which one is on screen. Empty on every later play. Pages inside
+## the existing overlay rather than TutorialManager's own popup because dismissing THIS
+## overlay is also what signals readiness - see _build_first_play_pages().
+var _tutorial_pages: Array[String] = []
+var _tutorial_page: int = 0
+
+## Local hit/miss feedback: the pooled miss tint, the camera-shake tween slot and the camera
+## offset that shake returns to. Built on first use and reused for the round; see the LOCAL
+## FEEDBACK section for what was missing in co-op and why it hooks the two scoring funnels.
+var _fx_flash: ColorRect = null
+var _fx_shake_tween: Tween = null
+var _fx_camera_home: Vector2 = Vector2.ZERO
+var _fx_camera_home_set: bool = false
+## Frame of the last hit sting. MP_FilterWater pays twice on one frame (per particle, then a
+## bonus for the unit that particle completed), and two copies of one sting started on the
+## same frame do not read as louder - they phase against each other and read as a glitch.
+var _fx_last_hit_frame: int = -1
 
 # 
 # INITIALIZATION
@@ -123,6 +187,16 @@ func _ready() -> void:
 	
 	# Initialize game-specific setup FIRST (sets game_name and game_duration)
 	_on_multiplayer_ready()
+
+	# The Multiplayer page's ROUND TIMER row overrides the length the scene authored. It is
+	# read here rather than in each of the twelve games because this is the one line that
+	# runs after _on_multiplayer_ready() has set game_duration and before
+	# _setup_multiplayer_ui() reads it to size the timer bar. Host-authoritative and
+	# broadcast (NetworkManager.mp_round_seconds), so both peers time the same round; 0
+	# means "leave the authored value alone", which is what a session that never touches
+	# the control gets. MP-only: single player's base is scripts/MiniGameBase.gd.
+	if NetworkManager and NetworkManager.has_method("round_seconds_for"):
+		game_duration = NetworkManager.round_seconds_for(game_duration)
 	
 	# Register with AutoPlayManager so the MP bot can drive this game
 	if AutoPlayManager and AutoPlayManager.is_mp_auto_play_enabled():
@@ -152,6 +226,7 @@ func _ready() -> void:
 	# Show instructions (override get_instructions() in child class)
 	var instructions_text = get_instructions()
 	if instructions_text != "":
+		_build_first_play_pages(instructions_text)
 		show_instructions(instructions_text)
 	else:
 		# No instructions, start immediately
@@ -354,11 +429,19 @@ func _finish_hud_panel(panel: Control, offset: Vector2) -> void:
 	if not (bar is Control):
 		return
 	var bar_ctrl: Control = bar
-	# size.y needs a completed layout sort, which is not guaranteed this early; the 120 floor is
-	# the bar's own content height (a 28px title over 10/15 margins) so the clearance is right
-	# even on the frame where the container has not sized itself yet. +10 is the stylebox
-	# expand_margin_bottom, which draws below size.y, and +4 is a breathing gap.
-	var bottom: float = bar_ctrl.position.y + maxf(bar_ctrl.size.y, 120.0) + 14.0
+	# size.y needs a completed layout sort, which is not guaranteed this early, so the bar's
+	# own combined minimum size is taken as well: TopBar is PRESET_TOP_WIDE, so once sorted its
+	# height IS that minimum, and asking for it needs no sort. The 120 constant stays as a floor
+	# (a 28px title over 10/15 margins). Reading size.y alone measured 120 here while the settled
+	# bar was 123 tall, because the pause button's bundled glyph made the bar 3 units taller than
+	# the text version it replaced: the panel then cleared the bar's DRAWN bottom (size + the 10
+	# of expand_margin_bottom) by 1 unit instead of 4, and tools/VerifyFixedUnitLayout.tscn
+	# reported the 3-unit disagreement at all five counters and all three viewports. +10 is the
+	# stylebox expand_margin_bottom, which draws below size.y, and +4 is a breathing gap.
+	var bar_height: float = maxf(
+		maxf(bar_ctrl.size.y, bar_ctrl.get_combined_minimum_size().y), 120.0
+	)
+	var bottom: float = bar_ctrl.position.y + bar_height + 14.0
 	if panel.position.y < bottom:
 		panel.position.y = bottom
 
@@ -558,15 +641,18 @@ func _setup_multiplayer_ui() -> void:
 	partner_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	roles_vbox.add_child(partner_label)
 	
-	# Pause button
-	var pause_btn = Button.new()
-	pause_btn.text = ""
-	pause_btn.custom_minimum_size = Vector2(50, 50)
-	pause_btn.add_theme_font_size_override("font_size", 24)
-	pause_btn.pressed.connect(_on_pause_pressed)
-	pause_btn.process_mode = Node.PROCESS_MODE_ALWAYS
-	pause_btn.focus_mode = Control.FOCUS_NONE
-	right_box.add_child(pause_btn)
+	# Pause button. The glyph is a bundled drawing, not a font character: this shipped
+	# with text = "" (the emoji having been stripped at some point), which made it an
+	# invisible ~50-unit hit area in the top-right corner of a tap-driven minigame.
+	# Gameplay taps landing on it are half of what produced the pause/resume storm in
+	# session_2026-09-05T00-27-36.json; the other half was AutoPlayManager un-pausing.
+	pause_button = Button.new()
+	pause_button.custom_minimum_size = Vector2(50, 50)
+	pause_button.pressed.connect(_on_pause_pressed)
+	pause_button.process_mode = Node.PROCESS_MODE_ALWAYS
+	pause_button.focus_mode = Control.FOCUS_NONE
+	GlyphIcons.apply_pause_glyph(pause_button, true)
+	right_box.add_child(pause_button)
 	
 	# Create overlays
 	_create_pause_menu()
@@ -766,6 +852,9 @@ func _create_instruction_overlay() -> void:
 	vbox.add_child(spacer)
 	
 	var start_label = Label.new()
+	# Named so the paged first-play beat can swap this line to "tap to continue" while pages
+	# remain and back to "tap to start" on the last one. It was the one unnamed child here.
+	start_label.name = "StartPrompt"
 	start_label.text = Localization.get_text("tap_to_start")
 	start_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	start_label.add_theme_font_size_override("font_size", 20)
@@ -820,6 +909,11 @@ func show_instructions(instructions_text: String) -> void:
 		)
 		if instructions_label:
 			instructions_label.text = instructions_text
+			# First play only. The blurb is itself the LAST page, so the tap that finally starts
+			# the round is the same tap on the same text as on every later play.
+			if not _tutorial_pages.is_empty():
+				instructions_label.text = _tutorial_pages[0]
+		_update_start_prompt()
 		
 		var title_label = instruction_overlay.get_node_or_null(
 			"CenterContainer/PanelContainer/VBoxContainer/Title"
@@ -839,6 +933,105 @@ func show_instructions(instructions_text: String) -> void:
 		if click_catcher and click_catcher is Button:
 			click_catcher.disabled = false
 
+## Build the first-play how-to-play beat for THIS round, or leave it empty.
+##
+## THE DEFECT
+##   Every multiplayer round showed one line of instructions and nothing else, so a new
+##   player was never told the one thing co-op depends on: that what they are catching is
+##   what the OTHER player is waiting for. Single player has had a first-play tutorial for
+##   every game since forever - MiniGameBase._show_first_play_tutorial() - and none of the
+##   twelve multiplayer rounds had any equivalent.
+##
+## WHY PAGES IN THIS OVERLAY AND NOT TutorialManager's OWN POPUP
+##   Dismissing this overlay IS the readiness handshake: _on_instruction_dismissed() calls
+##   NetworkManager.set_local_player_ready(). A second popup on top with its own START
+##   button would be dismissed separately, so a player still reading it would never have
+##   signalled ready - and the host's six-second fallback would start the round without
+##   them. Paging the existing overlay keeps exactly one thing to dismiss and exactly one
+##   readiness signal, and reuses a panel whose layout is already audited at both reported
+##   device shapes rather than introducing a second one that could overflow.
+##
+## The every-round blurb is kept as the LAST page so the final tap - the one that readies
+## the player - lands on the same text it always did.
+func _build_first_play_pages(instructions_text: String) -> void:
+	_tutorial_pages = []
+	_tutorial_page = 0
+	if TutorialManager == null or Localization == null:
+		return
+	var key: String = "mp_" + _mp_game_key()
+	if key == "mp_":
+		return
+	if not TutorialManager.should_show_tutorial(key):
+		return
+	var data: Dictionary = TutorialManager.get_tutorial(key)
+	var steps: Array = data.get("steps", [])
+	if steps.is_empty():
+		# No copy authored for this game: leave the pages empty so the round behaves exactly
+		# as it did before, rather than showing a blank page nobody can learn anything from.
+		return
+
+	var pages: Array[String] = []
+	for step in steps:
+		var text: String = str(step.get("text", "")).strip_edges()
+		if text != "":
+			pages.append(text)
+	if pages.is_empty():
+		return
+	# The tip rides on the last taught page rather than getting a page of its own: it is a
+	# refinement of the thing just explained, and a fourth tap before a round that is already
+	# slow to start is what P4(c) is trying to remove, not add to.
+	var tip: String = str(data.get("tip", "")).strip_edges()
+	if tip != "":
+		pages[pages.size() - 1] += "\n\n" + Localization.get_text("mp_tutorial_tip_prefix") + tip
+	pages.append(instructions_text)
+	_tutorial_pages = pages
+	# Marked here, the way single player marks it at popup-creation time, so a player who
+	# quits out mid-beat is not shown it again on every future attempt.
+	TutorialManager.mark_tutorial_shown(key)
+	# Tell the other peer that the ready signal it is waiting on is a person reading, not a
+	# dropped packet. Without this the host force-starts after six seconds and this player
+	# loses the beat mid-sentence - and permanently, because of the line above.
+	if NetworkManager and NetworkManager.has_method("set_local_player_reading"):
+		NetworkManager.set_local_player_reading(true)
+
+
+## Advance the beat one page. Returns true if a page was shown, meaning the caller must NOT
+## treat this tap as the dismissal.
+func _advance_tutorial_page() -> bool:
+	if _tutorial_pages.is_empty():
+		return false
+	if _tutorial_page >= _tutorial_pages.size() - 1:
+		return false
+	var label: Label = instruction_overlay.get_node_or_null(
+		"CenterContainer/PanelContainer/VBoxContainer/Instructions"
+	) as Label
+	if label == null:
+		# Nothing to page into. Fall through to the dismissal instead of eating the tap: a
+		# beat that cannot render must not be able to strand a player on a screen whose only
+		# button has stopped doing anything.
+		_tutorial_page = _tutorial_pages.size() - 1
+		return false
+	_tutorial_page += 1
+	label.text = _tutorial_pages[_tutorial_page]
+	_update_start_prompt()
+	return true
+
+
+## Keep the pulsing line under the panel honest about what the next tap will do. "Tap to
+## start" while there are still pages to read is a promise the tap does not keep.
+func _update_start_prompt() -> void:
+	if instruction_overlay == null or Localization == null:
+		return
+	var prompt: Label = instruction_overlay.get_node_or_null(
+		"CenterContainer/PanelContainer/VBoxContainer/StartPrompt"
+	) as Label
+	if prompt == null:
+		return
+	var more_pages: bool = _tutorial_page < _tutorial_pages.size() - 1
+	prompt.text = Localization.get_text(
+		"mp_tap_to_continue" if more_pages else "tap_to_start"
+	)
+
 func _on_instruction_clicked(event: InputEvent) -> void:
 	# Handle click on instruction overlay
 	var is_mouse_click = (
@@ -856,6 +1049,15 @@ func _on_instruction_dismissed() -> void:
 		return
 	if not instruction_overlay or not instruction_overlay.visible:
 		return
+
+	# FIRST PLAY: page through the how-to-play beat first. This returns WITHOUT setting
+	# _instruction_dismissed, so everything below - the fade, _show_waiting_for_start() and
+	# set_local_player_ready() - still happens exactly once, on the last page, as it always
+	# did. A separate popup with its own button would have let a peer read past the readiness
+	# signal and be force-started into a round it never said it was ready for.
+	if _advance_tutorial_page():
+		return
+
 	_instruction_dismissed = true
 
 	var click_catcher = instruction_overlay.get_node_or_null("ClickCatcher")
@@ -871,8 +1073,12 @@ func _on_instruction_dismissed() -> void:
 		instruction_overlay.modulate.a = 1.0
 	)
 
-	# Show waiting overlay and notify readiness
+	# Show waiting overlay and notify readiness. The still-reading flag is cleared FIRST, so
+	# a partner already inside its fallback loop never sees "ready" and "still reading" at
+	# once and can act on the ready on its very next poll.
 	_show_waiting_for_start()
+	if NetworkManager.has_method("set_local_player_reading"):
+		NetworkManager.set_local_player_reading(false)
 	if NetworkManager.has_method("set_local_player_ready"):
 		NetworkManager.set_local_player_ready()
 	else:
@@ -881,13 +1087,42 @@ func _on_instruction_dismissed() -> void:
 			NetworkManager.start_countdown()
 		_show_countdown_overlay()
 
-	# HOST FALLBACK: if partner never signals ready within 6 seconds, force-start countdown.
-	# This covers the case where the client's ready RPC is lost or arrives late.
+	# HOST FALLBACK: if the partner never signals ready, force-start the countdown. This
+	# covers the case where their ready RPC is lost or arrives late.
 	if NetworkManager.is_server():
-		await get_tree().create_timer(6.0).timeout
-		if not game_active:
-			_log("⚠️ Partner ready timeout — force-starting countdown")
-			NetworkManager.start_countdown()
+		await _await_partner_then_force_start()
+
+
+## Wait out the partner's ready signal, then force-start the round if it never came.
+##
+## Was a single six-second sleep. Six seconds is the right deadline for a lost packet and the
+## wrong one for a person: the first-play beat puts three pages of instructions in front of a
+## new player, so a host that had played before force-started its partner out of the tutorial
+## almost every time - and permanently, since the tutorial key is spent when the pages are
+## built. Polling instead of sleeping lets the deadline depend on which of those two cases
+## this actually is, using the flag the reading peer sets (NetworkManager.set_local_player_reading).
+## Nothing here decides to START a round early: game_active going true ends the wait
+## immediately, and that only ever comes from the countdown the ready route triggered.
+func _await_partner_then_force_start() -> void:
+	var waited: float = 0.0
+	var deadline: float = PARTNER_READY_FALLBACK_SECONDS
+	var extended: bool = false
+	while waited < deadline and not game_active:
+		await get_tree().create_timer(FALLBACK_POLL_SECONDS).timeout
+		if not is_inside_tree():
+			return
+		waited += FALLBACK_POLL_SECONDS
+		# Re-read every tick rather than once: the flag can arrive after this loop starts,
+		# and it is cleared the moment that peer readies, which lets the ordinary deadline
+		# apply again to whatever is left of the wait.
+		if NetworkManager and NetworkManager.has_method("any_player_still_reading") 				and NetworkManager.any_player_still_reading():
+			deadline = READING_GRACE_SECONDS
+			if not extended:
+				extended = true
+				_log("📖 Partner still reading the how-to-play beat — holding the force-start")
+	if not game_active:
+		_log("⚠️ Partner ready timeout after %.0fs — force-starting countdown" % waited)
+		NetworkManager.start_countdown()
 
 func _show_waiting_for_start() -> void:
 	# Show waiting message while waiting for partner to click ready
@@ -942,7 +1177,7 @@ func _on_countdown_tick(count: int) -> void:
 			tween.set_loops(1)
 			tween.tween_property(countdown_label, "scale", Vector2(1.5, 1.5), 0.2).from(Vector2.ZERO)
 			tween.tween_property(countdown_label, "scale", Vector2(1.0, 1.0), 0.2)
-			await get_tree().create_timer(1.0).timeout
+			await get_tree().create_timer(GO_HOLD_SECONDS).timeout
 			_on_countdown_complete()
 
 # 
@@ -1261,6 +1496,145 @@ func hide_waiting_overlay() -> void:
 		results.visible = false
 
 # 
+# LOCAL FEEDBACK ("juice")
+# 
+# All twelve live co-op rounds shipped with NO hit or miss feedback of their own: a grep for
+# play_collect / play_damage / Juice. / create_tween across scripts/multiplayer/MP_*.gd returns
+# exactly one tween, in MP_WaterPlants. Single player has had the whole vocabulary since the
+# DWTD rehaul - MicrogameShell.record_hit() punches the score, pops the thing you hit and plays
+# the collect sting; record_miss() shakes the round, red-flashes the screen, squashes the node
+# and plays the damage sting - which is why the same action lands in single player and feels
+# inert in co-op.
+#
+# Hooked on add_score() and report_miss_to_host() rather than in each of the twelve, because
+# those two are already the single paths every one of them routes through: the same argument
+# _track_action() makes for accuracy counting, and the same reason it cannot be forgotten at a
+# call site. A game names the node that should react as the last argument; a game that names
+# nothing still gets the sound, the tint and the shake.
+#
+# Nothing here is networked. This peer's own catch stings on this peer's screen only, which is
+# what single player does and what makes the cue mean "you did that" rather than "something
+# happened somewhere". The partner still sees the shared score punch and the shared lives
+# recoil, because _on_team_score_updated() and _on_team_lives_updated() ride the G-Counter
+# broadcast and fire on both peers.
+
+## The full-screen tint used for a miss. One ColorRect, built once and re-faded.
+##
+## MultiplayerMiniGameEffects._flash_screen() - the legacy co-op family's version - builds a
+## fresh ColorRect per event and queue_free()s it after. That is a Node allocation, a Control
+## layout pass and a full-screen alpha blend per miss on a phone already missing its frame
+## budget (25.3 avg FPS and 23.5% dropped frames on the Moto E5 Plus). One pooled rect parked
+## at alpha 0 costs nothing between misses.
+##
+## It lives in hud_layer, not in the world. Every co-op scene is a Node2D world under a
+## Camera2D, so a Control parented to the root is drawn in WORLD space and would neither cover
+## the screen nor keep covering it as the camera moves - the same trap attach_hud_panel()
+## documents for the side panels.
+func _fx_flash_rect() -> ColorRect:
+	if _fx_flash != null and is_instance_valid(_fx_flash):
+		return _fx_flash
+	_ensure_hud_layer()
+	if hud_layer == null:
+		return null
+	_fx_flash = ColorRect.new()
+	_fx_flash.name = "FeedbackFlash"
+	_fx_flash.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_fx_flash.color = Color(1.0, 1.0, 1.0, 0.0)
+	_fx_flash.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# Subclasses add their own panels to this layer at times this function cannot know, so
+	# tree order cannot be relied on to decide who draws last. z_index can.
+	_fx_flash.z_index = 200
+	hud_layer.add_child(_fx_flash)
+	return _fx_flash
+
+
+## Camera-offset shake for a miss.
+##
+## Juice.shake(self) - what MicrogameShell.record_miss() uses - cannot be reused here. All
+## twelve co-op scenes are a Node2D root with the Camera2D as its CHILD, so displacing the
+## root displaces the camera by the same vector and the shake is exactly invisible: world and
+## viewport move together and every pixel lands where it already was. (The five legacy
+## MiniGame_* scenes carry no camera at all, which is why MultiplayerMiniGameEffects.shake_self()
+## can move their root and be seen.) Offsetting the camera is the version that shows.
+##
+## JuiceEffects.screen_shake() is not called directly either: it reads camera.offset live as
+## the value to return to, so a second miss inside the first shake - MP_CatchTheRain reports
+## one every third dropped raindrop - captures a mid-shake offset as "home" and parks the
+## camera off-centre for the rest of the round. Kill the previous tween and rebase on a stored
+## home instead; the same fix animate_life_lost() and shake_self() already carry. x-only and
+## decaying to match Juice.shake()'s motion language, which also means no RNG on a path both
+## peers run. The accessibility gate is the shared one, so "reduce screen shake" still wins.
+func _fx_camera_shake(intensity: float = 12.0, duration: float = 0.3) -> void:
+	if not JuiceEffects.is_screen_shake_allowed():
+		return
+	var viewport := get_viewport()
+	if viewport == null:
+		return
+	var cam := viewport.get_camera_2d()
+	if cam == null:
+		return
+	if not _fx_camera_home_set:
+		_fx_camera_home = cam.offset
+		_fx_camera_home_set = true
+	if _fx_shake_tween != null and _fx_shake_tween.is_valid():
+		_fx_shake_tween.kill()
+	cam.offset = _fx_camera_home
+	var steps: int = 5
+	var step: float = maxf(JuiceEffects.motion_time(duration) / float(steps + 1), 0.016)
+	_fx_shake_tween = cam.create_tween()
+	for i in range(steps):
+		var dir: float = 1.0 if i % 2 == 0 else -1.0
+		var falloff: float = 1.0 - float(i) / float(steps)
+		_fx_shake_tween.tween_property(
+			cam, "offset", _fx_camera_home + Vector2(dir * intensity * falloff, 0.0), step
+		)
+	_fx_shake_tween.tween_property(cam, "offset", _fx_camera_home, step)
+
+
+## A scoring event on this peer: the collect sting, and the node that earned it reacting.
+##
+## Sound and reaction only, no screen tint. Single player does not flash on success either
+## (MicrogameShell.record_hit), and at co-op catch rates a full-screen blend per drop would be
+## both exhausting to look at and the most expensive thing on the frame. "The score reacted" is
+## already covered on BOTH peers by the punch in _on_team_score_updated(), so nothing here
+## touches the score label - a second tween on that scale would only fight the first.
+##
+## squash rather than pop, because in eleven of the twelve rounds the node worth reacting is the
+## catcher or the target the player is holding steady, not the item: the item is queue_free()d
+## on the line after the score, so popping it animates something already on its way out. Juice's
+## own docstring names catch impacts as squash's case.
+##
+## No combo cue, deliberately: MP has no combo counter on the HUD, and a play_combo() sting with
+## nothing visible behind it reads as a glitch rather than as escalation. Left for the HUD pass.
+func _juice_hit(fx_node: Node2D = null) -> void:
+	var frame: int = Engine.get_process_frames()
+	if AudioManager and frame != _fx_last_hit_frame:
+		_fx_last_hit_frame = frame
+		AudioManager.play_collect()
+	if fx_node != null and is_instance_valid(fx_node):
+		Juice.squash(fx_node, Vector2(0.0, 1.0))
+
+
+## A miss on this peer: the damage sting, a red tint, a camera shake, and the node that let it
+## through recoiling. The single-player twin is MicrogameShell.record_miss(), same colour and
+## same duration.
+##
+## Deliberately local. A shared life lost by the PARTNER does not sting here; only their own
+## screen stings. The alternative is a sound on _on_team_lives_updated(), which fires on both
+## peers and would double up on the one that actually missed. The partner still sees LivesLabel
+## flash and recoil. (Assumption: the misser's own feedback matters more than symmetry - revisit
+## if co-op playtests say the partner needs to hear it.)
+func _juice_miss(fx_node: Node2D = null) -> void:
+	if AudioManager:
+		AudioManager.play_damage()
+	var flash: ColorRect = _fx_flash_rect()
+	if flash != null:
+		Juice.flash(flash, Color(0.93, 0.29, 0.26, 0.35), JuiceEffects.motion_time(0.3))
+	_fx_camera_shake()
+	if fx_node != null and is_instance_valid(fx_node):
+		Juice.squash(fx_node, Vector2(0.0, 1.0))
+
+# 
 # SCORING (G-Counter)
 # 
 
@@ -1288,8 +1662,14 @@ func team_score() -> int:
 		return NetworkManager.get_total_score()
 	return local_score
 
-func add_score(points: int, counts_as_action: bool = true) -> void:
-	# Add points to local score and sync via G-Counter
+func add_score(points: int, counts_as_action: bool = true, fx_node: Node2D = null) -> void:
+	# Add points to local score and sync via G-Counter.
+	#
+	# fx_node is the node that should visibly react to this score - the catcher, the target,
+	# whatever the player was holding steady. Optional and local-only; see _juice_hit(). It is
+	# fired FIRST so the last point of a round still lands its cue: the quota check at the
+	# bottom of this function can end the round on this very call.
+	_juice_hit(fx_node)
 	local_score += points
 
 	# A scoring event is this peer's correct action — see _track_action().
@@ -1307,11 +1687,34 @@ func add_score(points: int, counts_as_action: bool = true) -> void:
 	# Check quota against the TEAM total — see team_score().
 	if win_quota > 0 and team_score() >= win_quota:
 		_log(" Quota met! (%d/%d team)" % [team_score(), win_quota])
-		end_game(true)
+		# The quota is a SHARED target, so meeting it finishes the round for the pair.
+		# This used to end only the peer that scored the crossing point; the partner
+		# played out their whole timer with both scores already locked in — 25 dead
+		# seconds in round 18 of session_2026-09-05T00-27-36.json. The host closes it
+		# on both, and its broadcast is call_local, so this peer's end_game() comes
+		# back through the same path rather than being called twice here.
+		#
+		# ...but the host route needs a live peer to reach. report_shared_target_reached()
+		# ends in rpc_id(1, ...) on a client, and a client with no multiplayer peer attached
+		# drops that on the floor: no error, no round end. So a round played without a peer -
+		# a solo debug/Game Lab launch, or the peer still standing after the other one dropped
+		# - ran its whole timer out with the shared target already met. Measured as "ended
+		# after 20 adds (quota 100 pts), published=false" by VerifyMPHouseholdChores against
+		# MP_FillAquarium. Unpeered, this ends the round the way it did before the shared
+		# target existed; peered, nothing changes.
+		var peered: bool = multiplayer != null and multiplayer.has_multiplayer_peer()
+		var can_route: bool = peered and NetworkManager != null
+		if can_route and NetworkManager.has_method("report_shared_target_reached"):
+			NetworkManager.report_shared_target_reached(true)
+		else:
+			end_game(true)
 
-func report_miss_to_host() -> void:
+func report_miss_to_host(fx_node: Node2D = null) -> void:
 	# Report a miss event - deducts one team life via the host
 	_log("💔 Miss reported - losing team life")
+	# The local sting, tint and shake. fx_node is whatever should visibly recoil (the catcher
+	# that let it through); optional. See _juice_miss().
+	_juice_miss(fx_node)
 	# Counted for accuracy but deliberately WITHOUT _apply_time_penalty(): a miss
 	# already costs the team a shared life here, so also taking seconds off the
 	# clock would be a balance change rather than a fix. The MP clock penalty stays
@@ -1325,25 +1728,50 @@ func report_miss_to_host() -> void:
 # 
 
 func _on_pause_pressed() -> void:
-	# Local player pressed pause
+	# Ask; do not decide. NetworkManager owns the state and answers by calling
+	# _on_remote_pause() back on every peer including this one, so the menu and the
+	# glyph only move when a transition actually happened. Flipping them here as well
+	# is what let a dropped request leave the HUD claiming a pause that was not in force.
 	if NetworkManager:
 		NetworkManager.request_pause()
-	
-	if pause_menu:
-		pause_menu.visible = true
+
 
 func _on_resume_pressed() -> void:
-	# Local player pressed resume
+	# The ONLY resume path in a co-op round: an explicit press, here or on the pause
+	# menu. Nothing in the pause broadcast handling calls this.
 	if NetworkManager:
 		NetworkManager.request_resume()
-	
-	if pause_menu:
-		pause_menu.visible = false
 
 func _on_quit_pressed() -> void:
-	# Quit button pressed - terminate session for both players
+	# Quit button pressed - terminate session for both players.
+	#
+	# The round itself is stopped here, not just the menu drawn over it. Hiding the
+	# pause menu and changing scene left game_active true, ui_timer running and
+	# _bar_timer running for the whole transition, so an abandoned round went on
+	# playing underneath: _process() kept spawning and moving, the clock kept counting,
+	# and end_game() was still reachable - meaning a round the player (or the auto-play
+	# deadline) had just walked out of could still report itself to NetworkManager and
+	# CoopAdaptation on its way off screen. MiniGameBase._on_exit_pressed() has always
+	# done this for the single-player rounds; the co-op ones did not.
+	# Measured with tools/VerifyAutoPlayDeadline.tscn: the auto-play deadline stopped the
+	# bot, reset the driver, and left the round it was in still live.
+	if _quitting:
+		return
+	_quitting = true
+
 	if pause_menu:
 		pause_menu.visible = false
+	# The pause menu sets get_tree().paused; leaving it set would carry into the lobby.
+	get_tree().paused = false
+	if NetworkManager and NetworkManager.has_method("clear_pause_state"):
+		# Drop the authority's pause bookkeeping too, or the next round starts believing
+		# a pause is still in force and is_pause_deliberate() keeps reporting one.
+		NetworkManager.clear_pause_state()
+	game_active = false
+	if ui_timer and is_instance_valid(ui_timer):
+		ui_timer.stop()
+	if _bar_timer and is_instance_valid(_bar_timer):
+		_bar_timer.stop()
 	
 	_log(" Player quitting session")
 	
@@ -1357,14 +1785,17 @@ func _on_quit_pressed() -> void:
 		get_tree().change_scene_to_file("res://scenes/ui/MultiplayerLobby.tscn")
 
 func _on_remote_pause() -> void:
-	# Partner paused the game
+	# One transition arrived from the authority — whoever asked for it. Drawing the
+	# menu here rather than at the press site keeps both peers' HUDs in step with the
+	# single pause state.
 	if pause_menu:
 		pause_menu.visible = true
+	GlyphIcons.apply_pause_glyph(pause_button, false)
 
 func _on_remote_resume() -> void:
-	# Partner resumed the game
 	if pause_menu:
 		pause_menu.visible = false
+	GlyphIcons.apply_pause_glyph(pause_button, true)
 
 ## Freeze the round behind a "reconnecting" notice instead of ending it.
 ##
@@ -1908,10 +2339,21 @@ func _show_results_screen(success: bool) -> void:
 	vbox.add_child(react)
 	
 	var sub = Label.new()
+	sub.name = "WaitingProgress"
 	sub.text = Localization.get_text("mp_waiting_partner")
 	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	sub.add_theme_font_size_override("font_size", 32)
 	vbox.add_child(sub)
+	# The wait is no longer a static line. On a timer-based round the early finisher can
+	# be sitting here for most of a minute (25 s measured in round 18 of
+	# session_2026-09-05T00-27-36.json), so this label now tracks the partner's live
+	# contribution off the G-Counter total that is already being synced for the HUD.
+	_waiting_progress_label = sub
+	_partner_score_at_finish = maxi(0, team_score() - local_score)
+	_update_waiting_progress(team_score())
+	if NetworkManager and NetworkManager.has_signal("team_score_updated"):
+		if not NetworkManager.team_score_updated.is_connected(_update_waiting_progress):
+			NetworkManager.team_score_updated.connect(_update_waiting_progress)
 	
 	# Add your score
 	var score_label = Label.new()
@@ -1930,6 +2372,27 @@ func _show_results_screen(success: bool) -> void:
 	):
 		NetworkManager.both_players_completed.connect(_on_both_players_completed)
 
+## Live partner progress on the "waiting for partner" overlay.
+##
+## Driven by NetworkManager.team_score_updated, the same signal the in-round HUD already
+## listens to, so nothing new goes on the wire. Shows what the partner has added since
+## this peer finished, and the shared quota when the round has one - which turns a dead
+## wait into something the player can follow.
+func _update_waiting_progress(team_total: int) -> void:
+	if _waiting_progress_label == null or not is_instance_valid(_waiting_progress_label):
+		return
+	var partner_now: int = maxi(0, team_total - local_score)
+	var gained: int = maxi(0, partner_now - _partner_score_at_finish)
+	var line := Localization.get_text("mp_waiting_partner")
+	if win_quota > 0:
+		line += "\n" + Localization.get_text("mp_waiting_team_progress") % [
+			team_total, win_quota
+		]
+	if gained > 0:
+		line += "\n" + Localization.get_text("mp_waiting_partner_gain") % gained
+	_waiting_progress_label.text = line
+
+
 func _on_both_players_completed(
 	p1_success: bool,
 	p2_success: bool,
@@ -1941,7 +2404,13 @@ func _on_both_players_completed(
 		"Win" if p1_success else "Fail", p1_score,
 		"Win" if p2_success else "Fail", p2_score
 	])
-	
+
+	# The wait is over; stop tracking the partner's live score.
+	if NetworkManager and NetworkManager.has_signal("team_score_updated"):
+		if NetworkManager.team_score_updated.is_connected(_update_waiting_progress):
+			NetworkManager.team_score_updated.disconnect(_update_waiting_progress)
+	_waiting_progress_label = null
+
 	# Update results screen
 	_show_round_summary(p1_success, p2_success, p1_score, p2_score)
 

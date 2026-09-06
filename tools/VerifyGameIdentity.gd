@@ -70,7 +70,7 @@ func _ready() -> void:
 
 	var watcher := IdWatcher.new()
 	watcher.name = "IdWatcher"
-	watcher.roster_ids = PINNED
+	watcher.roster_ids = PINNED  # floor only; replaced below with GameManager's own roster
 	watcher.probe_title = probe_title
 	watcher.probe_id = probe_id
 	watcher.sm = sm
@@ -95,20 +95,73 @@ func _ready() -> void:
 		# the real settings file for every process that booted after it.
 		watcher.apm.set_auto_play_enabled(true, false)
 
+	# The deadline is armed BEFORE the session starts, and off a tree reference taken while
+	# this node still had one.
+	#
+	# start_session() ends in change_scene_to_file(), and this node is current_scene, so the
+	# engine removes it from the tree during that call. Every get_tree() below that point
+	# returns null. It used to be armed after the print at the end of this function and the
+	# run failed with "Cannot call method 'create_timer' on a null value" - which is not a
+	# loud failure, because nothing else in the harness needs the tree afterwards: the
+	# watcher lives at /root and the soak plays on. The process simply had no deadline, so
+	# report_and_quit() never ran, no verdict was ever printed, and the run died to the outer
+	# shell timeout looking like a hang. One earlier run got its verdict, so the ordering was
+	# a race that happened to be won, which is the worst version of this bug to leave in a
+	# tool whose whole job is producing evidence.
+	#
+	# The timer belongs to the SceneTree and the callback target is the watcher at /root, so
+	# both outlive this node. Arming it a few milliseconds before start_session() costs
+	# nothing measurable against a 420 s window.
+	var tree: SceneTree = get_tree()
+	tree.create_timer(RUN_SECONDS).timeout.connect(watcher.report_and_quit)
+
 	_pin(gm)
 	gm.start_session(0)  # GameMode.SINGLE_PLAYER
+
+	# The pin above does not survive start_session(), and round 1 is whatever the game chose.
+	#
+	# start_new_session() calls _refresh_available_minigames(), which clears
+	# available_minigames and rebuilds it from SaveManager's unlock bundles, and then
+	# start_session() calls start_next_minigame() straight away - so the first round is
+	# already in flight by the time the re-pin below lands. The log shows the ordering
+	# plainly: "Game State: MAIN_MENU -> PLAYING_MINIGAME" is printed BEFORE
+	# "[IDENTITY] pinned to [...]". That is product behaviour, not a defect, and the pin is
+	# only here to keep a 420 s soak repeatable and cheap.
+	#
+	# So the roster [3] judges against is GameManager's own, read at exactly this point -
+	# the moment _refresh_available_minigames() has just run. That function appends only ids
+	# whose res://scenes/minigames/<id>.tscn exists, so membership in it IS the "this is a
+	# scene id" claim, sourced from the product instead of from this harness's shortlist.
+	# It used to be the two PINNED ids, and a run whose first round was TracePipePath failed
+	# [3] for playing a legitimately-named game.
+	watcher.roster_ids = _roster_of(gm)
+	print("[IDENTITY] roster: %d id(s) %s" % [watcher.roster_ids.size(), str(watcher.roster_ids)])
+
 	_pin(gm)
 	if gm.has_method("_rebuild_minigame_random_bag"):
 		gm._rebuild_minigame_random_bag()
 	print("[IDENTITY] pinned to %s" % str(gm.available_minigames))
-
-	get_tree().create_timer(RUN_SECONDS).timeout.connect(watcher.report_and_quit)
 
 
 func _pin(gm: Node) -> void:
 	gm.available_minigames.clear()
 	for game_id in PINNED:
 		gm.available_minigames.append(game_id)
+
+
+## Every scene id GameManager can hand out, unioned with the pinned pair so the list is never
+## narrower than what this harness forces. Only valid while the full roster is in place, i.e.
+## immediately after start_session() and before _pin() runs again.
+func _roster_of(gm: Node) -> PackedStringArray:
+	var out: PackedStringArray = []
+	for game_id in gm.available_minigames:
+		var s: String = str(game_id)
+		if s != "" and not (s in out):
+			out.append(s)
+	for game_id in PINNED:
+		if not (game_id in out):
+			out.append(game_id)
+	return out
 
 
 ## Lives under /root, not in this scene: the session calls change_scene_to_file() and
@@ -166,8 +219,11 @@ class IdWatcher extends Node:
 		_check("[2] minigame_completed joins minigame_started", mismatched.is_empty(),
 			"%d mismatched: %s" % [mismatched.size(), ", ".join(mismatched)])
 
-		# [3] the emitted id is a scene id, so it is in the pinned roster and carries no
-		# spaces. "Mud Pie Maker" fails both halves; "MudPieMaker" passes.
+		# [3] the emitted id is a scene id: it carries no spaces and it is one of the ids
+		# GameManager itself offers. "Mud Pie Maker" fails both halves; "MudPieMaker" passes;
+		# a game the bot reached before the pin landed passes too, because it is a real id -
+		# see _roster_of(), whose list the product has already existence-checked against
+		# res://scenes/minigames/<id>.tscn.
 		var not_id: PackedStringArray = []
 		for p in _pairs:
 			var c: String = str(p["completed"])

@@ -1,4 +1,4 @@
-[gd_scene load_steps=14 format=3 uid="uid://cks33gpdabacw"]
+[gd_scene format=3 uid="uid://cks33gpdabacw"]
 
 [ext_resource type="Script" uid="uid://d12w4ldcunn2w" path="res://scenes/ui/InitialScreen.gd" id="1_initial"]
 [ext_resource type="FontFile" uid="uid://6gq30qbnrhfs" path="res://fonts/NTBrickSans.otf" id="4_brick"]
@@ -52,7 +52,7 @@ shadow_color = Color(0, 0, 0, 0.3)
 shadow_size = 10
 shadow_offset = Vector2(0, 5)
 
-[node name="InitialScreen" type="Control"]
+[node name="InitialScreen" type="Control" unique_id=2006190987]
 layout_mode = 3
 anchors_preset = 15
 anchor_right = 1.0
@@ -61,7 +61,7 @@ grow_horizontal = 2
 grow_vertical = 2
 script = ExtResource("1_initial")
 
-[node name="Sky" type="ColorRect" parent="."]
+[node name="Sky" type="ColorRect" parent="." unique_id=1414549927]
 z_index = -20
 layout_mode = 1
 anchors_preset = 15
@@ -71,7 +71,7 @@ grow_horizontal = 2
 grow_vertical = 2
 color = Color(0.529412, 0.807843, 0.921569, 1)
 
-[node name="Ground" type="ColorRect" parent="."]
+[node name="Ground" type="ColorRect" parent="." unique_id=606539638]
 visible = false
 z_index = -15
 layout_mode = 1
@@ -85,9 +85,9 @@ grow_vertical = 0
 mouse_filter = 2
 color = Color(0.9, 0.85, 0.75, 1)
 
-[node name="Decorations" type="Node2D" parent="."]
+[node name="Decorations" type="Node2D" parent="." unique_id=1435955973]
 
-[node name="UI" type="Control" parent="."]
+[node name="UI" type="Control" parent="." unique_id=1558818191]
 z_index = 10
 layout_mode = 1
 anchors_preset = 15
@@ -96,7 +96,7 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 
-[node name="TopLeft" type="HBoxContainer" parent="UI"]
+[node name="TopLeft" type="HBoxContainer" parent="UI" unique_id=256767501]
 layout_mode = 0
 offset_left = 30.0
 offset_top = 30.0
@@ -104,11 +104,11 @@ offset_right = 280.0
 offset_bottom = 90.0
 theme_override_constants/separation = 10
 
-[node name="CoinBG" type="Panel" parent="UI/TopLeft"]
+[node name="CoinBG" type="Panel" parent="UI/TopLeft" unique_id=487333789]
 custom_minimum_size = Vector2(180, 55)
 layout_mode = 2
 
-[node name="HBox" type="HBoxContainer" parent="UI/TopLeft/CoinBG"]
+[node name="HBox" type="HBoxContainer" parent="UI/TopLeft/CoinBG" unique_id=731904945]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -119,19 +119,19 @@ grow_horizontal = 2
 grow_vertical = 2
 alignment = 1
 
-[node name="DropletIcon" type="Label" parent="UI/TopLeft/CoinBG/HBox"]
+[node name="DropletIcon" type="Label" parent="UI/TopLeft/CoinBG/HBox" unique_id=184797948]
 layout_mode = 2
 theme_override_font_sizes/font_size = 36
 text = "💧"
 
-[node name="DropletCount" type="Label" parent="UI/TopLeft/CoinBG/HBox"]
+[node name="DropletCount" type="Label" parent="UI/TopLeft/CoinBG/HBox" unique_id=1080471158]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.2, 0.2, 0.2, 1)
 theme_override_fonts/font = ExtResource("4_brick")
 theme_override_font_sizes/font_size = 32
 text = "0"
 
-[node name="TopRight" type="HBoxContainer" parent="UI"]
+[node name="TopRight" type="HBoxContainer" parent="UI" unique_id=1695779870]
 layout_mode = 1
 anchors_preset = 1
 anchor_left = 1.0
@@ -144,37 +144,37 @@ grow_horizontal = 0
 theme_override_constants/separation = 12
 alignment = 2
 
-[node name="StoreButton" type="Button" parent="UI/TopRight"]
+[node name="StoreButton" type="Button" parent="UI/TopRight" unique_id=1032632330]
 custom_minimum_size = Vector2(70, 70)
 layout_mode = 2
 theme_override_font_sizes/font_size = 34
 text = "🛍️"
 
-[node name="LeaderboardButton" type="Button" parent="UI/TopRight"]
+[node name="LeaderboardButton" type="Button" parent="UI/TopRight" unique_id=999274608]
 custom_minimum_size = Vector2(70, 70)
 layout_mode = 2
 theme_override_font_sizes/font_size = 34
 text = "🏆"
 
-[node name="RoadmapButton" type="Button" parent="UI/TopRight"]
+[node name="RoadmapButton" type="Button" parent="UI/TopRight" unique_id=1601657801]
 custom_minimum_size = Vector2(70, 70)
 layout_mode = 2
 theme_override_font_sizes/font_size = 34
 text = "🗺️"
 
-[node name="CustomizeButton" type="Button" parent="UI/TopRight"]
+[node name="CustomizeButton" type="Button" parent="UI/TopRight" unique_id=496172325]
 custom_minimum_size = Vector2(70, 70)
 layout_mode = 2
 theme_override_font_sizes/font_size = 32
 text = "👤"
 
-[node name="SettingsButton" type="Button" parent="UI/TopRight"]
+[node name="SettingsButton" type="Button" parent="UI/TopRight" unique_id=1721528779]
 custom_minimum_size = Vector2(70, 70)
 layout_mode = 2
 theme_override_font_sizes/font_size = 32
 text = "⚙️"
 
-[node name="HighscorePanel" type="Panel" parent="UI"]
+[node name="HighscorePanel" type="Panel" parent="UI" unique_id=1279241653]
 visible = false
 layout_mode = 1
 anchors_preset = 5
@@ -187,7 +187,7 @@ offset_bottom = 177.00002
 grow_horizontal = 2
 rotation = -0.012359246
 
-[node name="HighscoreLabel" type="Label" parent="UI/HighscorePanel"]
+[node name="HighscoreLabel" type="Label" parent="UI/HighscorePanel" unique_id=1930628672]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -202,7 +202,7 @@ text = "HIGHSCORE
 horizontal_alignment = 1
 vertical_alignment = 1
 
-[node name="BottomLeft" type="PanelContainer" parent="UI"]
+[node name="BottomLeft" type="PanelContainer" parent="UI" unique_id=1289968051]
 layout_mode = 1
 anchors_preset = 2
 anchor_top = 1.0
@@ -213,29 +213,29 @@ offset_right = 280.0
 offset_bottom = -30.0
 grow_vertical = 0
 
-[node name="VBox" type="VBoxContainer" parent="UI/BottomLeft"]
+[node name="VBox" type="VBoxContainer" parent="UI/BottomLeft" unique_id=1995316804]
 layout_mode = 2
 alignment = 1
 
-[node name="Label" type="Label" parent="UI/BottomLeft/VBox"]
+[node name="Label" type="Label" parent="UI/BottomLeft/VBox" unique_id=1625820661]
 layout_mode = 2
 theme_override_fonts/font = ExtResource("4_brick")
 text = "NEXT UNLOCK"
 horizontal_alignment = 1
 
-[node name="Progress" type="ProgressBar" parent="UI/BottomLeft/VBox"]
+[node name="Progress" type="ProgressBar" parent="UI/BottomLeft/VBox" unique_id=1806202669]
 custom_minimum_size = Vector2(0, 20)
 layout_mode = 2
 value = 90.0
 
-[node name="ItemName" type="Label" parent="UI/BottomLeft/VBox"]
+[node name="ItemName" type="Label" parent="UI/BottomLeft/VBox" unique_id=1046116281]
 layout_mode = 2
 theme_override_fonts/font = ExtResource("4_brick")
 theme_override_font_sizes/font_size = 12
 text = "118 points to go"
 horizontal_alignment = 1
 
-[node name="ButtonContainer" type="VBoxContainer" parent="UI"]
+[node name="ButtonContainer" type="VBoxContainer" parent="UI" unique_id=770270102]
 layout_mode = 1
 anchors_preset = 7
 anchor_left = 0.5
@@ -251,7 +251,7 @@ grow_vertical = 0
 theme_override_constants/separation = 15
 alignment = 1
 
-[node name="PlayButton" type="Button" parent="UI/ButtonContainer"]
+[node name="PlayButton" type="Button" parent="UI/ButtonContainer" unique_id=757037830]
 custom_minimum_size = Vector2(400, 90)
 layout_mode = 2
 theme_override_colors/font_color = Color(1, 1, 1, 1)
@@ -262,7 +262,7 @@ theme_override_styles/pressed = SubResource("StyleBoxFlat_play_pressed")
 theme_override_styles/hover = SubResource("StyleBoxFlat_play_hover")
 text = "PLAY"
 
-[node name="MultiplayerButton" type="Button" parent="UI/ButtonContainer"]
+[node name="MultiplayerButton" type="Button" parent="UI/ButtonContainer" unique_id=2040705797]
 custom_minimum_size = Vector2(360, 50)
 layout_mode = 2
 theme_override_colors/font_color = Color(1, 1, 1, 1)
@@ -273,7 +273,7 @@ theme_override_styles/pressed = SubResource("StyleBoxFlat_play_pressed")
 theme_override_styles/hover = SubResource("StyleBoxFlat_play_hover")
 text = "MULTIPLAYER"
 
-[node name="BGLayers" type="Control" parent="."]
+[node name="BGLayers" type="Control" parent="." unique_id=950225038]
 z_index = -19
 layout_mode = 1
 anchors_preset = 15
@@ -283,7 +283,7 @@ grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
 
-[node name="HighscorePost" type="TextureRect" parent="BGLayers"]
+[node name="HighscorePost" type="TextureRect" parent="BGLayers" unique_id=998696359]
 layout_mode = 1
 offset_left = -42.0
 offset_top = -61.0
@@ -294,7 +294,7 @@ mouse_filter = 2
 texture = ExtResource("bg_highscore")
 stretch_mode = 6
 
-[node name="Hills" type="TextureRect" parent="BGLayers"]
+[node name="Hills" type="TextureRect" parent="BGLayers" unique_id=342536353]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -310,7 +310,7 @@ mouse_filter = 2
 texture = ExtResource("bg_hills")
 stretch_mode = 6
 
-[node name="Platform" type="TextureRect" parent="BGLayers"]
+[node name="Platform" type="TextureRect" parent="BGLayers" unique_id=955187261]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -326,7 +326,7 @@ mouse_filter = 2
 texture = ExtResource("bg_platform")
 stretch_mode = 6
 
-[node name="House" type="TextureRect" parent="BGLayers"]
+[node name="House" type="TextureRect" parent="BGLayers" unique_id=2095849769]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -342,7 +342,7 @@ mouse_filter = 2
 texture = ExtResource("bg_house")
 stretch_mode = 6
 
-[node name="Waves3" type="TextureRect" parent="BGLayers"]
+[node name="Waves3" type="TextureRect" parent="BGLayers" unique_id=585670221]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -358,7 +358,7 @@ mouse_filter = 2
 texture = ExtResource("bg_waves3")
 stretch_mode = 6
 
-[node name="Waves2" type="TextureRect" parent="BGLayers"]
+[node name="Waves2" type="TextureRect" parent="BGLayers" unique_id=1684530322]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -374,7 +374,7 @@ mouse_filter = 2
 texture = ExtResource("bg_waves2")
 stretch_mode = 6
 
-[node name="Waves1" type="TextureRect" parent="BGLayers"]
+[node name="Waves1" type="TextureRect" parent="BGLayers" unique_id=1126441590]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -390,7 +390,7 @@ mouse_filter = 2
 texture = ExtResource("bg_waves1")
 stretch_mode = 6
 
-[node name="WelcomePopup" type="Control" parent="."]
+[node name="WelcomePopup" type="Control" parent="." unique_id=431685456]
 visible = false
 z_index = 100
 layout_mode = 1
@@ -401,7 +401,7 @@ grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
 
-[node name="ColorRect" type="ColorRect" parent="WelcomePopup"]
+[node name="ColorRect" type="ColorRect" parent="WelcomePopup" unique_id=1098833222]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -410,7 +410,7 @@ grow_horizontal = 2
 grow_vertical = 2
 color = Color(0, 0, 0, 0.5)
 
-[node name="Panel" type="Panel" parent="WelcomePopup"]
+[node name="Panel" type="Panel" parent="WelcomePopup" unique_id=1926829133]
 layout_mode = 1
 anchors_preset = 8
 anchor_left = 0.5
@@ -426,7 +426,7 @@ grow_vertical = 2
 pivot_offset = Vector2(400, 300)
 theme_override_styles/panel = SubResource("StyleBoxFlat_popup")
 
-[node name="VBox" type="VBoxContainer" parent="WelcomePopup/Panel"]
+[node name="VBox" type="VBoxContainer" parent="WelcomePopup/Panel" unique_id=646825283]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -439,7 +439,7 @@ grow_horizontal = 2
 grow_vertical = 2
 theme_override_constants/separation = 20
 
-[node name="Title" type="Label" parent="WelcomePopup/Panel/VBox"]
+[node name="Title" type="Label" parent="WelcomePopup/Panel/VBox" unique_id=1342320725]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.2, 0.2, 0.2, 1)
 theme_override_fonts/font = ExtResource("4_brick")
@@ -447,12 +447,12 @@ theme_override_font_sizes/font_size = 36
 text = "WELCOME TO WATERVILLE"
 horizontal_alignment = 1
 
-[node name="ImagePlaceholder" type="ColorRect" parent="WelcomePopup/Panel/VBox"]
+[node name="ImagePlaceholder" type="ColorRect" parent="WelcomePopup/Panel/VBox" unique_id=684179033]
 custom_minimum_size = Vector2(0, 250)
 layout_mode = 2
 color = Color(0.8, 0.9, 1, 1)
 
-[node name="Instructions" type="Label" parent="WelcomePopup/Panel/VBox"]
+[node name="Instructions" type="Label" parent="WelcomePopup/Panel/VBox" unique_id=1694030112]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.3, 0.3, 0.3, 1)
 theme_override_fonts/font = ExtResource("4_brick")
@@ -461,7 +461,7 @@ text = "Welcome to the Water Park! We've been waiting for someone to help us sav
 horizontal_alignment = 1
 autowrap_mode = 2
 
-[node name="CloseButton" type="Button" parent="WelcomePopup/Panel"]
+[node name="CloseButton" type="Button" parent="WelcomePopup/Panel" unique_id=971452795]
 layout_mode = 1
 anchors_preset = 1
 anchor_left = 1.0
@@ -479,8 +479,8 @@ text = "X"
 [connection signal="pressed" from="UI/TopRight/StoreButton" to="." method="_on_store_button_pressed"]
 [connection signal="pressed" from="UI/TopRight/LeaderboardButton" to="." method="_on_leaderboard_button_pressed"]
 [connection signal="pressed" from="UI/TopRight/RoadmapButton" to="." method="_on_roadmap_button_pressed"]
-[connection signal="pressed" from="UI/TopRight/SettingsButton" to="." method="_on_settings_button_pressed"]
 [connection signal="pressed" from="UI/TopRight/CustomizeButton" to="." method="_on_customize_button_pressed"]
+[connection signal="pressed" from="UI/TopRight/SettingsButton" to="." method="_on_settings_button_pressed"]
 [connection signal="pressed" from="UI/ButtonContainer/PlayButton" to="." method="_on_play_button_pressed"]
 [connection signal="pressed" from="UI/ButtonContainer/MultiplayerButton" to="." method="_on_multiplayer_button_pressed"]
 [connection signal="pressed" from="WelcomePopup/Panel/CloseButton" to="." method="_on_close_popup_pressed"]

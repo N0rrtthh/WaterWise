@@ -205,14 +205,14 @@ func _process(delta: float) -> void:
 				
 				if drops_missed >= MAX_MISSED:
 					drops_missed = 0
-					report_miss_to_host()
+					report_miss_to_host(bucket)
 
 func _on_drop_hit(area: Area2D, drop: Area2D) -> void:
 	if area != bucket:
 		return
 	
 	drops_caught += 1
-	add_score(POINTS_PER_DROP)
+	add_score(POINTS_PER_DROP, true, bucket)
 	
 	send_resource_to_partner("rainwater", 1, 1.0)
 	_log("💧 Caught drop! Total: %d" % drops_caught)

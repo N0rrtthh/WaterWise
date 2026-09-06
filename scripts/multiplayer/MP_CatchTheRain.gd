@@ -248,7 +248,7 @@ func _on_bucket_collision(area: Area2D) -> void:
 	
 	if area.get_meta("type") == "raindrop":
 		drops_caught += 1
-		add_score(POINTS_PER_DROP)
+		add_score(POINTS_PER_DROP, true, bucket)
 		
 		# Send water resource to partner
 		send_resource_to_partner("clean_water", 1, 1.0)
@@ -268,7 +268,7 @@ func _on_drop_missed() -> void:
 	if drops_missed >= MAX_ALLOWED_MISSES:
 		drops_missed = 0
 		_log("💔 Too many misses - losing shared life!")
-		report_miss_to_host()
+		report_miss_to_host(bucket)
 
 func _play_catch_effect(pos: Vector2) -> void:
 	# Show catch effect

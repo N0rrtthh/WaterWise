@@ -1,0 +1,6 @@
+[gd_scene format=3 uid="uid://b1e87jdmaoplg"]
+
+[ext_resource type="Script" path="res://tools/VerifySessionArtifact.gd" id="1_sartifact"]
+
+[node name="VerifySessionArtifact" type="Node"]
+script = ExtResource("1_sartifact")

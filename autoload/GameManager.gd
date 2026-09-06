@@ -321,10 +321,15 @@ func exit_sandbox() -> void:
 	sandbox_last_result = {}
 
 
-# Story chapter cadence: intro once, then every 5 completed minigames.
+# Story chapter cadence: intro once, then every 5 completed minigames. _story_shown_at is
+# deliberately session-local - it stops one launch from repeating the same beat twice - while
+# "has this chapter ever been read" is persisted by SaveManager. Both are needed: the old code
+# had only the session half, which is why the intro replayed at every launch.
 var _story_shown_at: Array[int] = []
 var _story_transition_active: bool = false
 const STORY_INTERVAL_GAMES: int = 5
+## Loaded for its static read_chapter_ids() only; no screen is built by this.
+const StoryScreenScript: GDScript = preload("res://scenes/ui/StoryScreen.gd")
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # INITIALIZATION
@@ -348,27 +353,72 @@ func _ready() -> void:
 	# it was the single most reachable way to lose a session.
 	get_tree().quit_on_go_back = false
 	
+	# A scene change lifts the pause. See _on_root_child_entered().
+	get_tree().root.child_entered_tree.connect(_on_root_child_entered)
+	
 	# Connect signals from other autoloads
 	if has_node("/root/AdaptiveDifficulty"):
 		AdaptiveDifficulty.difficulty_changed.connect(_on_difficulty_changed)
 	
 	print("🎮 GameManager initialized")
+	# Printed here, not inside _request_android_storage_permissions(): that function
+	# returns early on every non-Android platform, so these two lines - which describe
+	# the thesis algorithms, not permissions - only ever appeared on a phone.
+	print("   G-Counter ready for multiplayer scoring")
+	print("   Rolling Window ready for difficulty adaptation")
+
+## A SCENE CHANGE LIFTS THE PAUSE.
+##
+## SceneTree.paused is a property of the TREE, not of the scene that set it, so it
+## outlives the screen that took it. transition_to_scene() clears it for the paths that
+## go through it, but six Back handlers - Instructions, MultiplayerMenu,
+## MultiplayerLobby, DevStats, GameLab, BeatViewer - call change_scene_to_file()
+## directly, and NetworkManager has raw changes of its own. Every one of those landed
+## the player on a screen frozen by a pause it had no button to lift.
+##
+## The rule is one line and needs no table of screens or owners: a scene that wants to
+## be paused takes the pause ITSELF, after it is up. Both real cases already work that
+## way - a round pauses when its pause button is pressed, MultiplayerGameOver pauses in
+## show_game_over() after MultiplayerCoordinator has added it - so lifting the pause at
+## the moment the new scene enters cannot race either of them.
+##
+## Deferred because SceneTree assigns current_scene AFTER add_child() emits this, and
+## current_scene is what distinguishes a scene change from an autoload dropping an
+## overlay layer onto the root. Deferred calls are flushed while the tree is paused.
+func _on_root_child_entered(node: Node) -> void:
+	var tree := get_tree()
+	if tree == null or not tree.paused:
+		return
+	_lift_pause_for_scene.call_deferred(node)
+
+
+func _lift_pause_for_scene(node: Node) -> void:
+	var tree := get_tree()
+	if tree == null or not tree.paused:
+		return
+	if not is_instance_valid(node) or tree.current_scene != node:
+		return
+	tree.paused = false
+
 
 func _request_android_storage_permissions() -> void:
 	if OS.get_name() != "Android":
 		return
-	# Request all dangerous permissions declared in the manifest.
-	# This shows the system permission dialog on first install. Subsequent
-	# launches skip the dialog if the user already granted permissions.
+	# Ask only for what the manifest actually declares. This used to also test
+	# READ_EXTERNAL_STORAGE, which the Android preset sets to false and the game does
+	# not need - it only ever writes its own files. An undeclared permission can never
+	# appear in get_granted_permissions(), so needs_read was permanently true and this
+	# ran OS.request_permissions() on EVERY launch for a permission Android would not
+	# even show a dialog for. Worse, before the preset declared write_external_storage
+	# the same was true of needs_write, so the one call that looked like the storage
+	# request could not grant anything at all - which is why no permission dialog ever
+	# appeared on the test phone while the Downloads export reported "No files exported".
 	var granted := OS.get_granted_permissions()
-	var needs_write := "android.permission.WRITE_EXTERNAL_STORAGE" not in granted
-	var needs_read  := "android.permission.READ_EXTERNAL_STORAGE"  not in granted
-	if needs_write or needs_read:
-		# request_permissions() asks for all permissions listed in the manifest
-		# at once — this is the standard Android runtime-permission flow.
-		OS.request_permissions()
-	print("   G-Counter ready for multiplayer scoring")
-	print("   Rolling Window ready for difficulty adaptation")
+	if FileExporter.ANDROID_WRITE_PERM not in granted:
+		# The single declared dangerous permission. FileExporter asks again at export
+		# time for the case where the user declined here, and neither call gates the
+		# write: API 30+ needs no permission and API 33+ cannot be granted this one.
+		OS.request_permission(FileExporter.ANDROID_WRITE_PERM)
 
 # ── Scene Transition Overlay ─────────────────────────────────────
 var _transition_layer: CanvasLayer
@@ -381,6 +431,14 @@ const DARK_TRANSITION_TINT := Color(0.08, 0.14, 0.24, 0.0)
 func _setup_transition_overlay() -> void:
 	_transition_layer = CanvasLayer.new()
 	_transition_layer.layer = 100  # Always on top
+	# Runs while the tree is paused, because this overlay is the thing that decides
+	# whether the screen accepts touches at all: transition_to_scene() sets its
+	# ColorRect to MOUSE_FILTER_STOP for the length of the fade. Left pausable, a
+	# transition started on a paused tree froze mid-fade with a fully transparent,
+	# full-screen, input-eating rect on top of everything - measured: alpha=0.00,
+	# mouse_filter=0, still_transitioning=true 2.5s later, scene never changed. The
+	# screen looked completely normal and every tap, including Back, went nowhere.
+	_transition_layer.process_mode = Node.PROCESS_MODE_ALWAYS
 	add_child(_transition_layer)
 	_transition_rect = ColorRect.new()
 	_transition_rect.color = LIGHT_TRANSITION_TINT
@@ -413,9 +471,27 @@ func transition_to_scene(scene_path: String, duration: float = 0.4) -> void:
 	var reveal_duration = max(duration * 0.88, 0.15)
 
 	_is_transitioning = true
+	# A scene transition ENDS the outgoing scene's pause. The new scene owns its own:
+	# MultiplayerGameOver takes the pause after it is up, and the one path that
+	# deliberately carries a pause across a scene change (NetworkManager's lost-peer
+	# resolution) uses a raw change_scene_to_file() and never comes through here.
+	#
+	# Without this, a pause that outlived its owner - the app backgrounded on a menu,
+	# a network pause whose partner left - reached a screen that has no way to lift it,
+	# and every Back button on that screen was dead: a paused tree delivers no GUI
+	# input at all to a default PROCESS_MODE_INHERIT Button (measured: 0 presses
+	# paused, 1 unpaused, same click).
+	var tree := get_tree()
+	if tree and tree.paused:
+		tree.paused = false
 	_transition_rect.mouse_filter = Control.MOUSE_FILTER_STOP
 	# Fade to themed tint.
+	# TWEEN_PAUSE_PROCESS on both fades: the pause above is this manager's to lift, but
+	# a pause taken by anything else mid-fade (the app going to background one frame
+	# after Back is pressed) must not strand the coroutine on `await fade_out.finished`
+	# with the input-eating rect still up. The fade owns the screen, so it runs.
 	var fade_out = create_tween().set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	fade_out.set_pause_mode(Tween.TWEEN_PAUSE_PROCESS)
 	fade_out.tween_property(_transition_rect, "color:a", fade_alpha, fade_duration)
 	await fade_out.finished
 	# Change scene
@@ -425,6 +501,7 @@ func transition_to_scene(scene_path: String, duration: float = 0.4) -> void:
 	await get_tree().process_frame
 	# Fade from themed tint.
 	var fade_in = create_tween().set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	fade_in.set_pause_mode(Tween.TWEEN_PAUSE_PROCESS)
 	fade_in.tween_property(_transition_rect, "color:a", 0.0, reveal_duration)
 	await fade_in.finished
 	_transition_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -1459,11 +1536,33 @@ func start_next_minigame() -> void:
 	_launch_next_minigame_internal()
 
 func _should_show_story() -> bool:
+	# Nothing left to tell -> no overlay, at any interval. This is the half of the "the intro
+	# plays every time Play is pressed" fix that lives outside StoryScreen: the screen now hands
+	# back {} once all six chapters have been read, and _show_current_page() would finish
+	# immediately on that - but only after the layer was already parented and drawn. Asked here
+	# instead, so the frame never happens.
+	if not _story_has_unread_chapter():
+		return false
 	if minigames_played_this_session == 0:
 		return 0 not in _story_shown_at
 	if minigames_played_this_session % STORY_INTERVAL_GAMES != 0:
 		return false
 	return minigames_played_this_session not in _story_shown_at
+
+## Does this player still have a chapter they have never finished? The record is in the save
+## file (SaveManager.unlocked_content.story_chapters), written by StoryScreen when a chapter is
+## read to its last page, so the answer survives the process - which the old
+## minigames_played_this_session arithmetic did not.
+##
+## Fails OPEN: with no save store to consult, the story is shown. A missed intro is a worse
+## first-run experience than a repeated one.
+func _story_has_unread_chapter() -> bool:
+	if SaveManager == null:
+		return true
+	for id in StoryScreenScript.read_chapter_ids():
+		if not SaveManager.is_story_chapter_seen(id):
+			return true
+	return false
 
 func _show_story_then_continue() -> void:
 	if _story_transition_active:

@@ -5,7 +5,13 @@ extends Control
 ## ═══════════════════════════════════════════════════════════════════
 ## Accessible from Settings when Dev Mode is enabled.
 ## Shows live session metrics and all data needed for thesis defence.
-## Press EXPORT to save a JSON log to user://session_logs/
+##
+## READ-ONLY. Exporting is Settings -> "Export Session Logs" and nowhere else: this
+## screen used to carry its own EXPORT SESSION LOG button, so one action had two entry
+## points, and this one called SessionLogger.export_session(force=true) - writing the
+## artifact into internal storage without copying it to Downloads, i.e. a different
+## outcome under the same name. The session's log is written automatically anyway (on
+## every finalize, and on quit), so nothing here needs a write button.
 ## ═══════════════════════════════════════════════════════════════════
 
 const FONT_TITLE: Font = preload("res://fonts/Cubao_Free_Wide.otf")
@@ -25,8 +31,6 @@ const COL_ACCENT    := Color(0.20, 0.80, 0.60, 1.0)
 # UI nodes
 var _scroll: ScrollContainer
 var _vbox: VBoxContainer
-var _export_btn: Button
-var _export_status_lbl: Label
 var _refresh_timer: Timer
 
 # Section labels that need live refresh
@@ -92,6 +96,14 @@ func _build_ui() -> void:
 	title_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	hbar_hbox.add_child(title_lbl)
 
+	# Refresh hint. Lived in the bottom export bar until that bar was removed.
+	var refresh_hint := Label.new()
+	refresh_hint.text = "Auto-refreshes every 1s"
+	refresh_hint.add_theme_font_size_override("font_size", 12)
+	refresh_hint.add_theme_color_override("font_color", COL_MUTED)
+	refresh_hint.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	hbar_hbox.add_child(refresh_hint)
+
 	# Back button
 	var back_btn := Button.new()
 	back_btn.text = "⬅ BACK"
@@ -104,7 +116,9 @@ func _build_ui() -> void:
 	_scroll.set_anchors_preset(Control.PRESET_FULL_RECT)
 	# Leave top space for header (~70px)
 	_scroll.offset_top = 70.0
-	_scroll.offset_bottom = -80.0  # Leave bottom space for export bar
+	# Full height below the header: the export bar that used to occupy the bottom 80px
+	# is gone (see the class comment), so reserving space for it would leave a dead strip.
+	_scroll.offset_bottom = 0.0
 	_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	add_child(_scroll)
 
@@ -120,46 +134,10 @@ func _build_ui() -> void:
 	margin_wrap.add_child(_vbox)
 	_scroll.add_child(margin_wrap)
 
-	# Export bar at bottom
-	var export_bar := PanelContainer.new()
-	export_bar.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
-	export_bar.offset_top = -80.0
-	var ebar_style := StyleBoxFlat.new()
-	ebar_style.bg_color = Color(0.08, 0.12, 0.22, 1.0)
-	ebar_style.border_color = COL_ACCENT
-	ebar_style.border_width_top = 2
-	ebar_style.content_margin_left = 20
-	ebar_style.content_margin_right = 20
-	ebar_style.content_margin_top = 10
-	ebar_style.content_margin_bottom = 10
-	export_bar.add_theme_stylebox_override("panel", ebar_style)
-	add_child(export_bar)
-
-	var ebar_hbox := HBoxContainer.new()
-	ebar_hbox.add_theme_constant_override("separation", 16)
-	export_bar.add_child(ebar_hbox)
-
-	_export_btn = Button.new()
-	_export_btn.text = "💾 EXPORT SESSION LOG (JSON)"
-	_export_btn.custom_minimum_size = Vector2(280, 50)
-	_export_btn.add_theme_font_size_override("font_size", 18)
-	_export_btn.pressed.connect(_on_export_pressed)
-	ebar_hbox.add_child(_export_btn)
-
-	_export_status_lbl = Label.new()
-	_export_status_lbl.text = "No export yet. Press EXPORT to save."
-	_export_status_lbl.add_theme_font_size_override("font_size", 14)
-	_export_status_lbl.add_theme_color_override("font_color", COL_MUTED)
-	_export_status_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_export_status_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD
-	ebar_hbox.add_child(_export_status_lbl)
-
-	# Refresh hint
-	var refresh_hint := Label.new()
-	refresh_hint.text = "Auto-refreshes every 1s"
-	refresh_hint.add_theme_font_size_override("font_size", 12)
-	refresh_hint.add_theme_color_override("font_color", COL_MUTED)
-	ebar_hbox.add_child(refresh_hint)
+	# No export bar here by design - see the class comment. The status line that used to
+	# live in it named this screen's own internal write path, which is not where the
+	# files a reader collects come from, and the refresh hint that shared it now sits in
+	# the header (below).
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # POPULATE ALL SECTIONS
@@ -260,7 +238,7 @@ func _add_gameplay_summary(sum: Dictionary) -> void:
 	_gkv(grid, "MP Rounds Played", str(sum.get("mp_rounds", 0)))
 	_gkv(grid, "MP Total Score", str(sum.get("mp_total_score", 0)))
 	_gkv(grid, "💧 Droplets Earned", str(sum.get("total_droplets", 0)))
-	_gkv(grid, "Scenes Visited", "see export JSON")
+	_gkv(grid, "Scenes Visited", str(sum.get("scenes_visited", 0)))
 	_vbox.add_child(grid)
 
 func _add_sp_algorithm(sum: Dictionary) -> void:
@@ -281,7 +259,7 @@ func _add_sp_algorithm(sum: Dictionary) -> void:
 	var formula_lbl := Label.new()
 	formula_lbl.text = (
 		"📐 Formula: Φ = WMA - CP   |   "
-		+ "Thresholds: Φ<0.5→Easy  0.5≤Φ≤0.85→Medium  Φ>0.85→Hard"
+		+ "Thresholds: Φ<0.5➡Easy  0.5≤Φ≤0.85➡Medium  Φ>0.85➡Hard"
 	)
 	formula_lbl.add_theme_font_size_override("font_size", 13)
 	formula_lbl.add_theme_color_override("font_color", COL_MUTED)
@@ -303,8 +281,8 @@ func _add_mp_algorithm(sum: Dictionary) -> void:
 	_gkv(grid, "Skill Gap Threshold", "0.15 (15%)")
 	_vbox.add_child(grid)
 	var note := _make_label(
-		"gap > 0.15 → Asymmetric (weaker gets Easy, stronger gets Hard)\n"
-		+ "gap ≤ 0.15 → Symmetric (both at same level)",
+		"gap > 0.15 ➡ Asymmetric (weaker gets Easy, stronger gets Hard)\n"
+		+ "gap ≤ 0.15 ➡ Symmetric (both at same level)",
 		13, COL_MUTED
 	)
 	note.autowrap_mode = TextServer.AUTOWRAP_WORD
@@ -519,6 +497,12 @@ func _fill_iso(sl: Node) -> void:
 		c.queue_free()
 
 	var sum: Dictionary = sl.get_current_summary()
+	# A criterion with no sensor behind it is neither passed nor failed. cpu_temp_peak is
+	# 0.0 on every device without /sys/class/thermal access, and 0.0 <= 45.0 read as a
+	# green tick that counted toward "N/N checks passed" - a compliance claim for a
+	# quantity nothing measured. Thermal rows are scored only when the source is a real
+	# sensor, and are shown as "not measured" otherwise (same rule as the exported log).
+	var thermal_measured: bool = str(sum.get("thermal_source", "unknown")) == "sensor"
 	var checks := [
 		["FPS ≥ 30 (min observed)", float(sum.get("fps_min", 0.0)) >= 30.0,
 			"%.1f fps" % float(sum.get("fps_min", 0.0))],
@@ -526,10 +510,14 @@ func _fill_iso(sl: Node) -> void:
 			"%.1f fps avg" % float(sum.get("fps_avg", 0.0))],
 		["Memory ≤ 200 MB", float(sum.get("memory_peak_mb", 0.0)) <= 200.0,
 			"%.1f MB peak" % float(sum.get("memory_peak_mb", 0.0))],
-		["CPU Temp ≤ 45°C", float(sum.get("cpu_temp_peak", 0.0)) <= 45.0,
-			"%.1f°C peak" % float(sum.get("cpu_temp_peak", 0.0))],
-		["No Throttle Events", int(sum.get("throttle_count", 0)) == 0,
-			"%d events" % int(sum.get("throttle_count", 0))],
+		["CPU Temp ≤ 45°C",
+			(float(sum.get("cpu_temp_peak", 0.0)) <= 45.0) if thermal_measured else null,
+			("%.1f°C peak" % float(sum.get("cpu_temp_peak", 0.0))) if thermal_measured
+				else "not measured (%s)" % str(sum.get("thermal_source", "unknown"))],
+		["No Throttle Events",
+			(int(sum.get("throttle_count", 0)) == 0) if thermal_measured else null,
+			("%d events" % int(sum.get("throttle_count", 0))) if thermal_measured
+				else "not measured (%s)" % str(sum.get("thermal_source", "unknown"))],
 		["Algo Latency < 16 ms", float(sum.get("algo_latency_max_ms", 0.0)) < 16.0,
 			"%.3f ms max" % float(sum.get("algo_latency_max_ms", 0.0))],
 		["Frame Drop Rate < 2%", float(sum.get("drop_rate_pct", 0.0)) < 2.0,
@@ -537,23 +525,40 @@ func _fill_iso(sl: Node) -> void:
 	]
 
 	var pass_count := 0
+	var scored := 0
+	var failed := 0
 	for check in checks:
 		var label_text: String = check[0]
-		var passed: bool = bool(check[1])
+		var passed = check[1]  # bool, or null when the criterion was not measured
 		var value: String = str(check[2])
-		if passed:
-			pass_count += 1
-		var icon := "✅" if passed else "❌"
-		var col: Color = COL_GOOD if passed else COL_BAD
+		var icon: String
+		var col: Color
+		if passed == null:
+			icon = "⚪"
+			col = COL_MUTED
+		else:
+			scored += 1
+			if bool(passed):
+				pass_count += 1
+				icon = "✅"
+				col = COL_GOOD
+			else:
+				failed += 1
+				icon = "❌"
+				col = COL_BAD
 		var lbl := _make_label("%s  %s  —  %s" % [icon, label_text, value], 15, col)
 		_iso_vbox.add_child(lbl)
 
 	_iso_vbox.add_child(_make_separator())
-	var overall := pass_count == checks.size()
+	# Out of the criteria that were actually measured, and the count says so. An
+	# unmeasured criterion does not fail the verdict and does not pass it either.
+	var overall := failed == 0
+	var unscored := checks.size() - scored
 	var summary_lbl := _make_label(
-		"%s  ISO/IEC 25010: %d/%d checks passed" % [
+		"%s  ISO/IEC 25010: %d/%d measured checks passed%s" % [
 			"✅ PASS" if overall else "❌ FAIL",
-			pass_count, checks.size()
+			pass_count, scored,
+			("  (%d not measured)" % unscored) if unscored > 0 else ""
 		],
 		18,
 		COL_GOOD if overall else COL_BAD
@@ -610,27 +615,6 @@ func _on_refresh_tick() -> void:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # ACTIONS
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-func _on_export_pressed() -> void:
-	if AudioManager:
-		AudioManager.play_click()
-	_export_btn.disabled = true
-	_export_status_lbl.text = "Exporting…"
-
-	var sl: Node = get_node_or_null("/root/SessionLogger")
-	if sl:
-		var path: String = sl.export_session(true)
-		if path.length() > 0:
-			_export_status_lbl.text = "✅ Saved: %s" % path
-			_export_status_lbl.add_theme_color_override("font_color", COL_GOOD)
-		else:
-			_export_status_lbl.text = "❌ Export failed — check console"
-			_export_status_lbl.add_theme_color_override("font_color", COL_BAD)
-	else:
-		_export_status_lbl.text = "❌ SessionLogger not found"
-		_export_status_lbl.add_theme_color_override("font_color", COL_BAD)
-
-	_export_btn.disabled = false
 
 func _on_back_pressed() -> void:
 	if AudioManager:

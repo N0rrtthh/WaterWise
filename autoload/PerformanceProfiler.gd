@@ -114,6 +114,14 @@ var dropped_frames: int = 0
 ## reported dropped_frames number shifts meaning.
 var frames_over_60_budget: int = 0
 
+## Frames counted under the SAME warmup gate as dropped_frames, so that
+## dropped_frames / this is a ratio over one population. total_frames counts every
+## frame including startup, and dividing by it mixed populations: a 9-frame headless
+## run reported over=0 measured=9 and therefore a 100% sustained rate, when in truth
+## no frame had been eligible to count at all. On a long session the bias is small
+## (3s of warmup out of 7510 frames) but it is always in the flattering direction.
+var frames_after_warmup: int = 0
+
 ## Battery estimation (simulated for non-Android builds)
 var estimated_battery_mah: float = 0.0
 
@@ -141,6 +149,30 @@ var cpu_temp_c: float = 0.0
 var cpu_temp_history: Array[float] = []  # 1s interval log
 var cpu_temp_peak: float = 0.0
 var cpu_temp_timer: float = 0.0  # 1-second sample timer
+## Overlay redraw rate. See the throttle in _process() for why this is not per frame.
+const OVERLAY_REFRESH_INTERVAL: float = 0.25
+var _overlay_refresh_timer: float = 0.0
+## How many times the overlay label was rebuilt this session. Exported so the throttle
+## above is a measurement in the log rather than an assertion in a comment: at 4 Hz this
+## divided by session seconds lands near 4, and the pre-fix build would land near the
+## frame rate.
+var overlay_refresh_count: int = 0
+## ASCII-only status markers for the overlay.
+##
+## The readout used 🟢 🟡 🔴 ⚪ ✅ ❌ 🔋 ⏱ 🔬 ━ Δ and °, and none of those exist in the
+## bundled font. A glyph the font does not have sends TextServer out to the system font
+## fallback, and that lookup is cached per requested string — while this string changes on
+## every single refresh (frame_time_ms alone guarantees a new cache key). So a per-frame
+## overlay meant a per-frame fallback search on a device whose emoji font Godot cannot even
+## use: Android 8 draws these as tofu boxes anyway (see the same symptom reported for the
+## in-game UI). Throttling to OVERLAY_REFRESH_INTERVAL cut how often that happened; ASCII
+## removes the cost outright, and the boxes with it.
+##
+## Four characters wide each so the columns still line up under a monospaced reading.
+const ICO_OK := "[ok]"
+const ICO_WARN := "[!!]"
+const ICO_BAD := "[XX]"
+const ICO_NA := "[--]"
 
 ## S_clk: Clock Speed Stability
 ## Throttle = CPU freq drops below 80% of max rated speed
@@ -339,8 +371,10 @@ func _process(delta: float) -> void:
 	# Count dropped frames only after startup warmup settles
 	if session_elapsed_sec > STARTUP_WARMUP_SEC and frame_time_ms > FRAME_BUDGET_60_MS:
 		frames_over_60_budget += 1
-	if frame_time_ms > FRAME_BUDGET_MS and session_elapsed_sec > STARTUP_WARMUP_SEC:
-		dropped_frames += 1
+	if session_elapsed_sec > STARTUP_WARMUP_SEC:
+		frames_after_warmup += 1
+		if frame_time_ms > FRAME_BUDGET_MS:
+			dropped_frames += 1
 	
 	# ── MEMORY ──
 	memory_current_mb = float(OS.get_static_memory_usage()) / (1024.0 * 1024.0)
@@ -418,8 +452,25 @@ func _process(delta: float) -> void:
 	_check_thresholds()
 	
 	# ── UPDATE OVERLAY ──
+	# Throttled to OVERLAY_REFRESH_INTERVAL, not per frame. A debug overlay must not
+	# materially change the frame budget it exists to measure, and this one did: the
+	# label it rebuilds is ~15 lines of emoji-bearing text assembled from a dozen
+	# "%.1f" formats, and assigning a Label's text re-runs the whole TextServer
+	# shaping pass over it. On a Cortex-A53 falling back through the system emoji font
+	# for ten glyphs that is not cheap, and it was happening once per frame inside a
+	# 30 FPS budget — the reported "profiler overlay itself causes severe lag when
+	# enabled".
+	#
+	# 4 Hz is well inside human reading speed and above the 1 Hz rate at which most of
+	# these numbers change at all (cpu_temp, S_clk and the battery poll are all 1 Hz).
+	#
+	# overlay_refresh_count is published in the report so an on-device log can show the
+	# throttle held, rather than the claim resting on this comment.
 	if overlay_visible and overlay_label:
-		_update_overlay_text()
+		_overlay_refresh_timer += delta
+		if _overlay_refresh_timer >= OVERLAY_REFRESH_INTERVAL:
+			_overlay_refresh_timer = 0.0
+			_update_overlay_text()
 
 func _input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo:
@@ -434,6 +485,13 @@ func set_overlay_visible(visible: bool) -> void:
 
 func is_overlay_visible() -> bool:
 	return overlay_visible
+
+## Rebuilds the overlay label immediately, bypassing the OVERLAY_REFRESH_INTERVAL gate.
+## Exists so a harness can time what one refresh actually costs without reaching into a
+## private method (same reason as check_iso_compliance above). Not used by gameplay —
+## calling this per frame is precisely the defect the throttle fixes.
+func refresh_overlay_text_now() -> void:
+	_update_overlay_text()
 
 func toggle_overlay() -> void:
 	set_overlay_visible(not overlay_visible)
@@ -562,6 +620,7 @@ func _take_snapshot() -> void:
 		"algo_latency_avg_ms": algo_latency_avg_ms,
 		"algo_latency_max_ms": algo_latency_max_ms,
 		"dropped_frames": dropped_frames,
+		"frames_after_warmup": frames_after_warmup,
 		"frames_over_60_budget": frames_over_60_budget,
 		"total_frames": total_frames,
 		"battery_mah": estimated_battery_mah,
@@ -611,9 +670,25 @@ func export_session_report() -> Dictionary:
 			"budget_ms": FRAME_BUDGET_MS,
 			"budget_60_ms": FRAME_BUDGET_60_MS,
 			"dropped_frames": dropped_frames,
+			"frames_after_warmup": frames_after_warmup,
 			"frames_over_60_budget": frames_over_60_budget,
 			"drop_rate_percent": drop_rate,
 			"meets_budget": drop_rate < 5.0  # <5% dropped frames = pass
+		},
+		# What the debug overlay itself cost this session. It used to rebuild an
+		# emoji-bearing 15-line Label once per frame, so on the Moto E5 Plus turning the
+		# profiler on measurably worsened the frame rate the profiler was reporting.
+		# refresh_hz is the check: near OVERLAY_REFRESH_INTERVAL's 4 Hz while the overlay
+		# was up, and 0 when it was never shown. A figure near the frame rate means the
+		# throttle is not holding.
+		"overlay_cost": {
+			"visible_at_export": overlay_visible,
+			"refresh_count": overlay_refresh_count,
+			"refresh_hz": (
+				float(overlay_refresh_count) / session_elapsed_sec
+				if session_elapsed_sec > 0.0 else 0.0
+			),
+			"refresh_interval_sec": OVERLAY_REFRESH_INTERVAL
 		},
 		"memory": {
 			"current_mb": memory_current_mb,
@@ -1111,60 +1186,61 @@ func get_stress_test_report() -> Dictionary:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func _update_overlay_text() -> void:
-	var fps_ico = "🟢"
+	overlay_refresh_count += 1
+	var fps_ico := ICO_OK
 	if fps_current < MIN_FPS:
-		fps_ico = "🔴"
+		fps_ico = ICO_BAD
 	elif fps_current < TARGET_FPS:
-		fps_ico = "🟡"
-	
-	var mem_ico = "🟢"
+		fps_ico = ICO_WARN
+
+	var mem_ico := ICO_OK
 	if memory_current_mb >= MAX_MEMORY_MB:
-		mem_ico = "🔴"
+		mem_ico = ICO_BAD
 	elif memory_current_mb >= MAX_MEMORY_MB * 0.8:
-		mem_ico = "🟡"
-	
+		mem_ico = ICO_WARN
+
 	var temp_str: String
 	if _thermal_source == "sensor":
-		var temp_ico = "🟢"
+		var temp_ico := ICO_OK
 		if cpu_temp_c >= MAX_CPU_TEMP_C:
-			temp_ico = "🔴"
+			temp_ico = ICO_BAD
 		elif cpu_temp_c >= MAX_CPU_TEMP_C * 0.85:
-			temp_ico = "🟡"
-		temp_str = "%s T_cpu: %.1f°C / %.0f°C [sensor]\n" % [
+			temp_ico = ICO_WARN
+		temp_str = "%s T_cpu: %.1fC / %.0fC [sensor]\n" % [
 			temp_ico, cpu_temp_c, MAX_CPU_TEMP_C
 		]
 	else:
-		temp_str = "⚪ T_cpu: N/A [%s]\n" % _thermal_source
-	
-	var algo_ico = "🟢"
+		temp_str = "%s T_cpu: N/A [%s]\n" % [ICO_NA, _thermal_source]
+
+	var algo_ico := ICO_OK
 	if algo_latency_max_ms >= MAX_ALGO_LATENCY_MS:
-		algo_ico = "🔴"
-	
-	var clk_ico = "🟢" if not is_throttling else "🔴"
-	var iso = "✅ PASS" if _check_iso_compliance() else "❌ FAIL"
+		algo_ico = ICO_BAD
+
+	var clk_ico := ICO_OK if not is_throttling else ICO_BAD
+	var iso = "PASS" if _check_iso_compliance() else "FAIL"
 	var drop_pct = (
 		float(dropped_frames) / max(total_frames, 1) * 100.0
 	)
-	
+
 	var batt_str: String
 	if battery_source == "android_sysfs":
 		var savings = (1.0 - rule_based_vs_dl_ratio) * 100.0
-		batt_str = "🔋 ΔE: %.2f mAh/min [sysfs]\n" % battery_drain_per_min
+		batt_str = "BATT dE: %.2f mAh/min [sysfs]\n" % battery_drain_per_min
 		batt_str += "  vs DL: %.0f%% savings\n" % savings
 	else:
-		batt_str = "🔋 ΔE: N/A [%s]\n" % battery_source
-	
+		batt_str = "BATT dE: N/A [%s]\n" % battery_source
+
 	var stress_ln = ""
 	if stress_test_active:
 		var st_sec = float(
 			Time.get_ticks_msec() - stress_test_start
 		) / 1000.0
-		stress_ln = "\n🔬 STRESS: %.0fs/%.0fs" % [
+		stress_ln = "\nSTRESS: %.0fs/%.0fs" % [
 			st_sec, STRESS_TEST_DURATION_SEC
 		]
-	
+
 	overlay_label.text = (
-		"━━ ISO/IEC 25010 PROFILER ━━\n"
+		"== ISO/IEC 25010 PROFILER ==\n"
 		+ "%s FPS: %.0f (avg:%.0f min:%.0f)\n" % [
 			fps_ico, fps_current, fps_avg, fps_min
 		]
@@ -1186,7 +1262,7 @@ func _update_overlay_text() -> void:
 			MAX_ALGO_LATENCY_MS
 		]
 		+ batt_str
-		+ "⏱ %.0fs | %d frames\n" % [
+		+ "TIME %.0fs | %d frames\n" % [
 			session_elapsed_sec, total_frames
 		]
 		+ "ISO 25010: %s" % iso

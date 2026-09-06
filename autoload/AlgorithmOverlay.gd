@@ -217,11 +217,11 @@ func _update_overlay() -> void:
 		var games_left = int(status.get("games_until_algorithm_activation", 0))
 		rule_display.text = "⏳ Collecting data... (%d more games)" % games_left
 	elif phi < 0.5:
-		rule_display.text = "📋 Rule 1: Φ<0.5 → EASY"
+		rule_display.text = "📋 Rule 1: Φ<0.5 ➡ EASY"
 	elif phi > 0.85:
-		rule_display.text = "📋 Rule 2: Φ>0.85 → HARD"
+		rule_display.text = "📋 Rule 2: Φ>0.85 ➡ HARD"
 	else:
-		rule_display.text = "📋 Rule 3: 0.5≤Φ≤0.85 → MEDIUM"
+		rule_display.text = "📋 Rule 3: 0.5≤Φ≤0.85 ➡ MEDIUM"
 	
 	# Update games counter
 	var session_games = int(status.get("session_games_played", status.get("total_games_played", 0)))

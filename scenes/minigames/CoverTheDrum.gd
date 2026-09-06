@@ -71,7 +71,7 @@ func _ready():
 	# Stars
 	for i in range(20):
 		var star = Label.new()
-		star.text = "✦"
+		star.text = "✨"
 		star.add_theme_font_size_override("font_size", randi_range(10, 20))
 		star.modulate = Color(1, 1, 0.8, randf_range(0.3, 0.7))
 		star.position = Vector2(randf() * screen_size.x, randf() * screen_size.y * 0.5)
@@ -189,7 +189,7 @@ func _cover_drum(drum: Node2D):
 	var lid = drum.get_node("LidContainer")
 	lid.visible = true
 	drum.get_node("Water").visible = false
-	drum.get_node("Status").text = _loc("hud_drum_safe", "✓ SAFE")
+	drum.get_node("Status").text = _loc("hud_drum_safe", "✔ SAFE")
 	drum.get_node("Status").add_theme_color_override("font_color", Color(0.4, 1.0, 0.4))
 	
 	var tween = create_tween()
@@ -274,7 +274,7 @@ func _process(delta):
 				
 				var bounce_dir = -dir * 150
 				var blocked_label = Label.new()
-				blocked_label.text = "✗"
+				blocked_label.text = "✖"
 				blocked_label.add_theme_font_size_override("font_size", 40)
 				blocked_label.add_theme_color_override("font_color", Color.GREEN)
 				blocked_label.position = mosq.position + Vector2(-15, -30)

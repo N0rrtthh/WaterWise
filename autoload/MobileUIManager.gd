@@ -129,6 +129,20 @@ var viewport_height: int = 0
 # Keyboard avoidance
 var keyboard_height: int = 0  ## Current on-screen keyboard height (pixels, 0 when hidden)
 var _natural_viewport_height: int = 0  ## Full viewport height with no keyboard
+## How often the keyboard's height is read back from Android while a text field has focus.
+## The slide-in animation runs ~250 ms, so 10 Hz lands the inset inside that animation,
+## and the poll is skipped outright the rest of the time — see _poll_virtual_keyboard().
+const KEYBOARD_POLL_INTERVAL: float = 0.1
+var _keyboard_poll_timer: float = 0.0
+## True once DisplayServer has reported a real keyboard height. From then on the
+## viewport-shrink heuristic in _on_viewport_size_changed() stops writing keyboard_height,
+## so the two sources can never disagree about it.
+var _keyboard_height_from_displayserver: bool = false
+## Where the scene's own bottom offset is remembered before a keyboard inset is added to
+## it. Cached in node meta rather than assumed to be 0: LayoutManagerUtil.apply_safe_area_margins
+## writes that same property ABSOLUTELY (see adapt_scene_for_mobile), so an inset that
+## assumed 0 would silently erase the safe-area reserve on the way back out.
+const KEYBOARD_INSET_BASE_META := "ww_keyboard_inset_base"
 
 # Frame rate monitoring
 var _fps_samples: Array[float] = []
@@ -159,11 +173,93 @@ var _last_adapted_scene_id: int = -1
 ## equivalent 44 CSS px, so 48dp satisfies both.
 const MIN_TOUCH_TARGET_DP: float = 48.0
 
+## The floor the "Large Touch Targets" accessibility toggle asks for, in the same
+## density-independent pixels.
+##
+## WHY THIS CONSTANT EXISTS AT ALL: the toggle used to do nothing on a phone.
+## _resolve_button_min_size() raised the target to a fixed Vector2(120, 80) canvas
+## units when the toggle was on, and THEN raised it again to the 48dp floor. On the
+## two devices this was reported from, the 48dp floor is already larger than both of
+## those numbers - 121 units on the Moto E5 Plus (402.5 dpi) and 119 on the Poco X3
+## (394.6) - so the toggle resolved to 121x121 on and 121x121 off. Identical. It was
+## only ever visible on the 9.7in tablet profile, where the floor is 75 units. A
+## fixed canvas-unit pair cannot express "bigger than the minimum" on a screen whose
+## minimum is measured in dp, so the toggle asks for a bigger DP FLOOR instead and
+## the same production conversion turns it into units.
+##
+## 64dp rather than something larger: Material's own guidance names 48dp as the
+## minimum and recommends going up for motor-impairment users, and 64dp is the step
+## that still lets Settings' accessibility rows fit the card they live in - the
+## clipping and overlap cost of this number is measured at all seven device profiles
+## by tools/AuditMobileUI.tscn -- --large-targets, and the growth it produces is
+## measured by tools/VerifyLargeTouchTargets.tscn. That audit is also what found the
+## one screen size where 64dp does not fit, which is why the constant below caps it.
+const LARGE_TOUCH_TARGET_DP: float = 64.0
+
+## Ceiling on what that request may cost, as a fraction of the 1080-unit canvas height every
+## screen in this project is authored against.
+##
+## 64dp is a PHYSICAL size, and on a low-density screen it buys a lot of canvas: 196 units of a
+## 1080-unit-tall canvas on the WVGA 4.5in and qHD 4.5in profiles, against 161 on the Moto E5
+## Plus and 158 on the Poco X3. At 196, tools/AuditMobileUI.tscn -- --large-targets measured
+## four accidental-touch pairs on the title screen and nowhere else: UI/TopRight's icon strip
+## grows downward from the top edge while UI/ButtonContainer's PLAY/MULTIPLAYER column grows
+## upward from the bottom, and on those two profiles the two meet. Every profile that resolved
+## to 177 units or less was clean, so the ceiling is set just under the largest size measured
+## clean: 0.16 * 1080 = 173 units. It therefore bites only on 4.5in-class screens and leaves
+## both reported devices at the full 64dp.
+##
+## Against the BASE height from ProjectSettings rather than the live canvas: stretch
+## canvas_items/expand keeps the authored 1080 and expands the width, so the canvas measured
+## 1080 tall at every one of the audit's nine profiles - and a headless harness, where the
+## canvas comes up square at 1920x1920, would read a 308-unit ceiling and silently stop
+## capping the very thing it is there to measure.
+##
+## The 48dp minimum is applied AFTER this cap and cannot be undercut by it - see
+## _resolve_button_min_size(). If a screen is ever dense enough that 48dp alone exceeds the
+## ceiling, the standard wins and the layout has to cope.
+const LARGE_TOUCH_TARGET_MAX_CANVAS_FRACTION: float = 0.16
+
 ## Marker meta a scene sets on the Control it manages itself, so
 ## adapt_scene_for_mobile() leaves that node's offsets alone. Settings uses it: it
 ## needs the safe-area inset AND a reserve for its fixed action bar in the same
 ## two properties, and only the scene knows how tall that bar is.
 const SAFE_AREA_SELF_MANAGED_META := "safe_area_self_managed"
+
+## Marker meta a scene sets on a BaseButton that is one row of a list rather than a
+## standalone control, so _apply_button_min_size() leaves its authored size alone.
+##
+## The 48dp floor is applied to BOTH axes, which is right for a button a finger aims
+## at directly and wrong for a two-column list row: on a 420dpi phone the floor is
+## 126 canvas units, so every CheckBox in Settings became a 126x126 square and six
+## accessibility rows overflowed the card they live in. Use this only where the ROW
+## is the touch target and the scene sizes that row itself; a control carrying it is
+## exempt from the audit's 48dp expectation, so it must not be the only thing a
+## player can press.
+const COMPACT_ROW_META := "mobile_compact_row"
+
+## The custom_minimum_size a button's own scene or script asked for, before this manager
+## raised it to the touch floor. Stored so _apply_button_min_size() can recompute from the
+## authored pair rather than from the value it last wrote, which is what makes the
+## "Large Touch Targets" toggle work in BOTH directions: max(current, smaller_floor) is
+## current, so growing from the live value meant turning the toggle back off left every
+## button big until its scene was rebuilt.
+const AUTHORED_MIN_SIZE_META := "ww_authored_min_size"
+
+## What this manager last wrote to that button. If the live minimum no longer matches it,
+## something else - a script that sizes its own button after adding it to the tree, and
+## there are 80 such sites - has spoken since, and its number becomes the new authored
+## baseline instead of being overwritten by a floor on the next pass.
+const APPLIED_MIN_SIZE_META := "ww_applied_min_size"
+
+## Marks a node whose pivot_offset this manager centred itself, so a later refit may
+## recompute it. A node that authored its own pivot never gets the marker and is never
+## rewritten.
+const MOBILE_PIVOT_META := "ww_mobile_center_pivot"
+
+## Marks a node already hooked to its own resized signal for a scale refit, so the
+## connection is made once however many times apply_mobile_scaling is called.
+const MOBILE_FIT_HOOK_META := "ww_mobile_fit_hooked"
 
 ## Test-only dpi injection, mirroring debug_mobile_mode above. tools/AuditMobileUI.gd
 ## sets this to a real device's dpi so the touch-target maths can be verified at
@@ -233,24 +329,26 @@ func _ready() -> void:
 	print("   - Orientation: %s" % ("Portrait" if is_portrait else "Landscape"))
 	print("   - Debug Mode: %s" % debug_mobile_mode)
 
-## Frame-rate sampling, and nothing else.
+## Frame-rate sampling and the soft-keyboard height poll.
 ##
 ## The viewport-size poll that used to live here was unreachable: the size_changed
 ## handler mirrors viewport_width/height synchronously inside the resize, so by the
 ## time a frame boundary arrived the poll's comparison was always false and its
 ## 0.5 s orientation debounce never armed (measured over 307 frames and two real
 ## flips in tools/VerifyViewportPolling.tscn). Removing it leaves _monitor_frame_rate
-## as the only body, which is mobile-only — so _refresh_process_state() switches this
-## callback off entirely on desktop and while the app is backgrounded rather than
-## paying a per-frame script call to reach an early return.
+## as the only body it had. Both it and _poll_virtual_keyboard() are mobile-only, so
+## _refresh_process_state() switches this callback off entirely on desktop and while the
+## app is backgrounded rather than paying a per-frame script call to reach an early return.
 func _process(delta: float) -> void:
 	if is_mobile and not _is_in_background:
 		_monitor_frame_rate(delta)
+		_poll_virtual_keyboard(delta)
 
 
-## Enable _process only while it has work: FPS sampling, which is mobile-only and
-## pointless while the app is in the background. Called from every place that can
-## change either input (platform detection, the debug-mobile override, focus).
+## Enable _process only while it has work: FPS sampling and the keyboard-height poll,
+## both mobile-only and both pointless while the app is in the background. Called from
+## every place that can change either input (platform detection, the debug-mobile
+## override, focus).
 func _refresh_process_state() -> void:
 	set_process(is_mobile and not _is_in_background)
 
@@ -427,10 +525,10 @@ func _adapt_current_scene() -> void:
 			_apply_keyboard_inset(keyboard_height)
 
 
-func _on_current_scene_changed(scene_root: Node) -> void:
+func _on_current_scene_changed(_scene_root: Node) -> void:
 	if not is_mobile:
 		return
-	call_deferred("adapt_scene_for_mobile", scene_root)
+	_adapt_current_scene_deferred.call_deferred()
 
 
 func _on_tree_changed() -> void:
@@ -443,7 +541,25 @@ func _on_tree_changed() -> void:
 	if current != _last_scene:
 		_last_scene = current
 		if is_mobile and current != null:
-			call_deferred("adapt_scene_for_mobile", current)
+			_adapt_current_scene_deferred.call_deferred()
+
+
+## Out-of-band fix, no behaviour change while the scene is alive: both scene-change hooks used
+## to defer adapt_scene_for_mobile(scene_root) with the Node as the argument. A scene freed
+## between the signal and the deferred flush - two scene changes in one frame - made the call
+## itself fail with "Error calling deferred method: '...adapt_scene_for_mobile': Cannot convert
+## argument 1 from Object to Object", because a stored argument cannot be converted once its
+## object is gone. A guard inside adapt_scene_for_mobile() could not help; the failure happens
+## while the argument is being bound, before the body runs. Resolving the scene at flush time
+## instead does, and it is the same node in every case where the old code worked - if it did
+## change again in between, the newer scene is the one that needs adapting anyway.
+func _adapt_current_scene_deferred() -> void:
+	var tree := get_tree()
+	if tree == null:
+		return
+	var scene := tree.current_scene
+	if is_instance_valid(scene):
+		adapt_scene_for_mobile(scene)
 
 
 func adapt_scene_for_mobile(scene_root: Node) -> void:
@@ -571,21 +687,41 @@ func _dp_to_canvas_units(dp: float) -> float:
 func _resolve_button_min_size() -> Vector2:
 	if _button_min_cache_valid:
 		return _button_min_cache
+	var wants_large: bool = _wants_large_touch_targets()
 	var target_size = mobile_button_min_size
-	var save_mgr = get_node_or_null("/root/SaveManager")
-	if save_mgr and save_mgr.has_method("get_setting"):
-		var wants_large_targets = bool(save_mgr.get_setting("large_touch_targets", false))
-		if wants_large_targets:
-			target_size = Vector2(max(target_size.x, 120.0), max(target_size.y, 80.0))
-	# Raise the authored minimum to the 48dp floor when the screen needs it. This
+	if wants_large:
+		target_size = Vector2(max(target_size.x, 120.0), max(target_size.y, 80.0))
+	# Raise the authored minimum to the touch floor when the screen needs it. This
 	# only ever grows the target, so a scene that already authored something bigger
 	# keeps its own size.
+	#
+	# WHICH floor is the whole of the "Large Touch Targets" toggle: the fixed 120x80
+	# above is smaller than the 48dp floor on every phone profile this project
+	# measures, so before LARGE_TOUCH_TARGET_DP existed the toggle changed nothing a
+	# finger could feel. See that constant for the numbers.
 	if is_mobile:
 		var floor_units := _dp_to_canvas_units(MIN_TOUCH_TARGET_DP)
+		if wants_large:
+			# max(), so the capped large request can never come out UNDER the 48dp standard
+			# on a screen dense enough for the cap to fall below it.
+			floor_units = maxf(floor_units, _large_target_floor_units())
 		target_size = Vector2(maxf(target_size.x, floor_units), maxf(target_size.y, floor_units))
 	_button_min_cache = target_size
 	_button_min_cache_valid = true
 	return target_size
+
+
+## What the "Large Touch Targets" floor costs in canvas units on THIS screen, with the request
+## capped so it cannot outgrow the layout it is spent on. See
+## LARGE_TOUCH_TARGET_MAX_CANVAS_FRACTION for the measurement that set the ceiling and for why
+## it is taken against the authored base height rather than the live canvas.
+func _large_target_floor_units() -> float:
+	var large_units := _dp_to_canvas_units(LARGE_TOUCH_TARGET_DP)
+	var base_height: float = float(
+		ProjectSettings.get_setting("display/window/size/viewport_height", 1080))
+	if base_height <= 0.0:
+		return large_units
+	return minf(large_units, ceilf(base_height * LARGE_TOUCH_TARGET_MAX_CANVAS_FRACTION))
 
 
 ## Called wherever an input to the size changes: a resize alters the stretch ratio,
@@ -635,13 +771,44 @@ func _on_node_added(node: Node) -> void:
 		_apply_button_min_size(node as BaseButton, _resolve_button_min_size())
 
 
-## Only ever grows a button: a scene that authored something larger keeps it, and
-## re-running the adaptation is therefore idempotent.
+## Only ever grows a button beyond the size ITS OWN scene or script asked for, and that
+## authored size is remembered rather than inferred from the live value - so the pass is
+## idempotent, and the accessibility toggle above it is reversible.
 func _apply_button_min_size(button: BaseButton, button_minimum_size: Vector2) -> void:
-	button.custom_minimum_size = Vector2(
-		maxf(button.custom_minimum_size.x, button_minimum_size.x),
-		maxf(button.custom_minimum_size.y, button_minimum_size.y)
+	# Whose number is currently in custom_minimum_size? If it is not the one this manager
+	# last wrote, the button's owner has spoken since - a script that sizes its button
+	# after adding it to the tree - and that becomes the baseline to grow from.
+	if not button.has_meta(APPLIED_MIN_SIZE_META) \
+			or button.custom_minimum_size != Vector2(button.get_meta(APPLIED_MIN_SIZE_META)):
+		button.set_meta(AUTHORED_MIN_SIZE_META, button.custom_minimum_size)
+	var authored: Vector2 = Vector2(button.get_meta(AUTHORED_MIN_SIZE_META, Vector2.ZERO))
+
+	var target: Vector2 = Vector2(
+		maxf(authored.x, button_minimum_size.x),
+		maxf(authored.y, button_minimum_size.y)
 	)
+	# A compact row keeps the WIDTH its scene authored, always: the row already spans the
+	# list it sits in, and squaring it off against a both-axes floor is what put six
+	# 126x126 accessibility checkboxes through the bottom of Settings' card. With large
+	# touch targets off it keeps its authored height as well; with them on, that explicit
+	# accessibility request outranks the layout that wanted the row short - Settings' own
+	# "Large Touch Targets" checkbox is one of these rows - but it is spent on the one
+	# axis a finger actually misses.
+	if button.has_meta(COMPACT_ROW_META):
+		if not _wants_large_touch_targets():
+			target = authored
+		else:
+			target = Vector2(authored.x, maxf(authored.y, button_minimum_size.y))
+
+	button.custom_minimum_size = target
+	button.set_meta(APPLIED_MIN_SIZE_META, target)
+
+
+func _wants_large_touch_targets() -> bool:
+	var save_mgr := get_node_or_null("/root/SaveManager")
+	if save_mgr and save_mgr.has_method("get_setting"):
+		return bool(save_mgr.get_setting("large_touch_targets", false))
+	return false
 
 
 func _apply_mobile_layout_hints(node: Node, button_minimum_size: Vector2) -> void:
@@ -791,7 +958,7 @@ func apply_mobile_scaling(node: Control) -> void:
 	var base_minimum_size = _get_or_store_base_minimum_size(node)
 	
 	# Apply UI scale factor
-	node.scale = base_scale * mobile_ui_scale
+	_apply_fitted_mobile_scale(node, base_scale)
 	node.set_meta("_mobile_scaled_root", true)
 	
 	# Apply button-specific handling
@@ -860,6 +1027,86 @@ func _get_or_store_base_minimum_size(node: Control) -> Vector2:
 
 	node.set_meta("_mobile_base_min_size", node.custom_minimum_size)
 	return node.custom_minimum_size
+
+
+## Write the mobile scale factor in a way the layout can survive.
+##
+## Control.scale is invisible to layout. A container positions this node from its
+## UNSCALED minimum size and the node then draws mobile_ui_scale times larger, growing
+## from pivot_offset - which defaults to the TOP-LEFT corner. On the title screen that
+## put the EXIT button 78 units below the bottom of a 1080-unit screen: CenterContainer
+## centred an 857x618 box and the box then drew 927 units tall downward from y=231.
+## Measured with tools/VerifyMenuFit.tscn at 402 dpi (the density of 2160x1080 on the
+## Moto E5 Plus's 6.0in panel) and 74 units over at the Poco X3's 395 dpi. It was
+## invisible in every headless sweep because DisplayServer reports no dpi there, the
+## mdpi 160 fallback keeps the 48dp touch floor small, and at that floor the same
+## layout has 24 units to spare - so the defect only exists at real phone densities.
+##
+## Two corrections, each of which can only ever improve the fit:
+##   1. scale about the node's own centre, so a container that centred the unscaled box
+##      still centres what gets drawn instead of letting the extra size fall downward.
+##      The whole title menu sat 154 units low for the same reason it was clipped.
+##   2. clamp the factor so the scaled box still fits the space the parent gave it, for
+##      the densities where even a centred 1.5x does not fit. Never below 1.0: the
+##      unscaled layout is the scene's own business, not something to squash here.
+func _apply_fitted_mobile_scale(node: Control, base_scale: Vector2) -> void:
+	_center_mobile_pivot(node)
+	node.scale = base_scale * _fit_scale_for(node, mobile_ui_scale)
+	# The 48dp touch floor that grows the box is applied by adapt_scene_for_mobile,
+	# which runs AFTER a scene's own _ready() has already called in here - the box the
+	# first call measured is not the box the player gets. Re-derive on resized rather
+	# than hoping the ordering never changes; nothing in here writes size, so this
+	# cannot feed back on itself.
+	if not node.has_meta(MOBILE_FIT_HOOK_META):
+		node.set_meta(MOBILE_FIT_HOOK_META, true)
+		node.resized.connect(_refit_mobile_scale.bind(node))
+
+
+func _refit_mobile_scale(node: Control) -> void:
+	if node == null or not is_instance_valid(node) or not is_mobile:
+		return
+	# Only refit what this manager scaled in the first place. Without the guard the
+	# base-scale accessor below would capture the ALREADY SCALED value as the base and
+	# the factor would compound on every re-sort.
+	if not node.has_meta("_mobile_base_scale"):
+		return
+	_center_mobile_pivot(node)
+	node.scale = _get_or_store_base_scale(node) * _fit_scale_for(node, mobile_ui_scale)
+
+
+## Scale from the middle rather than the top-left corner. A non-zero pivot_offset is an
+## opinion the scene expressed and is left alone; anything this manager centres itself
+## is marked so a later refit may recompute it against a grown box.
+func _center_mobile_pivot(node: Control) -> void:
+	if not node.has_meta(MOBILE_PIVOT_META):
+		if not node.pivot_offset.is_zero_approx():
+			return
+		node.set_meta(MOBILE_PIVOT_META, true)
+	node.pivot_offset = _layout_box_of(node) * 0.5
+
+
+## The box layout will give this node: its settled size where there is one, and its own
+## combined minimum otherwise, because this runs from _ready() before any sort has
+## happened. For a container placed by its minimum size the two are the same number.
+func _layout_box_of(node: Control) -> Vector2:
+	var mins := node.get_combined_minimum_size()
+	return Vector2(maxf(node.size.x, mins.x), maxf(node.size.y, mins.y))
+
+
+## The largest factor up to `wanted` at which this node's own box still fits the space
+## its parent gave it. Returns `wanted` untouched whenever there is room, so a screen
+## with space to spare keeps the full mobile magnification.
+func _fit_scale_for(node: Control, wanted: float) -> float:
+	if wanted <= 1.0:
+		return wanted
+	var box := _layout_box_of(node)
+	var area := node.get_parent_area_size()
+	if box.x <= 0.0 or box.y <= 0.0 or area.x <= 0.0 or area.y <= 0.0:
+		return wanted
+	var fit: float = minf(area.x / box.x, area.y / box.y)
+	if fit >= wanted:
+		return wanted
+	return maxf(1.0, fit)
 
 
 func _get_or_store_base_font_size(node: Control, fallback_size: int) -> int:
@@ -1181,28 +1428,30 @@ func _on_viewport_size_changed() -> void:
 	var new_width := int(vp_size.x)
 	var new_height := int(vp_size.y)
 
-	# ── Keyboard detection ───────────────────────────────────────
-	# On Android the window shrinks vertically when the soft keyboard
-	# appears (width stays the same).  Treat a height-only shrink as
-	# keyboard shown; a height restore as keyboard hidden.
+	# ── Keyboard detection: FALLBACK path only ───────────────────
+	# A host that resizes its window for the soft keyboard shrinks it vertically with the
+	# width unchanged, so a height-only shrink means "keyboard". That is the whole of what
+	# detection used to be, and it never fired in the shipped build: this game runs
+	# fullscreen/immersive, where Android draws the keyboard OVER the window instead of
+	# resizing it. keyboard_height therefore stayed 0 forever and _apply_keyboard_inset()
+	# was never called — the reported "keyboard completely covers the Enter Host IP
+	# Address field with no way to scroll". _poll_virtual_keyboard() asks Android directly
+	# and is the authority; this branch is kept for a windowed/resizing host and steps
+	# aside the moment the poll has produced a height.
 	var width_unchanged := (new_width == viewport_width or viewport_width == 0)
 	var height_shrank := new_height < viewport_height and viewport_height > 0
 
-	if width_unchanged and height_shrank and new_height < _natural_viewport_height:
+	if _keyboard_height_from_displayserver:
+		# DisplayServer owns keyboard_height now; just keep the baseline current.
+		if new_height >= _natural_viewport_height:
+			_natural_viewport_height = new_height
+	elif width_unchanged and height_shrank and new_height < _natural_viewport_height:
 		# Keyboard appeared: compute how tall it is
-		var new_kb_height := _natural_viewport_height - new_height
-		if new_kb_height != keyboard_height:
-			keyboard_height = new_kb_height
-			_apply_keyboard_inset(keyboard_height)
-			keyboard_visibility_changed.emit(keyboard_height)
-			print("⌨️ Keyboard shown, height: %d px" % keyboard_height)
+		apply_keyboard_height(_natural_viewport_height - new_height)
 	elif new_height >= _natural_viewport_height and keyboard_height > 0:
 		# Keyboard dismissed: restore
-		keyboard_height = 0
-		_apply_keyboard_inset(0)
-		keyboard_visibility_changed.emit(0)
+		apply_keyboard_height(0)
 		_natural_viewport_height = new_height  # Refresh baseline (e.g. after rotation)
-		print("⌨️ Keyboard hidden")
 	else:
 		# Genuine orientation / resize — update natural baseline
 		if new_height >= _natural_viewport_height:
@@ -1241,8 +1490,84 @@ func _on_viewport_size_changed() -> void:
 		]
 	)
 
+## Read the keyboard's height from Android rather than inferring it from a window resize.
+##
+## THE DEFECT: keyboard detection lived only in _on_viewport_size_changed(), which reads a
+## height-only viewport shrink as "keyboard shown". A fullscreen/immersive Android window
+## is not resized when the soft keyboard slides up — the keyboard is drawn over it — so
+## size_changed never fired for a keyboard, keyboard_height stayed 0, and the inset that
+## exists to lift the focused field was never applied. That is exactly the reported
+## "keyboard covers the Enter Host IP Address input and there is no scroll".
+##
+## DisplayServer.virtual_keyboard_get_height() asks the Android side for the real height
+## and is correct whether or not the window resized, which is why it is the authority.
+##
+## Costs nothing when it cannot matter: with no text field focused and no inset applied
+## the first comparison returns, so ordinary gameplay frames never reach the poll or the
+## DisplayServer call. (Assumption: only LineEdit and TextEdit raise the soft keyboard —
+## true of every text entry in this project.)
+func _poll_virtual_keyboard(delta: float) -> void:
+	var vp := get_viewport()
+	if not vp:
+		return
+	var focused := vp.gui_get_focus_owner()
+	var text_focused: bool = focused is LineEdit or focused is TextEdit
+	if not text_focused and keyboard_height <= 0:
+		_keyboard_poll_timer = 0.0
+		return
+	_keyboard_poll_timer += delta
+	if _keyboard_poll_timer < KEYBOARD_POLL_INTERVAL:
+		return
+	_keyboard_poll_timer = 0.0
+	var reported_px: int = DisplayServer.virtual_keyboard_get_height()
+	if reported_px > 0:
+		_keyboard_height_from_displayserver = true
+	apply_keyboard_height(screen_px_to_viewport_units(reported_px))
+
+
+## DisplayServer reports the keyboard in real screen pixels, while every layout property
+## the inset writes is in viewport units. Under stretch/mode="canvas_items" with a
+## 1920x1080 base those are 1:1 only on a device whose height is exactly 1080 — which both
+## test phones are (2160x1080 and 2400x1080), so an unconverted value would have measured
+## correct here and been half again too small on a 1440x720 handset.
+func screen_px_to_viewport_units(px: int) -> int:
+	if px <= 0:
+		return 0
+	var win := get_window()
+	var vp := get_viewport()
+	if not win or not vp or win.size.y <= 0:
+		return px
+	var vp_h: float = vp.get_visible_rect().size.y
+	return int(round(float(px) * vp_h / float(win.size.y)))
+
+
+## "The keyboard is now N viewport units tall": record it, inset the scene, tell listeners.
+##
+## The single place that decides what a keyboard height means. Both the DisplayServer poll
+## and the window-resize fallback route through here, so there is one write to
+## keyboard_height instead of two; harnesses drive it directly to check the layout response
+## without an Android keyboard to raise.
+func apply_keyboard_height(height: int) -> void:
+	var clamped: int = maxi(height, 0)
+	if clamped == keyboard_height:
+		return
+	keyboard_height = clamped
+	_apply_keyboard_inset(keyboard_height)
+	keyboard_visibility_changed.emit(keyboard_height)
+	if keyboard_height > 0:
+		print("⌨️ Keyboard shown, height: %d px" % keyboard_height)
+	else:
+		print("⌨️ Keyboard hidden")
+
+
 ## Apply a bottom inset to the current scene's root Control so the
 ## content is pushed above the keyboard.  A height of 0 removes it.
+##
+## The inset is ADDED to whatever bottom offset the scene already had rather than replacing
+## it. adapt_scene_for_mobile() warns about two systems writing one property; the safe-area
+## pass writes offset_bottom absolutely, so an inset that assumed a base of 0 would drop
+## the safe-area reserve the moment the keyboard closed. The base is captured once, into
+## node meta, so a second apply cannot stack on its own output either.
 func _apply_keyboard_inset(height: int) -> void:
 	var scene := get_tree().current_scene
 	if not scene:
@@ -1252,10 +1577,27 @@ func _apply_keyboard_inset(height: int) -> void:
 	if not root_ctrl:
 		return
 	if root_ctrl is MarginContainer:
-		root_ctrl.add_theme_constant_override("margin_bottom", height)
+		var base_margin: float = _keyboard_inset_base(
+			root_ctrl, float(root_ctrl.get_theme_constant("margin_bottom"))
+		)
+		root_ctrl.add_theme_constant_override("margin_bottom", int(base_margin) + height)
 	else:
 		# For full-rect anchored controls, shrink the bottom anchor offset
-		root_ctrl.offset_bottom = -height if height > 0 else 0
+		var base_offset: float = _keyboard_inset_base(root_ctrl, root_ctrl.offset_bottom)
+		root_ctrl.offset_bottom = base_offset - float(height)
+	if height <= 0 and root_ctrl.has_meta(KEYBOARD_INSET_BASE_META):
+		# Base released on the way out so the next keyboard re-reads it. A safe-area
+		# recalculation between two keyboard appearances (rotation) then lands correctly
+		# instead of restoring an offset that is one layout out of date.
+		root_ctrl.remove_meta(KEYBOARD_INSET_BASE_META)
+
+
+## The bottom offset the scene owns with no keyboard up. Captured on the first inset and
+## reused until the keyboard closes, so repeated applies are idempotent.
+func _keyboard_inset_base(ctrl: Control, current: float) -> float:
+	if not ctrl.has_meta(KEYBOARD_INSET_BASE_META):
+		ctrl.set_meta(KEYBOARD_INSET_BASE_META, current)
+	return float(ctrl.get_meta(KEYBOARD_INSET_BASE_META))
 
 ## Walk down the scene to find the first Control child of the root Node.
 func _find_root_control(scene: Node) -> Control:
