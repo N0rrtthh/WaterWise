@@ -24,6 +24,15 @@ func _ready() -> void:
 	if ResourceLoader.exists(game_path):
 		ResourceLoader.load_threaded_request(game_path)
 
+	# Kick the authored cause-clip load onto the same background window (T4.1). It is
+	# used almost immediately below, so the win is mostly OS file-cache warming plus
+	# letting the parse overlap _is_low_end_device(); retrieval still falls back to a
+	# synchronous load() if the thread has not finished by the time we ask.
+	var beat_path := "res://scenes/ui/cutscenes/beats/%sIntro.tscn" % game_name
+	var beat_requested := ResourceLoader.exists(beat_path)
+	if beat_requested:
+		ResourceLoader.load_threaded_request(beat_path)
+
 	# Detect low-end device: skip intro if fps_avg is already struggling.
 	var is_low_end := _is_low_end_device()
 
@@ -34,9 +43,14 @@ func _ready() -> void:
 	#
 	# Tier 1: authored 4-beat clips (MicrogameIntroBase subclasses) at
 	# res://scenes/ui/cutscenes/beats/<Game>Intro.tscn.
-	var beat_path := "res://scenes/ui/cutscenes/beats/%sIntro.tscn" % game_name
-	if ResourceLoader.exists(beat_path):
-		var clip = (load(beat_path) as PackedScene).instantiate()
+	if beat_requested:
+		var beat_packed := _poll_threaded_packed(beat_path)
+		if beat_packed == null:
+			# The thread had not finished in the tiny window before use — load() blocks
+			# on the in-flight request and returns the same resource, so this is never
+			# worse than the original synchronous load.
+			beat_packed = load(beat_path) as PackedScene
+		var clip = beat_packed.instantiate()
 		if "speed_scale" in clip:
 			# Compression from a weak device and compression the player asked for are
 			# separate reasons and multiply: 1.7 x 3.0 on a low-end phone with reduced
@@ -88,30 +102,57 @@ func _ready() -> void:
 
 ## Shared tail for every intro path (cartoon clip, legacy intro, or no intro).
 func _launch(game_path: String) -> void:
-	# Wait for GameManager's previous fade-in to settle before starting the next
-	# transition (transition_to_scene guards against re-entry with
-	# _is_transitioning, so we must wait for it to become false first).
+	# Poll the background load kicked off in _ready() while we wait for GameManager's
+	# previous fade-in to settle (transition_to_scene guards against re-entry with
+	# _is_transitioning, so we must wait for it to become false first). This await
+	# window is exactly the time the threaded load has been running, so by now it is
+	# normally THREAD_LOAD_LOADED and we can hand GameManager an in-memory PackedScene
+	# instead of letting it re-read the scene from disk on the transition frame (T4.1).
+	var packed: PackedScene = null
 	var safety_iters := 0
 	while GameManager.is_scene_transitioning() and safety_iters < 90:
+		if packed == null:
+			packed = _poll_threaded_packed(game_path)
 		await get_tree().process_frame
 		safety_iters += 1
+	# Final check: covers the common case where no previous transition was running (the
+	# loop body never executed) and the case where the load finished on the last frame.
+	if packed == null:
+		packed = _poll_threaded_packed(game_path)
 
 	# Clear the pending name now; if anything calls launch_pending_minigame
 	# as a fallback it won't double-launch.
 	GameManager.pending_next_minigame_name = ""
 
-	# Use GameManager's overlay transition — hides the scene-instantiation
-	# freeze (all _ready() calls) behind a smooth fade so the user sees a
-	# black wipe instead of a randomly frozen screen.
-	# The load_threaded_request started above has almost certainly finished
-	# during the intro/delay, so transition_to_scene's internal request will
-	# find the resource already in the thread queue (THREAD_LOAD_LOADED) and
-	# retrieve it without hitting the disk again.
-	if ResourceLoader.exists(game_path):
-		GameManager.transition_to_scene(game_path, 0.3)
-	else:
+	if not ResourceLoader.exists(game_path):
 		push_warning("MiniGameIntroBridge: game scene not found: %s" % game_path)
 		GameManager.start_next_minigame()
+		return
+
+	# Use GameManager's overlay transition — hides the scene-instantiation freeze (all
+	# _ready() calls) behind a smooth fade so the user sees a black wipe instead of a
+	# randomly frozen screen. When the threaded load finished we pass the PackedScene and
+	# swap via change_scene_to_packed(); otherwise transition_to_scene falls back to a
+	# synchronous change_scene_to_file(). Neither path ever blocks on an incomplete load.
+	if packed != null:
+		GameManager.transition_to_packed(packed, 0.3)
+	else:
+		GameManager.transition_to_scene(game_path, 0.3)
+
+
+## Retrieve game_path's PackedScene only if its background threaded request has fully
+## finished. Returns null in every other case (no request, still loading, failed, or a
+## non-instantiable resource) so the caller falls back to a synchronous load — it must
+## never block on an in-flight load.
+func _poll_threaded_packed(game_path: String) -> PackedScene:
+	if game_path.is_empty() or not ResourceLoader.exists(game_path):
+		return null
+	if ResourceLoader.load_threaded_get_status(game_path) != ResourceLoader.THREAD_LOAD_LOADED:
+		return null
+	var res := ResourceLoader.load_threaded_get(game_path)
+	if res is PackedScene and (res as PackedScene).can_instantiate():
+		return res as PackedScene
+	return null
 
 func _resolve_intro_scene(game_name: String) -> PackedScene:
 	var specific_path := "res://scenes/ui/cutscenes/intro/%sIntro.tscn" % game_name

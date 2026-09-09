@@ -418,6 +418,7 @@ func _check_filter():
 	
 	if correct:
 		filters_built += 1
+		_record_touch_processed()
 		record_action(true)
 		get_node("ScoreDisplay").text = _loc("hud_filters_built", "🧱 %d / %d filters") % [filters_built, target_filters]
 		

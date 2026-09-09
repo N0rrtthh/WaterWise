@@ -303,6 +303,7 @@ func _judge_glass(player_says_dirty: bool):
 	
 	if correct:
 		correct_choices += 1
+		_record_touch_processed()
 		record_action(true)
 		get_node("ScoreLabel").text = _loc("hud_correct_count", "✔ Correct: %d / %d") % [correct_choices, target_correct]
 		

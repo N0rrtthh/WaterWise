@@ -241,6 +241,7 @@ func _check_fill():
 	if diff <= fill_tolerance:
 		# Perfect!
 		containers_filled += 1
+		_record_touch_processed()
 		record_action(true)
 		get_node("ScoreDisplay").text = "💧 %d / %d" % [containers_filled, target_containers]
 		

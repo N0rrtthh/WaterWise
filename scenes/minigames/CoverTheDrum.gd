@@ -270,6 +270,7 @@ func _process(delta):
 		if mosq.position.distance_to(target.position) < 40:
 			if target.get_meta("covered"):
 				# BLOCKED!
+				_record_touch_processed()
 				record_action(true)
 				
 				var bounce_dir = -dir * 150

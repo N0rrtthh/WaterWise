@@ -306,6 +306,7 @@ func _pass_bucket(i: int) -> void:
 	bucket_at_person[i] = null
 	(people[i] as Node2D).get_node("Ring").visible = false
 	_passed_at[i] = _anim_t  # arms the double-tap grace in _handle_tap
+	_record_touch_processed()
 	record_hit(people[i])          # action + score punch + person pop
 	b.set_meta("target", i + 1)    # next person, or the garden
 

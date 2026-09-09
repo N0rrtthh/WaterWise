@@ -73,6 +73,16 @@ var _pointer_pos: Vector2 = Vector2.ZERO
 var _pointer_release_pending: bool = false
 var swipe_cooldown: float = 0.0
 var tap_cooldown: float = 0.0
+## Pre-allocated injection events for the bot's single synthetic finger (index 0).
+##
+## Reused across frames so a discrete _tap_at() does not churn .new() on the
+## gameplay hot path. DOWN and UP are SEPARATE objects: Input.parse_input_event
+## queues an event by reference, so mutating one object from pressed->released
+## before the queue flushes would corrupt the down it just emitted. Each object
+## is written once per tap and the queue is flushed before the next frame, so
+## cross-frame reuse is safe.
+var _tap_down_ev: InputEventScreenTouch = InputEventScreenTouch.new()
+var _tap_up_ev: InputEventScreenTouch = InputEventScreenTouch.new()
 
 ## DropletDash lane scorer: how far up the lane an item still counts, in pixels.
 ##
@@ -89,13 +99,77 @@ const DASH_SWITCH_MARGIN: float = 0.05
 ## TouchInputManager rejects a touch START inside its 15px edge dead zone on mobile,
 ## which would leave the finger unpressed while this manager believed it was down.
 const POINTER_INSET_PX: float = 24.0
+## Minimum spacing between two injected discrete taps, in seconds.
+##
+## Guards _tap_at() against flooding the input queue when a handler runs every
+## frame; _drive_pointer() (a continuous finger) is deliberately NOT throttled
+## because a hold must be re-asserted each frame.
+const TAP_INJECT_COOLDOWN: float = 0.08
 var memory_pairs: Array = []
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# HUMAN-SIMULATION REALISM LAYER (item 3 — strictly OPT-IN)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# A single realism layer consulted by the injection primitives (_tap_at,
+# _start_gesture, _hold_at, _drag_to), so every game inherits it once. In
+# PERFECT mode (the default) EVERY hook below is a no-op: gates return true
+# without touching state and aim helpers return the input position unchanged,
+# so behaviour is byte-identical to the pre-realism build. Nothing here ever
+# runs for human gameplay — the primitives are only reachable from autoplay.
+
+## A target that moves less than this between frames is treated as the SAME
+## target, so the reaction clock keeps running instead of restarting every frame
+## on a slowly-moving aim. A jump beyond it is a genuinely new target.
+const HSIM_REACQUIRE_PX: float = 140.0
+## How far off-target a deliberate miss aims, in pixels (randomised around it).
+const HSIM_MISS_OFF_PX: float = 130.0
+## Per-frame chance a continuous finger briefly "slips" off-target while held.
+const HSIM_SLIP_CHANCE: float = 0.02
+## Jitter on a CONTINUOUS finger is scaled down from the discrete magnitude: a
+## hold that shook a full jitter radius every frame would read as a seizure, not
+## a hand, and could walk straight out of a tight hit rect.
+const HSIM_CONT_JITTER_SCALE: float = 0.6
+
+## Loaded ONCE in _ready(); never rebuilt per action (zero per-frame cost).
+var _hsim_profile: HumanSimProfile = null
+## One pre-seeded generator for every roll — no per-action allocation.
+var _hsim_rng: RandomNumberGenerator = RandomNumberGenerator.new()
+## Time.get_ticks_msec() at which the pending reaction may fire; -1 = none.
+var _hsim_reaction_ready_ms: int = -1
+## The target position the pending reaction clock was started against.
+var _hsim_reaction_target: Vector2 = Vector2.INF
+## True once a continuous finger has cleared its ONE reaction delay and is
+## driving; reset by _release_pointer() so the next engage re-delays.
+var _hsim_hold_engaged: bool = false
+## Diagnostic log of sampled reaction delays (ms). Populated ONLY in a non-PERFECT
+## mode, so it stays empty (and free) during every Perfect-mode harness run.
+## Read/cleared by tools/VerifyHumanSim.gd to prove run-to-run variance.
+var hsim_reaction_samples: Array[int] = []
 
 # Navigation state (used when no game is active — clicks through menus)
 var nav_timer: float = 0.0
 var nav_interval: float = 2.5  # Seconds to wait before each menu action
 var memory_first_card: Node = null
 var trace_path_index: int = 0
+
+# ──────────────────────────────────────────────────────────────────
+# MULTI-FRAME GESTURE SEQUENCER
+# Several games read their pointer through _process pollers or a
+# press->move->release event chain, so a single-frame down+up is never
+# observed as a drag. _start_gesture() scripts a finger path (a list of
+# VIEWPORT points) that _step_gesture() walks one waypoint per frame via
+# _drag_to() (pressing on the first), then lifts on the frame after the
+# last move so a poller sees the final position while the finger is down.
+# A handler pumps it with:  `if _gest_active: _step_gesture(); return`.
+# Reset at every round boundary (see _reset_gesture) so a scripted path
+# from a finished game cannot resume driving the next one.
+# ──────────────────────────────────────────────────────────────────
+var _gest_pts: Array[Vector2] = []
+var _gest_i: int = 0
+var _gest_active: bool = false
+var _gest_release_at_end: bool = true
+var _gest_post_cooldown: float = 0.0
+var _scrub_phase: bool = false
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # PERFORMANCE STATS
@@ -122,9 +196,18 @@ func _ready() -> void:
 		auto_play_enabled = SaveManager.get_setting("auto_play_enabled", false)
 		auto_play_duration = SaveManager.get_setting("auto_play_duration", 0.0)
 	
-	print("🤖 AutoPlayManager initialized (Auto-play: %s, Duration: %s)" % [
+	# Human-simulation realism (item 3): build the data-only profile ONCE here and
+	# restore any persisted tuning. The default mode is PERFECT, so unless a real
+	# windowed QA session explicitly opted in, every realism hook stays a no-op and
+	# autoplay behaves exactly as it did before this layer existed.
+	_hsim_profile = HumanSimProfile.new()
+	_hsim_rng.randomize()
+	_load_human_sim_settings()
+	
+	print("🤖 AutoPlayManager initialized (Auto-play: %s, Duration: %s, Sim: %s)" % [
 		"ON" if auto_play_enabled else "OFF",
-		_format_duration(auto_play_duration) if auto_play_duration > 0 else "Unlimited"
+		_format_duration(auto_play_duration) if auto_play_duration > 0 else "Unlimited",
+		_human_sim_mode_name(_hsim_profile.mode)
 	])
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -201,6 +284,145 @@ func set_auto_play_duration(minutes: float) -> void:
 func get_auto_play_duration_minutes() -> float:
 	return auto_play_duration / 60.0
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# HUMAN-SIMULATION CONFIG (item 3) — setters/getters + persistence
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Mirror the auto-play setter pattern above: mutate the in-memory profile, then
+# persist through SaveManager's generic settings API — but ONLY from a real
+# windowed session (_may_persist()), so a headless harness can never leave a
+# non-PERFECT mode on disk to poison the next process.
+
+## Setting keys (SaveManager generic settings API — no schema registration needed).
+const HSIM_KEY_MODE := "human_sim_mode"
+const HSIM_KEY_REACT_MIN := "human_sim_reaction_min_ms"
+const HSIM_KEY_REACT_MAX := "human_sim_reaction_max_ms"
+const HSIM_KEY_ACC_MIN := "human_sim_accuracy_min"
+const HSIM_KEY_ACC_MAX := "human_sim_accuracy_max"
+const HSIM_KEY_MISTAKE := "human_sim_mistake_rate"
+const HSIM_KEY_JITTER := "human_sim_jitter_px"
+
+## Human-readable mode name for logs / the Settings readout.
+func _human_sim_mode_name(mode: int) -> String:
+	match mode:
+		HumanSimProfile.Mode.HUMAN_LIKE:
+			return "Human-like"
+		HumanSimProfile.Mode.CUSTOM:
+			return "Custom"
+		_:
+			return "Perfect"
+
+## Restore persisted tuning into the profile. Missing keys fall back to the
+## PERFECT default / the profile's own built-in defaults, so a fresh install (or a
+## settings file that predates this feature) reads as PERFECT and stays a no-op.
+func _load_human_sim_settings() -> void:
+	if _hsim_profile == null or SaveManager == null:
+		return
+	_hsim_profile.mode = int(SaveManager.get_setting(HSIM_KEY_MODE, HumanSimProfile.Mode.PERFECT))
+	_hsim_profile.custom_reaction_min_ms = float(SaveManager.get_setting(
+		HSIM_KEY_REACT_MIN, _hsim_profile.custom_reaction_min_ms))
+	_hsim_profile.custom_reaction_max_ms = float(SaveManager.get_setting(
+		HSIM_KEY_REACT_MAX, _hsim_profile.custom_reaction_max_ms))
+	_hsim_profile.custom_accuracy_min = float(SaveManager.get_setting(
+		HSIM_KEY_ACC_MIN, _hsim_profile.custom_accuracy_min))
+	_hsim_profile.custom_accuracy_max = float(SaveManager.get_setting(
+		HSIM_KEY_ACC_MAX, _hsim_profile.custom_accuracy_max))
+	_hsim_profile.custom_mistake_rate = float(SaveManager.get_setting(
+		HSIM_KEY_MISTAKE, _hsim_profile.custom_mistake_rate))
+	_hsim_profile.custom_jitter_px = float(SaveManager.get_setting(
+		HSIM_KEY_JITTER, _hsim_profile.custom_jitter_px))
+
+func _persist_human_sim(key: String, value: Variant, persist: bool) -> void:
+	if SaveManager and persist and _may_persist():
+		SaveManager.set_setting(key, value)
+
+## Switch realism mode. Selecting HUMAN_LIKE restores the built-in per-difficulty
+## defaults (so it is reproducible); CUSTOM keeps whatever QA has dialled in.
+## Switching to PERFECT resets the reaction clock so no half-elapsed delay leaks
+## into a later non-PERFECT session.
+func set_human_sim_mode(mode: int, persist: bool = true) -> void:
+	if _hsim_profile == null:
+		_hsim_profile = HumanSimProfile.new()
+	_hsim_profile.mode = mode
+	# Human-like uses the built-in per-difficulty defaults; seed the CUSTOM scalars
+	# from the NORMAL tier so the Settings readout is truthful and switching to
+	# Custom starts from sane values rather than stale ones.
+	if mode == HumanSimProfile.Mode.HUMAN_LIKE:
+		_seed_human_sim_defaults()
+	_hsim_reaction_ready_ms = -1
+	_hsim_reaction_target = Vector2.INF
+	_hsim_hold_engaged = false
+	_persist_human_sim(HSIM_KEY_MODE, mode, persist)
+	print("🤖 Auto-play human-sim mode: %s" % _human_sim_mode_name(mode))
+
+## Copy the NORMAL-tier built-in defaults into the CUSTOM override scalars (display
+## + Custom starting point only — HUMAN_LIKE itself reads the per-difficulty table).
+func _seed_human_sim_defaults() -> void:
+	if _hsim_profile == null:
+		return
+	var d: int = HumanSimProfile.Difficulty.NORMAL
+	var react: Variant = _hsim_profile.reaction_ms.get(d, Vector2(210.0, 380.0))
+	if react is Vector2:
+		_hsim_profile.custom_reaction_min_ms = (react as Vector2).x
+		_hsim_profile.custom_reaction_max_ms = (react as Vector2).y
+	var acc: Variant = _hsim_profile.accuracy_band.get(d, Vector2(0.80, 0.94))
+	if acc is Vector2:
+		_hsim_profile.custom_accuracy_min = (acc as Vector2).x
+		_hsim_profile.custom_accuracy_max = (acc as Vector2).y
+	_hsim_profile.custom_mistake_rate = float(_hsim_profile.mistake_rate.get(d, 0.11))
+	_hsim_profile.custom_jitter_px = float(_hsim_profile.aim_jitter_px.get(d, 11.0))
+
+func get_human_sim_mode() -> int:
+	return _hsim_profile.mode if _hsim_profile != null else HumanSimProfile.Mode.PERFECT
+
+## Set one CUSTOM tuning field by name. `param` is one of:
+##   reaction_min_ms, reaction_max_ms, accuracy_min, accuracy_max,
+##   mistake_rate, jitter_px.
+## Values feed the CUSTOM override scalars on the profile. Returns true on success.
+func set_human_sim_param(param: String, value: float, persist: bool = true) -> bool:
+	if _hsim_profile == null:
+		_hsim_profile = HumanSimProfile.new()
+	match param:
+		"reaction_min_ms":
+			_hsim_profile.custom_reaction_min_ms = maxf(0.0, value)
+			_persist_human_sim(HSIM_KEY_REACT_MIN, _hsim_profile.custom_reaction_min_ms, persist)
+		"reaction_max_ms":
+			_hsim_profile.custom_reaction_max_ms = maxf(0.0, value)
+			_persist_human_sim(HSIM_KEY_REACT_MAX, _hsim_profile.custom_reaction_max_ms, persist)
+		"accuracy_min":
+			_hsim_profile.custom_accuracy_min = clampf(value, 0.0, 1.0)
+			_persist_human_sim(HSIM_KEY_ACC_MIN, _hsim_profile.custom_accuracy_min, persist)
+		"accuracy_max":
+			_hsim_profile.custom_accuracy_max = clampf(value, 0.0, 1.0)
+			_persist_human_sim(HSIM_KEY_ACC_MAX, _hsim_profile.custom_accuracy_max, persist)
+		"mistake_rate":
+			_hsim_profile.custom_mistake_rate = clampf(value, 0.0, 1.0)
+			_persist_human_sim(HSIM_KEY_MISTAKE, _hsim_profile.custom_mistake_rate, persist)
+		"jitter_px":
+			_hsim_profile.custom_jitter_px = maxf(0.0, value)
+			_persist_human_sim(HSIM_KEY_JITTER, _hsim_profile.custom_jitter_px, persist)
+		_:
+			return false
+	return true
+
+func get_human_sim_param(param: String) -> float:
+	if _hsim_profile == null:
+		return 0.0
+	match param:
+		"reaction_min_ms":
+			return _hsim_profile.custom_reaction_min_ms
+		"reaction_max_ms":
+			return _hsim_profile.custom_reaction_max_ms
+		"accuracy_min":
+			return _hsim_profile.custom_accuracy_min
+		"accuracy_max":
+			return _hsim_profile.custom_accuracy_max
+		"mistake_rate":
+			return _hsim_profile.custom_mistake_rate
+		"jitter_px":
+			return _hsim_profile.custom_jitter_px
+		_:
+			return 0.0
+
 func get_remaining_time() -> float:
 	if auto_play_duration <= 0:
 		return -1.0  # Unlimited
@@ -242,6 +464,8 @@ func get_mp_remaining_time() -> float:
 
 func _reset_state() -> void:
 	_release_pointer()
+	_reset_gesture()
+	_hsim_reset()
 	current_game = null
 	game_name = ""
 	auto_play_strategy = ""
@@ -408,6 +632,7 @@ func _process(delta: float) -> void:
 			and not current_game.is_inside_tree():
 		current_game = null
 		_release_pointer()
+		_reset_gesture()
 	if not current_game or not is_instance_valid(current_game):
 		_navigate_ui(delta)
 		return
@@ -424,6 +649,7 @@ func _process(delta: float) -> void:
 		# the finger comes up first: a touch left down reads as a finger resting on the
 		# screen for every game that polls get_touch_count().
 		_release_pointer()
+		_reset_gesture()
 		_navigate_ui(delta)
 		return
 
@@ -856,24 +1082,15 @@ func _play_mp_click_target(_delta: float) -> void:
 	if candidates.is_empty():
 		tap_cooldown = 0.6
 		return
-	# Pick the first enabled candidate and simulate input
+	# Pick the first enabled candidate and INJECT a real tap on it (was
+	# emit_signal("pressed") / push_input(MouseButton), which never touched
+	# TouchInputManager and left `received` at 0 for the whole MP round).
 	var target: Node = candidates[0]
 	if target is Button:
-		target.emit_signal("pressed")
+		_tap_at(_screen_center_of_control(target as Button))
 	elif target is Area2D:
-		# Synthesise a click at the center of the area
-		var vp: Viewport = get_viewport()
-		if vp:
-			var pos: Vector2 = (target as Node2D).global_position
-			var ev_down := InputEventMouseButton.new()
-			ev_down.button_index = MOUSE_BUTTON_LEFT
-			ev_down.pressed = true
-			ev_down.position = pos
-			ev_down.global_position = pos
-			vp.push_input(ev_down)
-			var ev_up := ev_down.duplicate() as InputEventMouseButton
-			ev_up.pressed = false
-			vp.push_input(ev_up)
+		var area := target as Area2D
+		_tap_at(_screen_from_parent_point(area, area.position))
 	tap_cooldown = 0.5
 
 func _play_mp_drag_collection(_delta: float) -> void:
@@ -882,12 +1099,23 @@ func _play_mp_drag_collection(_delta: float) -> void:
 		return
 	var catcher := _get_mp_collection_catcher(g)
 	if catcher == null or not is_instance_valid(catcher):
+		_release_pointer()
 		return
 	var target := _get_mp_falling_target(g)
 	if target == null or not is_instance_valid(target):
+		# No drop to chase: keep the finger on the catcher so it stays grabbed.
+		_drag_to(_screen_from_parent_point(catcher, catcher.position))
 		return
+	# MP_CollectDishWater: pressing ON a bucket Area2D sets dragging_bucket, then
+	# its _input() MouseMotion moves the bucket to world_from_screen(pointer).x. An
+	# injected drag reaches both, exactly as a human finger does - no direct
+	# catcher.position write.
 	var viewport_width := get_viewport().get_visible_rect().size.x
-	catcher.position.x = clampf(target.position.x, 50.0, viewport_width - 50.0)
+	var aim_x := clampf(target.position.x, 50.0, viewport_width - 50.0)
+	if not _pointer_down:
+		_drag_to(_screen_from_parent_point(catcher, catcher.position))
+	else:
+		_drag_to(_screen_from_parent_point(catcher, Vector2(aim_x, catcher.position.y)))
 
 func _get_mp_collection_catcher(g: Node) -> Node2D:
 	var catchers: Array = []
@@ -927,6 +1155,9 @@ func _get_mp_falling_target(g: Node) -> Area2D:
 	return best
 
 func _play_mp_wash_vegetables(_delta: float) -> void:
+	if _gest_active:
+		_step_gesture()
+		return
 	if tap_cooldown > 0.0:
 		return
 	var g := current_game
@@ -934,15 +1165,19 @@ func _play_mp_wash_vegetables(_delta: float) -> void:
 		return
 	var sink: Node2D = g.get("sink_area")
 	var vegetables: Array = g.get("vegetables") if "vegetables" in g else []
-	if sink == null or vegetables.is_empty() or not g.has_method("_check_wash_vegetable"):
+	if sink == null or not is_instance_valid(sink) or vegetables.is_empty():
 		return
+	# MP_WashVegetables: pressing a vegetable Area2D sets dragging_vegetable, its
+	# _input() MouseMotion follows the finger, and release inside sink_area runs
+	# _check_wash_vegetable(). A grab->drag->release gesture drives all three, so
+	# the score fires through injected input rather than a direct _check call.
 	for vegetable in vegetables:
-		if not is_instance_valid(vegetable):
+		if not is_instance_valid(vegetable) or not (vegetable is Node2D):
 			continue
-		g.dragging_vegetable = vegetable
-		vegetable.position = sink.position
-		g.call("_check_wash_vegetable")
-		tap_cooldown = 0.15
+		var v := vegetable as Node2D
+		var from := _screen_from_parent_point(v, v.position)
+		var to := _screen_from_parent_point(sink, sink.position)
+		_start_gesture([from, to, to], true, 0.15)
 		return
 
 func _play_mp_water_plants(_delta: float) -> void:
@@ -958,7 +1193,9 @@ func _play_mp_water_plants(_delta: float) -> void:
 			continue
 		if plant.get_meta("watered", false):
 			continue
-		g.call("_try_water_plant", plant)
+		# Area2D physics picking: an injected tap -> emulated MouseButton reaches
+		# _on_plant_clicked -> _try_water_plant, exactly as a human tap does.
+		_tap_at(_screen_from_parent_point(plant as Node2D, (plant as Node2D).position))
 		tap_cooldown = 0.12
 		return
 
@@ -975,7 +1212,7 @@ func _play_mp_flush_toilets(_delta: float) -> void:
 			continue
 		if not toilet.get_meta("needs_flush", false):
 			continue
-		g.call("_try_flush", toilet)
+		_tap_at(_screen_from_parent_point(toilet as Node2D, (toilet as Node2D).position))
 		tap_cooldown = 0.15
 		return
 
@@ -991,7 +1228,16 @@ func _play_mp_fill_aquarium(_delta: float) -> void:
 	var aquarium_max := float(g.get("aquarium_max"))
 	if aquarium_level >= aquarium_max:
 		return
-	g.call("_try_fill")
+	# The aquarium Area2D is a local in _create_aquarium(); find it among the
+	# game's children and tap it so physics picking drives _on_aquarium_clicked.
+	var aquarium: Node2D = null
+	for child in g.get_children():
+		if child is Area2D:
+			aquarium = child as Node2D
+			break
+	if aquarium == null:
+		return
+	_tap_at(_screen_from_parent_point(aquarium, aquarium.position))
 	tap_cooldown = 0.15
 
 func _play_mp_filter_water(_delta: float) -> void:
@@ -1003,7 +1249,7 @@ func _play_mp_filter_water(_delta: float) -> void:
 	for particle in g.get("dirt_particles"):
 		if not is_instance_valid(particle):
 			continue
-		g.call("_filter_particle", particle)
+		_tap_at(_screen_from_parent_point(particle as Node2D, (particle as Node2D).position))
 		tap_cooldown = 0.08
 		return
 
@@ -1020,7 +1266,7 @@ func _play_mp_mop_floor(_delta: float) -> void:
 			continue
 		if not tile.get_meta("dirty", false):
 			continue
-		g.call("_try_mop", tile)
+		_tap_at(_screen_from_parent_point(tile as Node2D, (tile as Node2D).position))
 		tap_cooldown = 0.15
 		return
 
@@ -1037,7 +1283,7 @@ func _play_mp_wash_car(_delta: float) -> void:
 			continue
 		if not section.get_meta("dirty", false):
 			continue
-		g.call("_try_wash", section)
+		_tap_at(_screen_from_parent_point(section as Node2D, (section as Node2D).position))
 		tap_cooldown = 0.15
 		return
 
@@ -1083,7 +1329,10 @@ func _play_fix_leak(_delta: float) -> void:
 			continue
 		if leak.get_meta("fixed", false):
 			continue
-		g.call("_on_leak_clicked", leak)
+		# FixLeakV2 is a MicrogameShell game: an injected tap -> _shell_tap hit-tests
+		# leak.position -> _on_leak_clicked -> record_hit. No camera, so the leak's
+		# parent-space position IS the viewport point the shell input layer sees.
+		_tap_at(_screen_from_parent_point(leak as Node2D, (leak as Node2D).position))
 		tap_cooldown = 0.25
 		return
 
@@ -1151,7 +1400,19 @@ func _play_cloud_catcher(_delta: float) -> void:
 		# Nothing is lined up this frame. Waiting is the correct move: the clouds drift, and a
 		# tap now would consume one over empty ground.
 		return
-	g.call("_on_cloud_tapped", best_cloud)
+	# Aim at the cloud's Button child by its LIVE on-screen centre, not at the cloud's Node2D
+	# origin. centre_hit_control() centres the button with position = -size * 0.5, but only once
+	# its size resolves - the 48dp floor and MobileUIManager restyle the button AFTER creation, so
+	# on a freshly spawned / still-condensing cloud the button rect can sit at [origin, origin+size]
+	# with its centre half a button away from the cloud origin. An injected tap aimed at the origin
+	# then lands on the button's top-left corner and misses, which is what halved the shipped bot's
+	# conversion rate against the synchronous direct call it replaced. Reading the Control's global
+	# rect centre makes the tap land where the button actually is this frame.
+	var btn: Control = best_cloud.get_meta("btn") if best_cloud.has_meta("btn") else null
+	if btn != null and is_instance_valid(btn):
+		_tap_at(_screen_center_of_control(btn))
+	else:
+		_tap_at(_screen_from_parent_point(best_cloud as Node2D, (best_cloud as Node2D).position))
 	tap_cooldown = 0.3
 
 # ──────────────────────────────────────────────────────────────────
@@ -1172,7 +1433,9 @@ func _play_cover_the_drum(_delta: float) -> void:
 		if not is_instance_valid(drum):
 			continue
 		if not drum.get_meta("covered", false):
-			g.call("_cover_drum", drum)
+			# CoverTheDrum._input compares event.position to drum.position (<100), so a
+			# tap at the drum drives _cover_drum through the real input path.
+			_tap_at(_screen_from_parent_point(drum as Node2D, (drum as Node2D).position))
 			tap_cooldown = 0.2
 			return
 
@@ -1195,7 +1458,9 @@ func _play_quick_shower(_delta: float) -> void:
 	var z_start: float = float(g.get("target_zone_start")) if "target_zone_start" in g else 0.0
 	var z_end: float = float(g.get("target_zone_end")) if "target_zone_end" in g else 100.0
 	if gauge >= z_start and gauge <= z_end:
-		g.call("_check_timing")
+		# QuickShower._input fires _check_timing() on ANY press while shower_running,
+		# so tap the screen centre; the game reads no position.
+		_tap_at(get_viewport().get_visible_rect().size * 0.5)
 		tap_cooldown = 1.2
 
 # ──────────────────────────────────────────────────────────────────
@@ -1203,19 +1468,24 @@ func _play_quick_shower(_delta: float) -> void:
 # Zero out dirt_level on current_dish and call _dish_cleaned().
 # ──────────────────────────────────────────────────────────────────
 func _play_scrub_to_save(_delta: float) -> void:
-	if tap_cooldown > 0:
-		return
 	var g := current_game
 	if not is_instance_valid(g):
 		return
 	var dish: Node2D = g.get("current_dish")
 	if dish == null or not is_instance_valid(dish):
+		# Nothing to scrub: lift the finger so it cannot linger as a phantom touch.
+		_release_pointer()
 		return
-	if not g.has_method("_dish_cleaned"):
-		return
-	g.set("dirt_level", 0.0)
-	g.call("_dish_cleaned")
-	tap_cooldown = 1.5
+	# ScrubToSave._handle_scrubbing() polls is_mouse_button_pressed(LEFT) +
+	# get_mouse_position() and drops dirt_level only while the held finger MOVES
+	# >5px within 100px of the dish; dirt_level<=0 then fires _dish_cleaned() ->
+	# record_action(true) honestly. Alternate a held finger +/-24px across the dish
+	# each frame (injected ScreenDrag -> emulated mouse motion) instead of writing
+	# dirt_level and calling _dish_cleaned() directly.
+	var dish_pos := _screen_from_parent_point(dish, dish.position)
+	var off := Vector2(24.0, 0.0) if _scrub_phase else Vector2(-24.0, 0.0)
+	_scrub_phase = not _scrub_phase
+	_hold_at(dish_pos + off)
 
 # ──────────────────────────────────────────────────────────────────
 # THIRSTY PLANT
@@ -1237,7 +1507,8 @@ func _play_thirsty_plant(_delta: float) -> void:
 		if not is_instance_valid(bucket):
 			continue
 		if bucket.get_meta("is_correct", false):
-			g.call("_on_bucket_pressed", bucket)
+			# ThirstyPlant._input tests distance to bucket.position (<80), so tap the bucket.
+			_tap_at(_screen_from_parent_point(bucket as Node2D, (bucket as Node2D).position))
 			tap_cooldown = 1.0
 			return
 
@@ -1247,21 +1518,26 @@ func _play_thirsty_plant(_delta: float) -> void:
 # a successful fill without waiting for real mouse-hold input.
 # ──────────────────────────────────────────────────────────────────
 func _play_toilet_tank_fix(_delta: float) -> void:
-	if tap_cooldown > 0:
-		return
 	var g := current_game
 	if not is_instance_valid(g):
 		return
 	if not "water_level" in g or not "target_level" in g:
 		return
+	# Between tanks the game ignores input and re-rolls the target; lift and wait.
+	if bool(g.get("_awaiting_next_tank")):
+		_release_pointer()
+		return
 	var water_level: float = float(g.get("water_level"))
 	var target: float = float(g.get("target_level"))
 	var tol: float = float(g.get("tolerance")) if "tolerance" in g else 10.0
-	if water_level < target - tol:
-		g.set("water_level", target)
-		if g.has_method("_check_level"):
-			g.call("_check_level")
-		tap_cooldown = 1.2
+	# ToiletTankFix._process fills while Input.is_mouse_button_pressed(LEFT) and
+	# grades on the RELEASE edge (_check_level succeeds when |water-target|<=tol).
+	# Hold a real finger until just inside the window, then lift it -> graded hit,
+	# instead of snapping water_level and calling _check_level() directly.
+	if water_level < target - tol + 1.0:
+		_hold_at(get_viewport().get_visible_rect().size * 0.5)
+	else:
+		_release_pointer()
 
 # ──────────────────────────────────────────────────────────────────
 # MUD PIE MAKER
@@ -1272,16 +1548,21 @@ func _play_mud_pie_maker(_delta: float) -> void:
 	var g := current_game
 	if not is_instance_valid(g):
 		return
-	if not "water_level" in g or not "pouring" in g:
+	if not "water_level" in g:
 		return
 	var water_level: float = float(g.get("water_level"))
 	var t_min: float = float(g.get("target_min")) if "target_min" in g else 35.0
 	var t_max: float = float(g.get("target_max")) if "target_max" in g else 65.0
-	var mid: float = (t_min + t_max) / 2.0
-	if water_level < mid - 2.0:
-		g.set("pouring", true)
-	elif water_level >= t_min and water_level <= t_max:
-		g.set("pouring", false)
+	# MudPieMaker._input sets `pouring` on a ScreenTouch/MouseButton press and its
+	# _process pays record_action(true) for every interval spent inside the green
+	# band. Hold a real finger to pour up, lift to drain back, with hysteresis so the
+	# finger does not chatter every frame — no direct write to `pouring`.
+	var lo: float = t_min + (t_max - t_min) * 0.35
+	var hi: float = t_min + (t_max - t_min) * 0.65
+	if water_level < lo:
+		_hold_at(get_viewport().get_visible_rect().size * 0.5)
+	elif water_level > hi:
+		_release_pointer()
 
 # ──────────────────────────────────────────────────────────────────
 # SWIPE THE SOAP
@@ -1289,6 +1570,9 @@ func _play_mud_pie_maker(_delta: float) -> void:
 # _correct_swipe() directly — always wins every soap.
 # ──────────────────────────────────────────────────────────────────
 func _play_swipe_soap(_delta: float) -> void:
+	if _gest_active:
+		_step_gesture()
+		return
 	if swipe_cooldown > 0:
 		return
 	var g := current_game
@@ -1297,9 +1581,18 @@ func _play_swipe_soap(_delta: float) -> void:
 	var soap: Node2D = g.get("current_soap")
 	if soap == null or not is_instance_valid(soap):
 		return
-	if g.has_method("_correct_swipe"):
-		g.call("_correct_swipe")
-	swipe_cooldown = 0.7
+	# SwipeTheSoap._handle_swipe() polls the held pointer: press at the soap, move
+	# >50px in the required direction, release -> _correct_swipe(). Inject the swipe
+	# as a real gesture (down -> drag -> up) instead of calling _correct_swipe().
+	var dir: String = str(soap.get_meta("direction", "UP"))
+	var vec := Vector2.ZERO
+	match dir:
+		"UP": vec = Vector2(0.0, -90.0)
+		"DOWN": vec = Vector2(0.0, 90.0)
+		"LEFT": vec = Vector2(-90.0, 0.0)
+		"RIGHT": vec = Vector2(90.0, 0.0)
+	var from := _screen_from_parent_point(soap, soap.position)
+	_start_gesture([from, from + vec], true, 0.7)
 
 # ──────────────────────────────────────────────────────────────────
 # WRING IT OUT
@@ -1307,11 +1600,14 @@ func _play_swipe_soap(_delta: float) -> void:
 # consume it and call _on_tap() with its built-in 0.08s throttle.
 # ──────────────────────────────────────────────────────────────────
 func _play_wring_it_out(_delta: float) -> void:
+	if tap_cooldown > 0.0:
+		return
 	var g := current_game
 	if not is_instance_valid(g):
 		return
-	if "tap_requested" in g:
-		g.tap_requested = true
+	# WringItOut._input sets tap_requested on ANY press; _process consumes it with
+	# its own 0.08 s throttle and calls _on_tap(). Inject the tap, not the flag.
+	_tap_at(get_viewport().get_visible_rect().size * 0.5)
 
 # ──────────────────────────────────────────────────────────────────
 # CATCH THE RAIN / BUCKET BRIGADE / CLOUD CATCHER / COVER THE DRUM
@@ -1418,14 +1714,16 @@ func _play_catcher(_delta: float) -> void:
 ## input layer, so no chaos effect handicaps them.
 func _aim_catcher(g: Node, catcher: Node2D, x: float) -> void:
 	var aim := Vector2(x, catcher.position.y)
-	if g.has_method("_shell_drag"):
-		g.call("_shell_drag", aim)
-		return
-	# No shell handler to call: steer with a real finger instead. This is the arm the
-	# multiplayer catchers land on - MP_CatchTheRain reads _unhandled_input and nothing
-	# else, so the old warp moved its bucket on desktop and nothing at all on a phone.
-	# Injected in SCREEN coordinates because that game maps screen->world itself.
-	_drive_pointer(_screen_from_parent_point(catcher, aim))
+	# v2 shell games route the injected drag through _shell_map_drag, which mirrors x
+	# when the control_reverse chaos effect is active. Pre-invert so the drum still
+	# lands on the intended x. Legacy/MP catchers lerp toward the raw pointer in
+	# _process and never mirror, so their aim is left untouched.
+	if g.has_method("_shell_drag") and "controls_reversed" in g and bool(g.get("controls_reversed")):
+		aim.x = get_viewport().get_visible_rect().size.x - aim.x
+	# Steer with a real injected finger for EVERY catcher: the v2 shell receives it as
+	# a ScreenDrag -> _shell_drag, and the legacy/MP catchers read the emulated mouse
+	# position their _process lerps toward. No direct _shell_drag() call.
+	_drag_to(_screen_from_parent_point(catcher, aim))
 
 # ──────────────────────────────────────────────────────────────────
 # WATER MEMORY
@@ -1458,8 +1756,11 @@ func _play_water_memory(_delta: float) -> void:
 				if other.get_meta("matched", false):
 					continue
 				if other.get_meta("emoji", "") == my_emoji:
-					g.call("_on_card_pressed", card)
-					tap_cooldown = 0.5
+					if card is Control:
+						# Card is a Panel with a full-rect Button bound to
+						# _on_card_pressed(card); inject a tap on its centre.
+						_tap_at(_screen_center_of_control(card))
+						tap_cooldown = 0.5
 					return
 	else:
 		# A card is already face-up — find its matching partner
@@ -1470,8 +1771,9 @@ func _play_water_memory(_delta: float) -> void:
 			if card.get_meta("matched", false):
 				continue
 			if card.get_meta("emoji", "") == target_emoji:
-				g.call("_on_card_pressed", card)
-				tap_cooldown = 0.5
+				if card is Control:
+					_tap_at(_screen_center_of_control(card))
+					tap_cooldown = 0.5
 				return
 
 # ──────────────────────────────────────────────────────────────────
@@ -1480,6 +1782,9 @@ func _play_water_memory(_delta: float) -> void:
 # then call _check_path() for an instant perfect trace.
 # ──────────────────────────────────────────────────────────────────
 func _play_trace_pipe_path(_delta: float) -> void:
+	if _gest_active:
+		_step_gesture()
+		return
 	if swipe_cooldown > 0:
 		return
 	var g := current_game
@@ -1490,29 +1795,22 @@ func _play_trace_pipe_path(_delta: float) -> void:
 	var target_path: Array = g.get("target_path")
 	if target_path == null or target_path.size() < 2:
 		return
-	var path_points: Array = g.get("path_points")
-	if path_points == null:
-		return
-	path_points.clear()
-	var canvas: Node = g.get_node_or_null("Canvas")
-	var draw_line: Node = null
-	if canvas:
-		draw_line = canvas.get_node_or_null("DrawLine")
-		if draw_line and draw_line.has_method("clear_points"):
-			draw_line.clear_points()
-	# Fill path_points with 20 interpolated points per segment
+	# TracePipePath._handle_drawing() polls the held pointer: it starts drawing when
+	# the press lands within 74px of target_path[0], appends a point every >10px of
+	# travel, and grades on release (_check_path -> _complete_path when the traced
+	# points hug the target). Walk a densely sampled copy of target_path with a real
+	# finger instead of writing path_points and calling _check_path() directly.
+	# target_path is already in VIEWPORT space (the game compares it against
+	# get_mouse_position()), so the waypoints feed straight into the gesture.
+	var pts: Array = []
 	for i in range(target_path.size() - 1):
 		var p1: Vector2 = target_path[i]
 		var p2: Vector2 = target_path[i + 1]
-		for t in range(20):
-			var pt: Vector2 = p1.lerp(p2, t / 20.0)
-			path_points.append(pt)
-			if draw_line and draw_line.has_method("add_point"):
-				draw_line.add_point(pt)
-	path_points.append(target_path[-1])
-	g.set("is_drawing", false)
-	g.call("_check_path")
-	swipe_cooldown = 1.8  # Allow time for success animation + new path generation
+		var steps: int = maxi(1, int(ceil(p1.distance_to(p2) / 24.0)))
+		for s in range(steps):
+			pts.append(p1.lerp(p2, float(s) / float(steps)))
+	pts.append(target_path[-1])
+	_start_gesture(pts, true, 1.8)
 
 # ──────────────────────────────────────────────────────────────────
 # GREYWATER SORTER
@@ -1520,31 +1818,38 @@ func _play_trace_pipe_path(_delta: float) -> void:
 # then call _sort_bucket() directly with the correct destination.
 # ──────────────────────────────────────────────────────────────────
 func _play_greywater_sorter(_delta: float) -> void:
+	if _gest_active:
+		_step_gesture()
+		return
 	if tap_cooldown > 0:
 		return
 	var g := current_game
 	if not is_instance_valid(g):
 		return
-	if not g.has_method("_sort_bucket"):
-		return
 	var buckets: Array = g.get("buckets") if "buckets" in g else []
 	if buckets == null or buckets.is_empty():
 		return
 	var current_bucket: Node = g.get("current_bucket")
+	var vp_w: float = get_viewport().get_visible_rect().size.x
 	for bucket in buckets:
-		if not is_instance_valid(bucket):
+		if not is_instance_valid(bucket) or not (bucket is Node2D):
 			continue
 		if bucket == current_bucket:
 			continue
+		if not (bucket as Node2D).visible:
+			continue
 		if bucket.get_meta("being_sorted", false):
 			continue
+		# GreywaterSorterV2._shell_tap grabs a bucket within GRAB_RADIUS(80), _shell_drag
+		# follows the finger's x, and _shell_release judges by the BUCKET's x: left of
+		# 0.30*vp = garden (safe), right of 0.70*vp = drain (unsafe). Grab a real finger
+		# on the bucket, drag it to the correct zone and let go — no direct _sort_bucket.
+		# The 0.4s post-cooldown outlasts the 0.28s sort tween, so the bucket is pooled
+		# (invisible) before this loop can pick it again.
 		var is_safe: bool = bucket.get_meta("safe", true)
-		bucket.set_meta("being_sorted", true)
-		g.set("current_bucket", bucket)
-		g.call("_sort_bucket", bucket, is_safe)
-		g.set("current_bucket", null)
-		g.set("is_swiping", false)
-		tap_cooldown = 0.4
+		var from := _screen_from_parent_point(bucket as Node2D, (bucket as Node2D).position)
+		var target_x: float = vp_w * 0.15 if is_safe else vp_w * 0.85
+		_start_gesture([from, Vector2(target_x, from.y), Vector2(target_x, from.y)], true, 0.4)
 		return
 
 # ──────────────────────────────────────────────────────────────────
@@ -1554,6 +1859,9 @@ func _play_greywater_sorter(_delta: float) -> void:
 # Calls _check_filter() when all 4 layers are placed.
 # ──────────────────────────────────────────────────────────────────
 func _play_filter_builder(_delta: float) -> void:
+	if _gest_active:
+		_step_gesture()
+		return
 	if tap_cooldown > 0:
 		return
 	var g := current_game
@@ -1565,11 +1873,11 @@ func _play_filter_builder(_delta: float) -> void:
 	var correct_order: Array = g.get("correct_order")
 	if correct_order == null or correct_order.is_empty():
 		correct_order = ["cloth", "charcoal", "sand", "gravel"]
-	var bottle: Node = g.get_node_or_null("Bottle")
+	var bottle := g.get_node_or_null("Bottle") as Node2D
 	if bottle == null:
 		return
 	for layer in filter_layers:
-		if not is_instance_valid(layer):
+		if not is_instance_valid(layer) or not (layer is Node2D):
 			continue
 		if layer.get_meta("placed", false):
 			continue
@@ -1577,20 +1885,18 @@ func _play_filter_builder(_delta: float) -> void:
 		var zone_idx: int = correct_order.find(ltype)
 		if zone_idx < 0:
 			continue
-		var zone: Node = bottle.get_node_or_null("Zone_%d" % zone_idx)
+		var zone := bottle.get_node_or_null("Zone_%d" % zone_idx) as Control
 		if zone == null or zone.get_meta("filled", false):
 			continue
-		# Snap layer to zone center
-		layer.position = bottle.position + zone.position + Vector2(70.0, 30.0)
-		layer.set_meta("placed", true)
-		layer.set_meta("zone_index", zone_idx)
-		zone.set_meta("filled", true)
-		var placed: Array = g.get("placed_layers")
-		if placed != null:
-			placed.append({"type": ltype, "index": zone_idx})
-			if placed.size() >= 4 and g.has_method("_check_filter"):
-				g.call("_check_filter")
-		tap_cooldown = 0.5
+		# FilterBuilder._handle_drag() grabs the layer whose 150px box contains the
+		# pressed pointer, follows it while held, and snaps it into a zone on release
+		# (-> _check_filter once all four are placed). Drag a real finger from the layer
+		# to its zone centre instead of writing positions + calling _check_filter().
+		var lay := layer as Node2D
+		var from := _screen_from_parent_point(lay, lay.position)
+		var zone_center: Vector2 = bottle.position + zone.position + zone.size * 0.5
+		var to := _screen_from_parent_point(lay, zone_center)
+		_start_gesture([from, to, to], true, 0.5)
 		return
 
 # ──────────────────────────────────────────────────────────────────
@@ -1607,11 +1913,14 @@ func _play_timing_tap(_delta: float) -> void:
 	var fill: float = float(g.get("container_fill"))
 	var target: float = float(g.get("target_fill"))
 	var tolerance: float = float(g.get("fill_tolerance")) if "fill_tolerance" in g else 10.0
-	# Hold until we reach just inside the lower edge of the tolerance window
+	# TimingTap._input sets _touch_holding on a ScreenTouch press and its _process
+	# fills while held, grading on the RELEASE edge (_check_fill succeeds when
+	# |fill-target|<=tolerance). Hold a real finger until just inside the window, then
+	# lift it -> graded hit, instead of writing _touch_holding directly.
 	if fill < (target - tolerance + 1.0):
-		g.set("_touch_holding", true)
+		_hold_at(get_viewport().get_visible_rect().size * 0.5)
 	else:
-		g.set("_touch_holding", false)
+		_release_pointer()
 
 # ──────────────────────────────────────────────────────────────────
 # TURN OFF TAP
@@ -1632,58 +1941,47 @@ func _play_turn_off_tap(_delta: float) -> void:
 		if not is_instance_valid(tap):
 			continue
 		if tap.get_meta("running", false):
-			g.call("_on_tap_closed", tap)
+			# TurnOffTap._input handles the emulated MouseButton from an injected touch
+			# and tests distance to tap.position (<74), so tap the running faucet.
+			_tap_at(_screen_from_parent_point(tap as Node2D, (tap as Node2D).position))
 			tap_cooldown = 0.12
 			return
 
 # ──────────────────────────────────────────────────────────────────
 # PLUG THE LEAK / FIX LEAK
-# Directly advance plug_progress each frame for leaking pipes.
-# Calls _start_random_leak() after each fix to keep the game going.
+# Hold a synthetic finger on the leaking pipe and let the game's OWN _process
+# holding branch (PlugTheLeak.gd:189-221) advance plug_progress, stop the
+# water_wasted accumulation and call record_action(true) honestly.
+#
+# The old handler poked pipe.set_meta("plug_progress") directly and never
+# produced a touch, so PlugTheLeak._process saw is_holding=false, its else-branch
+# (line 224) accumulated water_wasted += leak_rate*delta until end_game(false),
+# and _report_accuracy(false) x objective-0 scored 0%. Injecting the real hold
+# drives the same code path a human finger does. Only ONE leak exists at a time
+# (the next is scheduled by the round_delay timer at PlugTheLeak.gd:219), so one
+# finger suffices; release it when nothing is leaking so it cannot go phantom.
 # ──────────────────────────────────────────────────────────────────
-func _play_plug_the_leak(delta: float) -> void:
-	# Handle ALL leaking pipes per frame so water_wasted cannot accumulate
-	# on unattended pipes while another is being plugged.
+func _play_plug_the_leak(_delta: float) -> void:
 	var g := current_game
 	if not is_instance_valid(g):
 		return
 	var pipes: Array = g.get("pipes")
 	if pipes == null:
 		return
-	var plug_rate: float = float(g.get("plug_rate")) if "plug_rate" in g else 15.0
-	var any_leaking := false
-	for pipe in pipes:
-		if not is_instance_valid(pipe):
+	for entry in pipes:
+		var pipe := entry as Node2D
+		if pipe == null or not is_instance_valid(pipe):
 			continue
 		if not pipe.get_meta("leaking", false):
 			continue
-		any_leaking = true
-		var progress: float = pipe.get_meta("plug_progress", 0.0) + plug_rate * delta * 3.0
-		progress = minf(progress, 100.0)
-		pipe.set_meta("plug_progress", progress)
-		var plug_bar: Node = pipe.get_node_or_null("PlugBar")
-		if plug_bar:
-			if "value" in plug_bar:
-				plug_bar.value = progress
-			plug_bar.visible = true
-		if progress >= 100.0:
-			pipe.set_meta("leaking", false)
-			pipe.set_meta("plug_progress", 0.0)
-			var leak_node: Node = pipe.get_node_or_null("Leak")
-			if leak_node:
-				leak_node.visible = false
-			if plug_bar:
-				plug_bar.visible = false
-			var joint: Node = pipe.get_node_or_null("Joint")
-			if joint and "color" in joint:
-				joint.color = Color(0.3, 0.7, 0.3)
-			if g.has_method("record_action"):
-				g.record_action(true)
-			# Reduce water_wasted as reward for quick fix
-			if "water_wasted" in g:
-				g.set("water_wasted", maxf(float(g.get("water_wasted")) - 12.0, 0.0))
-			if g.has_method("_start_random_leak"):
-				g.call("_start_random_leak")
+		# Aim at the pipe's own position (parent space -> viewport space). The
+		# game's target rect is a generous 150x150 centred on pipe.position
+		# (PlugTheLeak.gd:187), so this lands dead centre and drives the hold.
+		_hold_at(_screen_from_parent_point(pipe, pipe.position))
+		return
+	# Nothing leaking this frame: lift the finger so it cannot linger as a phantom
+	# touch into the next leak or the next round.
+	_release_pointer()
 
 # ──────────────────────────────────────────────────────────────────
 # BUCKET BRIGADE
@@ -1704,7 +2002,8 @@ func _play_bucket_brigade(_delta: float) -> void:
 		if bucket_at[i] != null and is_instance_valid(bucket_at[i]):
 			var person: Node2D = people[i]
 			if is_instance_valid(person):
-				g.call("_handle_tap", person.position)
+				# BucketBrigadeV2._shell_tap hit-tests people[i].position; inject the tap.
+				_tap_at(_screen_from_parent_point(person, person.position))
 				tap_cooldown = 0.35
 				return
 
@@ -1758,40 +2057,35 @@ func _play_rice_wash_rescue(_delta: float) -> void:
 # _check_placement, then move to clean_basket → call _check_placement.
 # ──────────────────────────────────────────────────────────────────
 func _play_vegetable_bath(_delta: float) -> void:
+	if _gest_active:
+		_step_gesture()
+		return
 	if tap_cooldown > 0:
 		return
 	var g := current_game
 	if not is_instance_valid(g):
-		return
-	if not g.has_method("_check_placement"):
 		return
 	var veggies: Array = g.get("veggies") if "veggies" in g else []
 	var wash_bowl: Node2D = g.get("wash_bowl")
 	var clean_basket: Node2D = g.get("clean_basket")
 	if wash_bowl == null or clean_basket == null:
 		return
-	# Step 1: wash any unwashed veggie
+	# VegetableBath._input grabs the nearest veggie within GRAB_RADIUS(74) on press
+	# (recording _record_touch_processed there), _process follows the held pointer,
+	# and release runs _check_placement: wash_bowl -> washed, clean_basket -> done +
+	# record_action(true). Drag a real finger from each veggie to the bowl, then to the
+	# basket, instead of writing positions + calling _check_placement directly.
 	for veggie in veggies:
-		if not is_instance_valid(veggie):
+		if not is_instance_valid(veggie) or not (veggie is Node2D):
 			continue
 		if veggie.get_meta("done", false):
 			continue
-		if not veggie.get_meta("washed", false):
-			veggie.position = wash_bowl.position
-			g.call("_check_placement", veggie)
-			tap_cooldown = 0.4
-			return
-	# Step 2: deliver washed veggies to clean basket
-	for veggie in veggies:
-		if not is_instance_valid(veggie):
-			continue
-		if veggie.get_meta("done", false):
-			continue
-		if veggie.get_meta("washed", false):
-			veggie.position = clean_basket.position
-			g.call("_check_placement", veggie)
-			tap_cooldown = 0.4
-			return
+		var v := veggie as Node2D
+		var dest: Node2D = clean_basket if v.get_meta("washed", false) else wash_bowl
+		var from := _screen_from_parent_point(v, v.position)
+		var to := _screen_from_parent_point(dest, dest.position)
+		_start_gesture([from, to, to], true, 0.4)
+		return
 
 # ──────────────────────────────────────────────────────────────────
 # SPOT THE SPECK
@@ -1799,19 +2093,26 @@ func _play_vegetable_bath(_delta: float) -> void:
 # answer to always identify glasses accurately.
 # ──────────────────────────────────────────────────────────────────
 func _play_spot_the_speck(_delta: float) -> void:
+	if _gest_active:
+		_step_gesture()
+		return
 	if swipe_cooldown > 0:
 		return
 	var g := current_game
 	if not is_instance_valid(g):
 		return
-	if not g.has_method("_judge_glass"):
-		return
-	var glass: Node = g.get("current_glass")
+	var glass: Node2D = g.get("current_glass")
 	if glass == null or not is_instance_valid(glass):
 		return
+	# SpotTheSpeck._input reads a ScreenTouch swipe: press, then release with a
+	# vertical delta >60px — UP (dy<0) judges clean, DOWN (dy>0) judges dirty
+	# (_judge_glass -> record_action(true) when correct). The _process mouse path
+	# shares the is_swiping guard, so the injected touch cannot double-fire. Swipe a
+	# real finger instead of calling _judge_glass() directly.
 	var is_dirty: bool = glass.get_meta("dirty", false)
-	g.call("_judge_glass", is_dirty)
-	swipe_cooldown = 0.7
+	var from := _screen_from_parent_point(glass, glass.position)
+	var dy: float = 80.0 if is_dirty else -80.0
+	_start_gesture([from, from + Vector2(0.0, dy)], true, 0.7)
 
 # ──────────────────────────────────────────────────────────────────
 # WATER PLANT / THIRSTY PLANT
@@ -1840,8 +2141,12 @@ func _play_water_plant(_delta: float) -> void:
 			driest_hydration = h
 			driest_idx = i
 	if driest_idx >= 0 and driest_hydration < 0.45:
-		g.call("_on_plant_tapped", driest_idx)
-		tap_cooldown = 0.25
+		var node: Node2D = plants[driest_idx].get("node")
+		if node != null and is_instance_valid(node):
+			# The plant container holds an invisible full-cover Button bound to
+			# _on_plant_tapped(i); an injected tap -> emulated mouse press fires it.
+			_tap_at(_screen_from_parent_point(node, node.position))
+			tap_cooldown = 0.25
 
 # ──────────────────────────────────────────────────────────────────
 # DROPLET DASH
@@ -1849,6 +2154,9 @@ func _play_water_plant(_delta: float) -> void:
 # into the safest available lane.
 # ──────────────────────────────────────────────────────────────────
 func _play_droplet_dash(_delta: float) -> void:
+	if _gest_active:
+		_step_gesture()
+		return
 	if tap_cooldown > 0:
 		return
 	var g := current_game
@@ -1899,8 +2207,13 @@ func _play_droplet_dash(_delta: float) -> void:
 			best_score = lane_scores[i]
 			best_lane = i
 	if best_lane != current_lane:
-		g.call("_move_lane", signi(best_lane - current_lane))
-		tap_cooldown = 0.18
+		# DropletDash._input fires _move_lane() from a DRAG whose |dx| exceeds
+		# SWIPE_THRESHOLD(40px); one press = one lane step (_swipe_consumed guards a
+		# long drag from chaining). Swipe a real finger from the droplet toward the
+		# target lane instead of calling _move_lane() directly.
+		var from := _screen_from_parent_point(droplet, droplet.position)
+		var dir := float(signi(best_lane - current_lane))
+		_start_gesture([from, from + Vector2(dir * 80.0, 0.0)], true, 0.18)
 
 # ──────────────────────────────────────────────────────────────────
 # GENERIC TAP FALLBACK
@@ -1922,7 +2235,9 @@ func _play_generic_tap(_delta: float) -> void:
 	if game_btns.is_empty():
 		return
 	var chosen: Button = game_btns[randi() % game_btns.size()]
-	chosen.pressed.emit()
+	# Inject a real tap on the button's centre: emulated mouse press -> GUI pick ->
+	# pressed, exactly as a human tap. No direct emit() (which bypassed input).
+	_tap_at(_screen_center_of_control(chosen))
 	tap_cooldown = 0.3
 
 
@@ -2054,10 +2369,11 @@ func _play_mp_rain_collector(g: Node) -> void:
 			closest_dist = dist
 			closest_drop = child
 	
-	# Move bucket toward closest drop
+	# Move bucket toward closest drop. MiniGame_Rain mode 1 lerps bucket.position.x
+	# toward viewport.get_mouse_position().x every _process frame, so pointing the
+	# injected finger at the drop steers the bucket exactly as a human drag does.
 	if closest_drop:
-		var target_x = closest_drop.global_position.x
-		bucket.global_position.x = move_toward(bucket.global_position.x, target_x, 500.0 * get_process_delta_time())
+		_drag_to(_screen_from_parent_point(closest_drop, closest_drop.position))
 
 func _play_mp_rain_filter(g: Node) -> void:
 	## Click on leaves to remove them
@@ -2073,8 +2389,9 @@ func _play_mp_rain_filter(g: Node) -> void:
 		if not is_instance_valid(child):
 			continue
 		if child.name.begins_with("Leaf") or child.name.begins_with("Dirt"):
-			# Simulate click
-			_simulate_click_on_node(child)
+			# Area2D physics picking: an injected tap -> emulated MouseButton reaches
+			# the leaf's input_event, as a human tap does.
+			_tap_at(_screen_from_parent_point(child as Node2D, (child as Node2D).position))
 			tap_cooldown = 0.3
 			return
 
@@ -2117,9 +2434,10 @@ func _play_mp_leaf_sort_p1(g: Node) -> void:
 				closest_dist = dist
 				closest_leaf = child
 	
+	# Same poll-the-pointer path as MiniGame_Rain mode 1: point the finger at the
+	# clean leaf and the bucket lerps under it (no direct position write).
 	if closest_leaf:
-		var target_x = closest_leaf.global_position.x
-		bucket.global_position.x = move_toward(bucket.global_position.x, target_x, 500.0 * get_process_delta_time())
+		_drag_to(_screen_from_parent_point(closest_leaf, closest_leaf.position))
 
 func _play_mp_leaf_sort_p2(g: Node) -> void:
 	## Click dirty leaves
@@ -2134,7 +2452,7 @@ func _play_mp_leaf_sort_p2(g: Node) -> void:
 		if not is_instance_valid(child):
 			continue
 		if child.name.begins_with("DirtyLeaf"):
-			_simulate_click_on_node(child)
+			_tap_at(_screen_from_parent_point(child as Node2D, (child as Node2D).position))
 			tap_cooldown = 0.3
 			return
 
@@ -2166,7 +2484,7 @@ func _play_mp_water_harvest_filter(g: Node) -> void:
 		if not is_instance_valid(child):
 			continue
 		if child.name.begins_with("Dirt"):
-			_simulate_click_on_node(child)
+			_tap_at(_screen_from_parent_point(child as Node2D, (child as Node2D).position))
 			tap_cooldown = 0.3
 			return
 
@@ -2186,25 +2504,31 @@ func _play_mp_greywater_sort(_delta: float) -> void:
 		_play_mp_greywater_filter(g)
 
 func _play_mp_greywater_sorter(g: Node) -> void:
-	## Drag good water to tank
+	## Drag good water to the tank.
+	if _gest_active:
+		_step_gesture()
+		return
 	if tap_cooldown > 0.0:
 		return
 	
 	var objects_container = g.get_node_or_null("GameLayer/ObjectsContainer")
-	if not objects_container:
+	var tank = g.get_node_or_null("GameLayer/GreywaterTank")
+	if objects_container == null or tank == null or not (tank is Node2D):
 		return
 	
-	# Find good water (not bad)
+	# MiniGame_GreywaterSort: pressing a Greywater Area2D sets dragging_water, its
+	# _input() MouseMotion follows the finger, and release inside the tank rect
+	# scores good water (bad water damages). is_bad is stored as a META, so the old
+	# child.get("is_bad") read a missing property (always null) and NEVER dragged.
+	# A grab->drag->release gesture to the tank now drives the real input path.
 	for child in objects_container.get_children():
-		if not is_instance_valid(child):
+		if not is_instance_valid(child) or not (child is Node2D):
 			continue
-		if child.name.begins_with("Greywater"):
-			var is_bad = child.get("is_bad")
-			if is_bad == false:
-				# Simulate drag to tank
-				_simulate_click_on_node(child)
-				tap_cooldown = 0.5
-				return
+		if child.name.begins_with("Greywater") and not child.get_meta("is_bad", false):
+			var from := _screen_from_parent_point(child as Node2D, (child as Node2D).position)
+			var to := _screen_from_parent_point(tank as Node2D, (tank as Node2D).position)
+			_start_gesture([from, to, to], true, 0.5)
+			return
 
 func _play_mp_greywater_filter(g: Node) -> void:
 	## Click filter icons
@@ -2219,7 +2543,7 @@ func _play_mp_greywater_filter(g: Node) -> void:
 		if not is_instance_valid(child):
 			continue
 		if child.name.begins_with("Filter"):
-			_simulate_click_on_node(child)
+			_tap_at(_screen_from_parent_point(child as Node2D, (child as Node2D).position))
 			tap_cooldown = 0.4
 			return
 
@@ -2250,13 +2574,14 @@ func _play_mp_bucket_brigade(_delta: float) -> void:
 			continue
 		
 		if is_player_one and status == "empty":
-			# Fill it
-			_simulate_click_on_node(bucket_node)
+			# Fill it - tap the bucket Control's on-screen centre; its full-rect
+			# Button.pressed -> _on_bucket_clicked(i), exactly as a human tap does.
+			_tap_at(_screen_center_of_control(bucket_node as Control))
 			tap_cooldown = 0.5
 			return
 		elif not is_player_one and status == "full":
 			# Empty it
-			_simulate_click_on_node(bucket_node)
+			_tap_at(_screen_center_of_control(bucket_node as Control))
 			tap_cooldown = 0.5
 			return
 
@@ -2282,7 +2607,10 @@ func _play_mp_generic(_delta: float) -> void:
 		if not is_instance_valid(child):
 			continue
 		if child.has_method("_input_event") or child.get("input_pickable"):
-			_simulate_click_on_node(child)
+			if child is Control:
+				_tap_at(_screen_center_of_control(child as Control))
+			elif child is Node2D:
+				_tap_at(_screen_from_parent_point(child as Node2D, (child as Node2D).position))
 			tap_cooldown = 0.4
 			return
 
@@ -2310,6 +2638,16 @@ func _play_mp_generic(_delta: float) -> void:
 ## viewport's last-pointer position, and that is exactly what get_mouse_position()
 ## returns on a host with no mouse feature - so the pollers are steered too.
 func _drive_pointer(view_pos: Vector2) -> void:
+	# Human-sim realism for CONTINUOUS actions (item 3) lives HERE, in the single
+	# continuous injector, so it is defined once and inherited by every continuous
+	# caller: _hold_at, _drag_to, _step_gesture AND the handlers that drive
+	# _drive_pointer directly (e.g. _play_rice_wash_rescue). A ONE-time reaction
+	# delay gates the first engage; per-frame aim jitter / occasional slip follow.
+	# In PERFECT the gate returns true and the aim returns view_pos unchanged, so
+	# the body below is byte-identical to the pre-realism primitive.
+	if not _hsim_gate_continuous(view_pos):
+		return
+	view_pos = _hsim_aim_continuous(view_pos)
 	var vp := get_viewport()
 	if vp == null:
 		return
@@ -2353,6 +2691,9 @@ func _drive_pointer(view_pos: Vector2) -> void:
 func _release_pointer() -> void:
 	if not _pointer_down:
 		_pointer_release_pending = false
+		# Finger is up: a future hold must clear its ONE reaction delay again. A
+		# harmless bool write in PERFECT (produces no input, changes no behaviour).
+		_hsim_hold_engaged = false
 		return
 	# Deferred, not skipped: a paused tree does not deliver input, so lifting here
 	# would clear this manager's flag while TouchInputManager kept the finger.
@@ -2366,6 +2707,84 @@ func _release_pointer() -> void:
 	Input.parse_input_event(lift)
 	_pointer_down = false
 	_pointer_release_pending = false
+	_hsim_hold_engaged = false
+
+## Discrete tap: a MATCHED down->up InputEventScreenTouch pair (index 0) at one
+## screen position, emitted through Input.parse_input_event() so a tap increments
+## TouchInputManager's `received` (down) AND `up_events` (up) by exactly 1 each -
+## the shape of a human finger's discrete tap. Use this for the tap games; use
+## _hold_at()/_drag_to() (a finger that stays down) for hold/steer games.
+##
+## Coordinates and the bezel inset are the SAME conversion _drive_pointer() uses
+## (viewport -> window via vp.get_final_transform(), clamped by POINTER_INSET_PX),
+## so the tap lands where a real finger would and is not swallowed by
+## TouchInputManager's 15px edge dead zone. The pair is self-contained: it never
+## leaves a phantom finger down, and any continuous finger still down is lifted
+## first so the down/up below stay matched. Skipped while the tree is paused,
+## exactly like _release_pointer(): input is not delivered to a paused tree, so a
+## tap there would be swallowed and could strand the down.
+##
+## `hold_frames` reserves the intended press duration for the human-simulation
+## realism layer (item 3) and, meanwhile, spaces repeat taps by at least that many
+## frames so a per-frame handler cannot flood the input queue.
+func _tap_at(view_pos: Vector2, hold_frames: int = 2) -> void:
+	if tap_cooldown > 0.0:
+		return
+	if get_tree() != null and get_tree().paused:
+		return
+	# Human-sim reaction delay (item 3). In PERFECT this is a no-op returning true,
+	# so the tap fires immediately exactly as before. With realism on and a NEW
+	# target it returns false WITHOUT consuming tap_cooldown, so the handler's next
+	# per-frame call keeps the same reaction clock until it is ready to fire.
+	if not _hsim_gate_discrete(view_pos):
+		return
+	# Aim jitter / deliberate miss. In PERFECT this returns view_pos unchanged, so
+	# the clamp + transform below are byte-identical to the pre-realism primitive.
+	var fire_pos: Vector2 = _hsim_aim_discrete(view_pos)
+	var vp := get_viewport()
+	if vp == null:
+		return
+	var r := vp.get_visible_rect()
+	var inset := Vector2(POINTER_INSET_PX, POINTER_INSET_PX)
+	fire_pos = fire_pos.clamp(r.position + inset, r.end - inset)
+	var win_pos: Vector2 = vp.get_final_transform() * fire_pos
+	# A continuous finger left down from a prior hold would make the pair below
+	# unmatched; lift it first so this tap is a clean down->up.
+	if _pointer_down:
+		_release_pointer()
+	# DOWN - TouchInputManager._record_diag_event() counts this as one `received`.
+	_tap_down_ev.index = 0
+	_tap_down_ev.pressed = true
+	_tap_down_ev.position = win_pos
+	Input.parse_input_event(_tap_down_ev)
+	# UP - the matched release, counted as one `up_events`. Distinct object and
+	# identical index/position so the pair reads as a single discrete tap.
+	_tap_up_ev.index = 0
+	_tap_up_ev.pressed = false
+	_tap_up_ev.position = win_pos
+	Input.parse_input_event(_tap_up_ev)
+	# Keep the finger state consistent: nothing is down after a tap.
+	_pointer_down = false
+	_pointer_pos = win_pos
+	_pointer_release_pending = false
+	tap_cooldown = maxf(TAP_INJECT_COOLDOWN, float(hold_frames) / 60.0)
+
+## Continuous finger down at a screen position - thin wrapper over _drive_pointer()
+## for HOLD games. Presses once, then keeps the finger down across frames (a no-op
+## when the position is unchanged). Lift with _release_pointer() when the hold ends.
+func _hold_at(view_pos: Vector2) -> void:
+	# Human-sim realism for continuous actions is applied ONCE, inside _drive_pointer
+	# (the single continuous injector), so this stays a thin wrapper. The reaction
+	# delay gates only the FIRST engage (_hsim_hold_engaged latches true until the
+	# finger is released), never per frame, so a hold can still engage; in PERFECT
+	# every hook is a no-op and this is exactly _drive_pointer(view_pos).
+	_drive_pointer(view_pos)
+
+## Semantic alias over _drive_pointer() for DRAG/steer games: the finger is already
+## down (or is pressed here) and moves to view_pos. Identical mechanics to _hold_at;
+## the distinct name documents intent at the call site.
+func _drag_to(view_pos: Vector2) -> void:
+	_drive_pointer(view_pos)
 
 ## Viewport position of a point given in `ci`'s PARENT space - the space `ci.position`
 ## itself is in, so a driver can hand over the coordinates it already has.
@@ -2384,35 +2803,199 @@ func _screen_from_parent_point(ci: Node2D, parent_point: Vector2) -> Vector2:
 		world = (parent as Node2D).get_global_transform() * parent_point
 	return ci.get_canvas_transform() * world
 
-func _simulate_click_on_node(node: Node) -> void:
-	## Simulate a mouse click on a node
-	if not is_instance_valid(node):
+## Viewport-space centre of a Control target (Button / Panel) so an injected tap
+## lands on it. MUST use get_canvas_transform() (canvas -> viewport), NOT
+## get_viewport_transform(): the latter already folds in the window/stretch
+## (final) transform, and _tap_at()/_drive_pointer() apply get_final_transform()
+## themselves. Using get_viewport_transform() here double-applied the stretch, so
+## on a 1920-px viewport behind a 64-px headless window a card centred at (960,960)
+## was reported as (32,32) and the tap then landed at window ~(1,1) - missing the
+## Button entirely (WaterMemory flipped 0 cards). get_canvas_transform() matches
+## _screen_from_parent_point(), so both hand _tap_at() true viewport coordinates.
+func _screen_center_of_control(ctrl: Control) -> Vector2:
+	if not is_instance_valid(ctrl) or not ctrl.is_inside_tree():
+		return Vector2.ZERO
+	return ctrl.get_canvas_transform() * ctrl.get_global_rect().get_center()
+
+## Script a multi-frame finger path. `pts` are VIEWPORT points walked one per
+## frame by _step_gesture(); the finger is pressed on the first and (when
+## release_at_end) lifted on the frame after the last. `post_cooldown` spaces the
+## next gesture so a handler cannot re-trigger faster than the game can react.
+func _start_gesture(pts: Array, release_at_end: bool = true, post_cooldown: float = 0.0) -> void:
+	# Human-sim reaction delay on the gesture's first waypoint (item 3). In PERFECT
+	# this is a no-op returning true, so the gesture starts this frame exactly as
+	# before. A still-reacting gesture is NOT started; the handler re-calls next
+	# frame and the same reaction clock keeps running (no re-delay per frame).
+	if pts.size() > 0 and not _hsim_gate_discrete(pts[0] as Vector2):
 		return
-	
-	# Try input_event signal
-	if node.has_signal("input_event"):
-		var event = InputEventMouseButton.new()
-		event.button_index = MOUSE_BUTTON_LEFT
-		event.pressed = true
-		event.position = node.global_position if node is Node2D else Vector2.ZERO
-		node.emit_signal("input_event", null, event, 0)
-	
-	# Try gui_input signal
-	if node.has_signal("gui_input"):
-		var event = InputEventMouseButton.new()
-		event.button_index = MOUSE_BUTTON_LEFT
-		event.pressed = true
-		event.position = Vector2.ZERO
-		node.emit_signal("gui_input", event)
-	
-	# Try direct method calls
-	if node.has_method("_on_clicked"):
-		node.call("_on_clicked")
-	elif node.has_method("_on_input_event"):
-		var event = InputEventMouseButton.new()
-		event.button_index = MOUSE_BUTTON_LEFT
-		event.pressed = true
-		node.call("_on_input_event", null, event, 0)
+	_gest_pts.clear()
+	for p in pts:
+		_gest_pts.append(p as Vector2)
+	_gest_i = 0
+	_gest_release_at_end = release_at_end
+	_gest_post_cooldown = post_cooldown
+	_gest_active = _gest_pts.size() > 0
+	# The gesture's reaction delay has now been paid: latch the finger as engaged so
+	# the continuous _drag_to() calls in _step_gesture() drive immediately (they
+	# still apply aim jitter / slip). A no-op in PERFECT — _hsim_active() is false.
+	if _hsim_active():
+		_hsim_hold_engaged = true
+
+## Walk one waypoint of the active gesture. Returns true while the gesture is
+## still running AFTER this frame, so a caller can `return` and wait for the next.
+func _step_gesture() -> bool:
+	if not _gest_active:
+		return false
+	if _gest_i < _gest_pts.size():
+		_drag_to(_gest_pts[_gest_i])
+		_gest_i += 1
+		return true
+	# Waypoints exhausted: lift on the frame after the last move so a _process
+	# poller sees the final position while the finger is still down.
+	if _gest_release_at_end:
+		_release_pointer()
+	_gest_active = false
+	if _gest_post_cooldown > 0.0:
+		tap_cooldown = maxf(tap_cooldown, _gest_post_cooldown)
+		swipe_cooldown = maxf(swipe_cooldown, _gest_post_cooldown)
+	return false
+
+## Drop any in-flight gesture WITHOUT lifting the finger (callers that release
+## separately, e.g. the round-boundary _release_pointer(), use this).
+func _reset_gesture() -> void:
+	_gest_active = false
+	_gest_i = 0
+	_gest_pts.clear()
+	_scrub_phase = false
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# HUMAN-SIMULATION REALISM HOOKS (item 3)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Consulted by the injection primitives. EVERY function here short-circuits on
+# `not _hsim_active()` — which is false in PERFECT mode and for human gameplay —
+# returning the input unchanged / true, so the primitives behave exactly as they
+# did before this layer. No per-action allocation: one pre-seeded _hsim_rng.
+
+## True only when realism should actually be applied: a non-PERFECT profile AND
+## the autoplay path is live. Human gameplay never reaches the primitives, and
+## PERFECT (the default) never turns this on, so the invariant holds.
+func _hsim_active() -> bool:
+	if _hsim_profile == null or _hsim_profile.mode == HumanSimProfile.Mode.PERFECT:
+		return false
+	return auto_play_enabled or mp_auto_play_enabled
+
+## Map AdaptiveDifficulty.current_difficulty ("Easy"/"Medium"/"Hard") onto the
+## profile's Difficulty tier. Anything unknown reads as NORMAL.
+func _hsim_diff() -> int:
+	var d: String = "Medium"
+	if AdaptiveDifficulty != null and "current_difficulty" in AdaptiveDifficulty:
+		d = str(AdaptiveDifficulty.current_difficulty)
+	match d:
+		"Easy":
+			return HumanSimProfile.Difficulty.EASY
+		"Hard":
+			return HumanSimProfile.Difficulty.HARD
+		_:
+			return HumanSimProfile.Difficulty.NORMAL
+
+## Sample a reaction delay (ms) from the active difficulty's range and log it for
+## the variance harness. Only ever called from a non-PERFECT path.
+func _hsim_sample_reaction_ms() -> int:
+	var band: Vector2 = _hsim_profile.get_reaction_range(_hsim_diff())
+	var ms: int = int(round(_hsim_rng.randf_range(band.x, band.y)))
+	if hsim_reaction_samples.size() < 1024:
+		hsim_reaction_samples.append(ms)
+	return ms
+
+## DISCRETE reaction gate (_tap_at, _start_gesture). Returns true when the action
+## may fire now. On first sight of a new target it starts a reaction clock and
+## returns false (wait); the clock survives repeat per-frame calls for the SAME
+## target, so it delays ONCE per target rather than every frame. In PERFECT this
+## returns true immediately without touching any state.
+func _hsim_gate_discrete(view_pos: Vector2) -> bool:
+	if not _hsim_active():
+		return true
+	var now: int = Time.get_ticks_msec()
+	if _hsim_reaction_ready_ms < 0 \
+			or view_pos.distance_to(_hsim_reaction_target) > HSIM_REACQUIRE_PX:
+		# New target: start (or restart) the reaction clock, do not fire yet.
+		_hsim_reaction_target = view_pos
+		_hsim_reaction_ready_ms = now + _hsim_sample_reaction_ms()
+		return false
+	# Same target: follow slow drift, keep the existing deadline.
+	_hsim_reaction_target = view_pos
+	if now < _hsim_reaction_ready_ms:
+		return false
+	# Deadline reached: clear the pending clock so the NEXT target re-delays.
+	_hsim_reaction_ready_ms = -1
+	return true
+
+## CONTINUOUS reaction gate (_hold_at, _drag_to). The delay applies ONCE when the
+## finger first engages a new target; after that it returns true every frame so a
+## hold can actually engage and be re-asserted. _release_pointer() clears
+## _hsim_hold_engaged so the next engage re-delays. In PERFECT returns true.
+func _hsim_gate_continuous(view_pos: Vector2) -> bool:
+	if not _hsim_active():
+		return true
+	if _hsim_hold_engaged:
+		return true
+	var now: int = Time.get_ticks_msec()
+	if _hsim_reaction_ready_ms < 0:
+		_hsim_reaction_target = view_pos
+		_hsim_reaction_ready_ms = now + _hsim_sample_reaction_ms()
+		return false
+	if now < _hsim_reaction_ready_ms:
+		return false
+	_hsim_hold_engaged = true
+	_hsim_reaction_ready_ms = -1
+	return true
+
+## Small random drift around the true target (a shaky but on-target hand).
+func _hsim_jitter(view_pos: Vector2, scale: float = 1.0) -> Vector2:
+	if not _hsim_active():
+		return view_pos
+	var mag: float = _hsim_profile.get_aim_jitter(_hsim_diff()) * scale
+	if mag <= 0.0:
+		return view_pos
+	var ang: float = _hsim_rng.randf() * TAU
+	var rad: float = _hsim_rng.randf() * mag
+	return view_pos + Vector2(cos(ang), sin(ang)) * rad
+
+## Roll the mistake-injection probability for the active difficulty.
+func _hsim_should_miss() -> bool:
+	if not _hsim_active():
+		return false
+	return _hsim_rng.randf() < _hsim_profile.get_mistake_rate(_hsim_diff())
+
+## A deliberately off-target aim, so the game's OWN record_action(false) path
+## produces a natural mistakes>0 and exercises its failure/retry UI.
+func _hsim_miss_pos(view_pos: Vector2) -> Vector2:
+	var ang: float = _hsim_rng.randf() * TAU
+	var dist: float = HSIM_MISS_OFF_PX * (0.6 + _hsim_rng.randf() * 0.8)
+	return view_pos + Vector2(cos(ang), sin(ang)) * dist
+
+## Discrete aim: miss roll first, otherwise a jittered-but-on-target shot.
+func _hsim_aim_discrete(view_pos: Vector2) -> Vector2:
+	if not _hsim_active():
+		return view_pos
+	if _hsim_should_miss():
+		return _hsim_miss_pos(view_pos)
+	return _hsim_jitter(view_pos)
+
+## Continuous aim: gentle jitter, with an occasional brief "slip" off-target.
+func _hsim_aim_continuous(view_pos: Vector2) -> Vector2:
+	if not _hsim_active():
+		return view_pos
+	if _hsim_rng.randf() < HSIM_SLIP_CHANCE:
+		return _hsim_miss_pos(view_pos)
+	return _hsim_jitter(view_pos, HSIM_CONT_JITTER_SCALE)
+
+## Drop any pending reaction clock / engaged-hold state. Called at every round
+## boundary so a delay from a finished game cannot leak into the next one.
+func _hsim_reset() -> void:
+	_hsim_reaction_ready_ms = -1
+	_hsim_reaction_target = Vector2.INF
+	_hsim_hold_engaged = false
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # UTILITY FUNCTIONS

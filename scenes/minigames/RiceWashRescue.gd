@@ -202,6 +202,7 @@ func _process(delta):
 		
 		if drop.position.y >= basin_node.position.y - 30:
 			if abs(drop.position.x - basin_node.position.x) < 85:
+				_record_touch_processed()
 				record_action(true)
 				_show_catch(drop.position)
 			else:

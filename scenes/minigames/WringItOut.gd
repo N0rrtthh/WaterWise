@@ -167,6 +167,7 @@ func _input(event):
 
 func _on_tap():
 	progress += tap_gain
+	_record_touch_processed()
 	record_action(true)
 	
 	# Squeeze animation

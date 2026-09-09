@@ -286,6 +286,7 @@ func _process(delta: float) -> void:
 			continue
 		col.position.y += obstacle_speed * delta
 		if col.position.distance_to(droplet.position) < 45:
+			_record_touch_processed()
 			record_action(true)
 			# Squash-pop so a good catch is felt, not just scored.
 			droplet.react_happy()

@@ -16,6 +16,12 @@ var _touch_active: bool = false
 var _touch_position: Vector2 = Vector2.ZERO
 var _touch_index: int = -1
 
+# T4.3 pooled leak-flash: ONE pre-created node reused for every leak instead of
+# allocating a fresh ColorRect + queue_free per leak. Created in _ready after the
+# pipes so it still draws on top (same tree order the per-leak ColorRect had).
+var _leak_flash: ColorRect = null
+var _leak_flash_tween: Tween = null
+
 func _apply_difficulty_settings() -> void:
 	super._apply_difficulty_settings()
 
@@ -63,15 +69,24 @@ func _ready():
 	bg.z_index = -10
 	add_child(bg)
 	
-	# Tile pattern
-	for i in range(8):
-		for j in range(6):
-			var tile = ColorRect.new()
-			tile.color = Color(0.8, 0.85, 0.8) if (i + j) % 2 == 0 else Color(0.75, 0.8, 0.75)
-			tile.size = Vector2(screen_size.x / 8, screen_size.y / 6)
-			tile.position = Vector2(i * tile.size.x, j * tile.size.y)
-			tile.z_index = -9
-			add_child(tile)
+	# Tile pattern — T4.3: a SINGLE checkerboard backdrop replaces the 8x6 grid of
+	# 48 synchronous ColorRect tiles that were built on the transition frame. One
+	# TextureRect holding a tiny generated 8x6 image (nearest-filtered, stretched to
+	# the viewport) is pixel-identical — each texel scales to screen/8 x screen/6,
+	# exactly the old tile size — and costs one node + one 8x6 texture instead of 48
+	# Controls. z_index kept at -9 so pipes/labels still draw on top.
+	var tile_rect := TextureRect.new()
+	tile_rect.texture = _make_checkerboard_texture(
+		8, 6, Color(0.8, 0.85, 0.8), Color(0.75, 0.8, 0.75)
+	)
+	tile_rect.position = Vector2.ZERO
+	tile_rect.size = screen_size
+	tile_rect.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	tile_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	tile_rect.stretch_mode = TextureRect.STRETCH_SCALE
+	tile_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	tile_rect.z_index = -9
+	add_child(tile_rect)
 	
 	# Water waste meter
 	var waste_label = Label.new()
@@ -91,6 +106,17 @@ func _ready():
 		pipe.position = Vector2(pipe_spacing * (i + 1), screen_size.y * 0.5)
 		add_child(pipe)
 		pipes.append(pipe)
+
+	# Pooled leak-flash node (T4.3), created AFTER the pipes so it draws on top of
+	# them — the same tree order the old per-leak ColorRect had when it was added
+	# during gameplay. Hidden until a leak fires it; MOUSE_FILTER_IGNORE so it can
+	# never block a touch on the pipe beneath it.
+	_leak_flash = ColorRect.new()
+	_leak_flash.color = Color(1, 0.3, 0.3, 0.5)
+	_leak_flash.size = Vector2(100, 100)
+	_leak_flash.visible = false
+	_leak_flash.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_leak_flash)
 
 func _on_game_start() -> void:
 	# Start first leak after delay
@@ -204,6 +230,10 @@ func _process(delta):
 					plug_bar.visible = false
 					pipe.get_node("Joint").color = Color(0.3, 0.7, 0.3)
 					record_action(true)
+					# A real hold on this pipe just graded a successful plug — count it
+					# on the game-logic side of the touch diagnostic so `processed` is
+					# non-zero under autoplay. Diagnostic only; no scoring effect.
+					_record_touch_processed()
 
 					# Schedule the next leak on a timer rather than awaiting here.
 					#
@@ -286,12 +316,34 @@ func _start_random_leak():
 	pipe.get_node("Leak").visible = true
 	pipe.get_node("PlugBar").value = 0.0
 	
-	# Flash effect
-	var flash = ColorRect.new()
-	flash.color = Color(1, 0.3, 0.3, 0.5)
-	flash.size = Vector2(100, 100)
-	flash.position = pipe.position - Vector2(50, 50)
-	add_child(flash)
-	var tw = create_tween()
-	tw.tween_property(flash, "modulate:a", 0.0, 0.3)
-	tw.tween_callback(flash.queue_free)
+	# Flash effect — T4.3: reuse the ONE pooled _leak_flash node (reset position +
+	# modulate, re-run a single tween) instead of allocating a fresh ColorRect and
+	# queue_free-ing it on every leak. Identical visual result: same 100x100 red
+	# block at pipe.position - (50,50), same 0.3s modulate:a fade to 0.
+	if is_instance_valid(_leak_flash):
+		_leak_flash.position = pipe.position - Vector2(50, 50)
+		_leak_flash.modulate = Color(1, 1, 1, 1)
+		_leak_flash.visible = true
+		if _leak_flash_tween != null and _leak_flash_tween.is_valid():
+			_leak_flash_tween.kill()
+		_leak_flash_tween = create_tween()
+		_leak_flash_tween.tween_property(_leak_flash, "modulate:a", 0.0, 0.3)
+		_leak_flash_tween.tween_callback(_hide_leak_flash)
+
+
+## Build the tiny two-tone checkerboard image the backdrop TextureRect scales up.
+## Reproduces the old 8x6 tile grid exactly: colour `a` where (x+y) is even, `b`
+## otherwise — the same rule the removed ColorRect loop used with (i+j) % 2.
+func _make_checkerboard_texture(cols: int, rows: int, a: Color, b: Color) -> ImageTexture:
+	var img := Image.create(cols, rows, false, Image.FORMAT_RGBA8)
+	for y in range(rows):
+		for x in range(cols):
+			img.set_pixel(x, y, a if (x + y) % 2 == 0 else b)
+	return ImageTexture.create_from_image(img)
+
+
+## Tween end-callback for the pooled flash: hide the node instead of freeing it so
+## the next leak can reuse it. Bound to self, so Godot severs it if this node frees.
+func _hide_leak_flash() -> void:
+	if is_instance_valid(_leak_flash):
+		_leak_flash.visible = false

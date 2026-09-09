@@ -362,6 +362,7 @@ func _on_tap_closed(tap: Node2D):
 	
 	tap.set_meta("running", false)
 	taps_closed += 1
+	_record_touch_processed()
 	record_action(true)
 	
 	# Update score

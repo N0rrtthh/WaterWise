@@ -199,6 +199,7 @@ func _handle_swipe():
 
 func _correct_swipe():
 	soaps_cleaned += 1
+	_record_touch_processed()
 	record_action(true)
 	get_node("ScoreDisplay").text = "🧼 %d / %d" % [soaps_cleaned, target_soaps]
 	

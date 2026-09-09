@@ -382,6 +382,7 @@ func _check_match() -> void:
 		first_card.set_meta("matched", true)
 		second_card.set_meta("matched", true)
 		pairs_found += 1
+		_record_touch_processed()
 		record_action(true)
 
 		# Matched: green, plus a pop, so the match registers as an event and not only as a

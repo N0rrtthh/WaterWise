@@ -238,6 +238,7 @@ func _check_path():
 
 func _complete_path():
 	paths_completed += 1
+	_record_touch_processed()
 	record_action(true)
 	get_node("ScoreDisplay").text = "🔧 %d / %d" % [paths_completed, target_paths]
 	

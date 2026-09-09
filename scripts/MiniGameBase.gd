@@ -34,6 +34,30 @@ var mistakes_made: int = 0
 var correct_actions: int = 0
 var total_actions: int = 0
 
+## Touch diagnostic counters — instrumentation for the throttle/input-drop
+## correlation described in the session analysis (games 4-6 accuracy collapse).
+##
+## "Received" = raw touch-downs the OS delivered to the app during this round,
+## counted centrally by TouchInputManager (the earliest point every event
+## passes). MiniGameBase records the delivery totals at start_game() and reads
+## the delta at round end, so every minigame is covered without each subclass
+## having to instrument its own _input().
+##
+## touch_events_processed: of those, how many reached game logic as a graded
+## hit (a grab, a catch, a correct tap). Populated by _record_touch_processed()
+## which subclasses call from their own input handling. The received-minus-
+## processed gap, exported per round by SessionLogger via
+## MiniGameBase.get_touch_diagnostic(), is what separates "OS delivered the
+## touch and the game dropped/mistimed it" from "the touch never arrived".
+var touch_events_processed: int = 0
+
+## TouchInputManager delivery counters at the moment this round started, and
+## the wall-clock the round began on, for the delta snapshot in
+## get_touch_diagnostic().
+var _touch_diag_down_base: int = 0
+var _touch_diag_up_base: int = 0
+var _touch_diag_since_ms: int = 0
+
 ## Per-action response latencies, in milliseconds, for the round in progress.
 ##
 ## The thesis defines the Consistency Penalty over "individual reaction times".
@@ -766,10 +790,80 @@ func get_difficulty_multiplier(setting_name: String, default_value: float = 1.0)
 # GAME FLOW
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+## Call from a subclass input handler when a touch-down actually triggered
+## game logic as a graded hit (a grab, a catch, a timed tap). Raw DELIVERY
+## counting lives in TouchInputManager and is attributed per-round by
+## get_touch_diagnostic(); this counter is the game-logic side of that
+## comparison.
+func _record_touch_processed() -> void:
+	touch_events_processed += 1
+
+## Snapshot of the touch diagnostic for this round, for SessionLogger.
+##
+## received/up are deltas of TouchInputManager's global delivery counters over
+## this round's window; event_log is the raw timestamped stream for the same
+## window (capped at the last 64 events so one hysterical round cannot bloat
+## the session JSON). processed is the game-logic hit count from
+## _record_touch_processed().
+func get_touch_diagnostic() -> Dictionary:
+	var received := 0
+	var ups := 0
+	var event_log: Array = []
+	if TouchInputManager and TouchInputManager.has_method("get_touch_diag_snapshot"):
+		var snap: Dictionary = TouchInputManager.get_touch_diag_snapshot(
+			_touch_diag_since_ms, _touch_diag_down_base, _touch_diag_up_base
+		)
+		received = maxi(0, int(snap.get("down", 0)))
+		ups = maxi(0, int(snap.get("up", 0)))
+		var raw: Array = snap.get("events", [])
+		event_log = raw.slice(maxi(raw.size() - 64, 0))
+	var processed := touch_events_processed
+	# For continuous hold/drag games a SINGLE held finger yields received:1 while
+	# the game grades a hit every frame it is held, so `processed` can legitimately
+	# EXCEED `received` (e.g. RiceWashRescue received:1 / processed:34). That is
+	# not a dropped touch: `received` counts OS-delivered touch-DOWNS, `processed`
+	# counts game-logic hits, and one finger can produce many hits. Both `dropped`
+	# and `drop_rate_pct` are therefore floored at 0 so an over-held round reports
+	# 0% dropped instead of a meaningless negative rate (was -3300%). Schema keys
+	# are unchanged - only the values are clamped.
+	return {
+		"received": received,
+		"up_events": ups,
+		"processed": processed,
+		"dropped": max(0, received - processed),
+		"drop_rate_pct": (
+			maxf(
+				0.0,
+				snapf(
+					100.0 * float(received - processed)
+					/ float(received), 1
+				)
+			) if received > 0 else 0.0
+		),
+		"event_log": event_log,
+	}
+
+func snapf(v: float, decimals: int) -> float:
+	var step := 1.0
+	for _i in range(decimals):
+		step *= 0.1
+	return snapped(v, step)
+
 func start_game() -> void:
 	game_active = true
 	_round_ended = false
 	_quitting = false
+	# Reset touch diagnostic counters for the new round.
+	_touch_diag_down_base = (
+		TouchInputManager.diag_down_total
+		if TouchInputManager and "diag_down_total" in TouchInputManager else 0
+	)
+	_touch_diag_up_base = (
+		TouchInputManager.diag_up_total
+		if TouchInputManager and "diag_up_total" in TouchInputManager else 0
+	)
+	_touch_diag_since_ms = Time.get_ticks_msec()
+	touch_events_processed = 0
 	# Baseline for the first action latency of the round.
 	_last_action_ms = 0
 	action_latencies_ms.clear()
@@ -926,7 +1020,10 @@ func end_game(success: bool = true) -> void:
 			max_combo,
 			success,
 			# Identity, not the display title: see GameManager.complete_minigame.
-			_get_minigame_key()
+			_get_minigame_key(),
+			# Touch delivery vs game-logic hits for this round (input-drop
+			# investigation instrumentation).
+			get_touch_diagnostic()
 		)
 
 	# Outcome presentation. With cartoon cutscenes on, the CartoonStage clip in
@@ -2118,7 +2215,8 @@ func _on_exit_pressed():
 			current_score,
 			max_combo,
 			false,
-			_get_minigame_key()
+			_get_minigame_key(),
+			get_touch_diagnostic()
 		)
 
 	# Show quit tally screen with current progress before exiting

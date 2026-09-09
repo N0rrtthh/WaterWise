@@ -318,7 +318,8 @@ func record_sp_game(
 	reaction_time_ms: int,
 	mistakes: int,
 	difficulty: String,
-	droplets_earned: int
+	droplets_earned: int,
+	touch_diagnostic: Dictionary = {}
 ) -> void:
 	# Game Lab rounds never enter the exported log. A sandbox round has no place in
 	# sp_game_records: it would be counted in the accuracy and sigma the defence
@@ -356,6 +357,11 @@ func record_sp_game(
 		"consistency_penalty": snapf(cp, 4),
 		"droplets_earned": droplets_earned
 	}
+	# Input-drop investigation: raw OS-delivered touch counts vs game-logic
+	# graded hits, plus the timestamped delivery stream for this round. Empty
+	# for games whose base class never started a round (defensive default).
+	if not touch_diagnostic.is_empty():
+		record["touch_diagnostic"] = touch_diagnostic
 	sp_games.append(record)
 	sp_games_count += 1
 	sp_total_score += score
@@ -750,7 +756,13 @@ func export_session(force: bool = false) -> String:
 			"thermal_evaluated": thermal_measured
 		},
 		"fps": {
-			"target": 60,
+			# T4.6 — device-derived, not a hardcoded 60. On mobile the ceiling (and
+			# therefore the honest target) is MobileUIManager.get_target_fps(), which
+			# equals engine_max_fps below (30); desktop reports 60. This makes the block
+			# self-consistent (target == engine_max_fps on a capped phone). NOTE: this
+			# literal does NOT decide fps.passed — the sustained-rate gate above
+			# (sustained_at_floor_pct >= FPS_SUSTAINED_MIN_PCT) does, and it is unchanged.
+			"target": _device_target_fps(),
 			"minimum_required": 30,
 			# The ceiling average_observed is bounded by. Without it a reader cannot
 			# tell 29.6 "the device is struggling" from 29.6 "the device is pinned
@@ -1166,3 +1178,17 @@ func _thermal_source_str() -> String:
 	if PerformanceProfiler and PerformanceProfiler.has_method("get_thermal_source"):
 		return PerformanceProfiler.get_thermal_source()
 	return "unknown"
+
+
+## T4.6 — the FPS target for THIS device tier, so the published fps.target equals
+## engine_max_fps on a capped phone (30) instead of a stale desktop 60. Falls back to
+## Engine.max_fps, then 60, when MobileUIManager is unavailable. This literal does NOT
+## decide fps.passed — the sustained-rate gate does (see the fps block).
+func _device_target_fps() -> int:
+	if MobileUIManager and MobileUIManager.has_method("get_target_fps"):
+		var tier := int(MobileUIManager.get_target_fps())
+		if tier > 0:
+			return tier
+	if Engine.max_fps > 0:
+		return int(Engine.max_fps)
+	return 60

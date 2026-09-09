@@ -97,6 +97,10 @@ var round_timer_button: Button = null
 var leaderboard_button: Button = null
 var leaderboard_panel: Control = null
 
+## Full-rect root container of the screen, panned up while the soft keyboard
+## covers the focused IP field. See the keyboard-pan block in _ready().
+@onready var margin_root: MarginContainer = $MarginContainer
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # STATE VARIABLES
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -219,6 +223,76 @@ func _ready() -> void:
 	_create_round_timer_row()
 	# Build leaderboard button in waiting panel
 	_create_leaderboard_button()
+	# P3: the soft keyboard must never cover the field the player is typing in.
+	_setup_keyboard_pan()
+
+# ── P3: soft keyboard pan ──────────────────────────────────────────────
+#
+# THE DEFECT: _show_join_panel() calls ip_input.grab_focus(), so on a phone the
+# soft keyboard opens over the lower half of the screen — exactly where the
+# JoinPanel and the IP field sit. The round-timer row escaped this by becoming a
+# cycling button ("one tap per step needs no keyboard at all"), but joining a
+# host still requires typing an IP, so the keyboard is unavoidable here.
+#
+# THE FIX: while the IP field holds focus, the screen's MarginContainer is
+# panned up by exactly the overlap between the field's bottom edge (+ clearance)
+# and the keyboard's top edge. Both anchors' offsets move together, so the whole
+# box translates; the JoinPanel is short enough that nothing meaningful leaves
+# the top. The pan clears when focus is lost or the keyboard closes.
+#
+# Measurement: keyboard height comes from
+# DisplayServer.virtual_keyboard_height() in WINDOW pixels; the project stretches
+# canvas_items, so pixels convert to canvas units by the visible-rect/window
+# height ratio. On desktop and headless the API returns 0, so the code is inert
+# there — _debug_keyboard_height_px lets tools/VerifyMpScreensLayout drive the
+# same math without an OS keyboard (flagged as device-confirm-only for the real
+# keyboard's behaviour, like the touch-delivery diagnostics).
+const KEYBOARD_CLEARANCE_UNITS: float = 24.0
+var _keyboard_pan_units: float = 0.0
+var _debug_keyboard_height_px: float = -1.0
+
+func _setup_keyboard_pan() -> void:
+	if ip_input:
+		ip_input.focus_entered.connect(_update_keyboard_pan)
+		ip_input.focus_exited.connect(_update_keyboard_pan)
+
+func _effective_keyboard_height_px() -> float:
+	if _debug_keyboard_height_px >= 0.0:
+		return _debug_keyboard_height_px
+	# Looked up by name on purpose: the method exists under this name on the
+	# 4.5 build the game ships on, but is absent as a static in newer editor
+	# builds, where a direct call is a PARSE error that would take this whole
+	# scene script down with it (measured: VerifyMpScreensLayout could not even
+	# instantiate the lobby). Same call, resolved at runtime if present.
+	for method_name in ["virtual_keyboard_height", "virtual_keyboard_get_height"]:
+		if DisplayServer.has_method(method_name):
+			return float(DisplayServer.call(method_name))
+	return 0.0
+
+func _update_keyboard_pan() -> void:
+	if margin_root == null:
+		return
+	var pan := 0.0
+	var kb_px := _effective_keyboard_height_px()
+	if kb_px > 0.0 and ip_input and ip_input.has_focus():
+		var canvas_h := get_viewport_rect().size.y
+		var window_h := float(DisplayServer.window_get_size().y)
+		var kb_units: float = kb_px * (canvas_h / maxf(window_h, 1.0))
+		var field_bottom: float = (ip_input as Control).get_global_rect().end.y
+		var overlap: float = (field_bottom + KEYBOARD_CLEARANCE_UNITS) - (canvas_h - kb_units)
+		pan = clampf(overlap, 0.0, canvas_h * 0.6)
+	if is_equal_approx(pan, _keyboard_pan_units):
+		return
+	_keyboard_pan_units = pan
+	# offset_top/offset_bottom move together: the full-rect box translates up.
+	margin_root.offset_top = -pan
+	margin_root.offset_bottom = -pan
+
+func _process(_delta: float) -> void:
+	# The keyboard animates in/out asynchronously; poll its height so the pan
+	# tracks it instead of a single focus event. One float compare per frame.
+	if ip_input and ip_input.has_focus():
+		_update_keyboard_pan()
 
 func _create_leaderboard_button() -> void:
 	# Add a "📊 Session Leaderboard" button to the WaitingPanel VBox

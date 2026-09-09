@@ -187,12 +187,36 @@ func _one_round(diff: String) -> Dictionary:
 		_check(false, "%s: CloudCatcher.tscn loads" % diff)
 		return {}
 	var game: Node = packed.instantiate()
-	add_child(game)
-	await get_tree().process_frame
-	await get_tree().process_frame
+	# Phase 2 hands the round to the REAL AutoPlayManager._process, which is the only drive
+	# that reaches the injected input. A handler hand-called from this coroutine emits its
+	# Input.parse_input_event() at a point in the frame where the viewport's GUI no longer
+	# routes it to the cloud Button, so the tap never lands - measured with a throwaway probe:
+	# 0 clouds fired in 60 frames under a hand-drive in both a 64x64 and a 1920x1080 window,
+	# while the same handler through _process clears the round (VerifyAutoPlayProgress and
+	# VerifyTouchDiagnostic both drive it that way and both pass CloudCatcher). The game goes
+	# under root - not under this harness, which IS the current scene - so a round-end
+	# transition cannot take the harness down, and auto-play is enabled BEFORE the game enters
+	# the tree because register_game() (in the game's own _ready) returns early unless it is on.
+	if _ship_bot and AutoPlayManager != null:
+		AutoPlayManager.auto_play_enabled = true
+		AutoPlayManager.auto_play_duration = 0.0
+		AutoPlayManager.auto_play_start_time = 0
+		AutoPlayManager.current_game = null
+		AutoPlayManager.game_name = ""
+		get_tree().root.add_child(game)
+		for _i in range(8):
+			await get_tree().process_frame
+		AutoPlayManager.current_game = game
+	else:
+		add_child(game)
+		await get_tree().process_frame
+		await get_tree().process_frame
 	if not game.has_method("start_game"):
 		_check(false, "%s: MiniGameBase.start_game() is callable" % diff)
-		game.queue_free()
+		if _ship_bot:
+			_ship_teardown(game)
+		else:
+			game.queue_free()
 		return {}
 	var quota: int = int(game.get("target_plants"))
 	var pool: int = (game.get("plants") as Array).size()
@@ -202,6 +226,8 @@ func _one_round(diff: String) -> Dictionary:
 	_starved = 0
 	_active = 0
 	Engine.time_scale = TIME_SCALE
+	if _ship_bot and game.has_method("_hide_instruction_overlay"):
+		game.call("_hide_instruction_overlay")
 	game.call("start_game")
 	var real_start: float = Time.get_ticks_msec() / 1000.0
 	var dur: float = float(game.get("game_duration"))
@@ -211,14 +237,19 @@ func _one_round(diff: String) -> Dictionary:
 		if not is_instance_valid(game):
 			break
 		_sample_step(game)
-		if _ship_bot:
-			_ship_bot_step(game, get_process_delta_time())
-		else:
+		# The shipped bot needs no hand-drive: AutoPlayManager._process dispatches
+		# _play_cloud_catcher on its own tick, which is the drive injection requires.
+		if not _ship_bot:
 			_bot_step(game)
 		if Time.get_ticks_msec() / 1000.0 - real_start > budget:
 			break
 	Engine.time_scale = 1.0
 	var ran: float = (Time.get_ticks_msec() / 1000.0 - real_start) * TIME_SCALE
+	# The shipped bot's tap count is the game's own record_action() tally: _on_cloud_tapped
+	# fires once per injected tap that lands on a cloud Button, so total_actions IS the number
+	# of clouds it converted and no tap-cooldown heuristic is needed.
+	if _ship_bot and is_instance_valid(game) and "total_actions" in game:
+		_taps = int(game.get("total_actions"))
 	var scored: int = int(game.get("plants_watered")) if is_instance_valid(game) else -1
 	# Read the plants BEFORE the instance is freed. This summation used to sit after
 	# queue_free() and an await, so every trial reported 0.0 drops landed - the metric that
@@ -228,7 +259,9 @@ func _one_round(diff: String) -> Dictionary:
 		for plant in (game.get("plants") as Array):
 			if is_instance_valid(plant):
 				landed += float(plant.get_meta("water_amount", 0.0))
-	if is_instance_valid(game):
+	if _ship_bot:
+		_ship_teardown(game)
+	elif is_instance_valid(game):
 		game.queue_free()
 	await get_tree().process_frame
 	if scored < 0:
@@ -317,23 +350,24 @@ func _bot_step(game: Node) -> void:
 ## measure the real thing. Each drop falls straight down, so dx to a plant is fixed and the
 ## sphere reduces to a y-band of half-height sqrt(r^2 - dx^2); a drop that was above the band
 
-## One frame of the bot that ships. AutoPlayManager._process() is not reachable here - it gates on
-## auto_play_enabled and would also drive menus, scene changes and the pause overlay - so the two
-## things it does for a gameplay handler are done explicitly: age the tap cooldown, then dispatch.
-## The handler itself is untouched, which is the point: this measures the shipped aiming code.
-##
-## A tap is detected by the cooldown the handler sets on success (0.3 s), the handler's only
-## observable side effect besides the tap itself.
-func _ship_bot_step(game: Node, delta: float) -> void:
-	if AutoPlayManager == null or not AutoPlayManager.has_method("_play_cloud_catcher"):
-		return
-	AutoPlayManager.current_game = game
-	if AutoPlayManager.tap_cooldown > 0.0:
-		AutoPlayManager.tap_cooldown -= delta
-	var before: float = AutoPlayManager.tap_cooldown
-	AutoPlayManager.call("_play_cloud_catcher", delta)
-	if AutoPlayManager.tap_cooldown > before:
-		_taps += 1
+## Detach the round the shipped bot just drove. auto_play_enabled goes false FIRST so the next
+## AutoPlayManager._process cannot run _navigate_ui() on a game_active==false round and fire a
+## real start_next_minigame() -> change_scene that would free this harness out from under its own
+## coroutine (the runaway this teardown exists to prevent). The game is removed from root and
+## free()d rather than queue_free()d, so its end chain is stranded on a dead instance exactly as a
+## real scene change would strand it, instead of changing the scene.
+func _ship_teardown(game: Node) -> void:
+	if AutoPlayManager != null:
+		AutoPlayManager.current_game = null
+		AutoPlayManager.auto_play_enabled = false
+		AutoPlayManager.game_name = ""
+		if AutoPlayManager.has_method("_release_pointer"):
+			AutoPlayManager.call("_release_pointer")
+	get_tree().paused = false
+	if is_instance_valid(game):
+		if game.is_inside_tree():
+			game.get_parent().remove_child(game)
+		game.free()
 ## before the step and below it after, and is still alive, went THROUGH the plant untested.
 func _sample_step(game: Node) -> void:
 	var plants: Array = game.get("plants")

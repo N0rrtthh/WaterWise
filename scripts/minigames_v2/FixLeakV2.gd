@@ -350,6 +350,7 @@ func _on_leak_clicked(leak: Node2D) -> void:
 	(leak.get_node("Crack") as Line2D).visible = false
 	(leak.get_node("Ring") as Node2D).visible = false
 	(leak.get_node("Patch") as Node2D).visible = true
+	_record_touch_processed()
 	record_hit(leak)  # action + score punch + elastic pop
 	if fixed_leaks >= num_leaks:
 		end_game(true)

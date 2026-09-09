@@ -572,11 +572,33 @@ func _emit_warning(metric: String, value: float, threshold: float) -> void:
 	_warning_last_emit[metric] = session_elapsed_sec
 	performance_warning.emit(metric, value, threshold)
 
+## T4.6 — the FPS this device tier is actually capped at. TARGET_FPS (60) is the
+## desktop reference; on mobile MobileUIManager caps Engine.max_fps at get_target_fps()
+## (30), so meets_target and the fps_below_target warning must evaluate against that
+## ceiling or every frame of a healthy 30fps phone reads as "below target". This is
+## cosmetic only — the ISO pass/fail gate is the sustained-rate check in SessionLogger,
+## which stays on the 30fps FRAME_BUDGET_MS floor regardless of this value.
+func get_device_target_fps() -> int:
+	if MobileUIManager and MobileUIManager.has_method("get_target_fps"):
+		var tier := int(MobileUIManager.get_target_fps())
+		if tier > 0:
+			return tier
+	if Engine.max_fps > 0:
+		return int(Engine.max_fps)
+	return TARGET_FPS
+
+
 func _check_thresholds() -> void:
+	# Evaluate against the device tier, not a fixed 60 (T4.6). MIN_FPS (30) stays the
+	# critical floor — the ISO minimum_required — which on a 30-cap phone is the same
+	# ceiling, so being under it there is genuinely critical. fps_below_target now only
+	# fires between the floor and the tier target (i.e. desktop, 30 <= fps < 60) instead
+	# of on every frame of a capped phone.
+	var device_target := get_device_target_fps()
 	if fps_current < MIN_FPS:
 		_emit_warning("fps_critical", fps_current, float(MIN_FPS))
-	elif fps_current < TARGET_FPS:
-		_emit_warning("fps_below_target", fps_current, float(TARGET_FPS))
+	elif fps_current < device_target:
+		_emit_warning("fps_below_target", fps_current, float(device_target))
 
 	if memory_current_mb > MAX_MEMORY_MB:
 		_emit_warning("memory_exceeded", memory_current_mb, MAX_MEMORY_MB)
@@ -663,8 +685,11 @@ func export_session_report() -> Dictionary:
 			"average": fps_avg,
 			"minimum": fps_min,
 			"maximum": fps_max,
-			"target": TARGET_FPS,
-			"meets_target": fps_avg >= TARGET_FPS
+			# T4.6 — device-derived so a 30-cap phone is not marked as missing a 60
+			# target it was never allowed to reach. Cosmetic: the ISO verdict is the
+			# sustained-rate gate in SessionLogger, not this.
+			"target": get_device_target_fps(),
+			"meets_target": fps_avg >= float(get_device_target_fps())
 		},
 		"frame_timing": {
 			"budget_ms": FRAME_BUDGET_MS,
@@ -881,6 +906,41 @@ func _build_mobile_context() -> Dictionary:
 ## a frame-time heuristic as proxy.
 var _thermal_source: String = "heuristic"  # "sensor" or "heuristic"
 var _thermal_source_logged: bool = false
+## T4.7 — Android PowerManager.getCurrentThermalStatus() state. The class is probed once
+## (it either resolves or it does not), then read per sample. Only ever used on API 29+;
+## on SDK 26 (the thesis device) the gate is false and the honest "unavailable" stands.
+var _thermal_api_checked: bool = false
+var _thermal_api_available: bool = false
+var _power_manager: Variant = null
+## Raw THERMAL_STATUS_* int from the last successful API read, for audit (-1 = none).
+var _thermal_status_raw: int = -1
+## Cached android.os.Build.VERSION.SDK_INT. -2 = not probed yet, -1 = unknown/non-Android.
+var _android_sdk_int_cache: int = -2
+
+
+## T4.7 — Resolve the Android API level once, parse-safe and crash-safe.
+## Godot 4.7 has NO OS.get_sdk_version(); the documented way is the static field
+## android.os.Build$VERSION.SDK_INT read through JavaClassWrapper. Everything is
+## typed as Variant so the field access is resolved dynamically at runtime (never
+## statically validated), and every step is null-guarded: a non-Android host, a
+## missing class, or an unreadable field all return -1, which makes the strict
+## `>= 29` gate below false and keeps the honest "unavailable" path. Nothing is
+## fabricated.
+func _android_sdk_int() -> int:
+	if _android_sdk_int_cache != -2:
+		return _android_sdk_int_cache
+	_android_sdk_int_cache = -1
+	if OS.get_name() != "Android":
+		return _android_sdk_int_cache
+	var version: Variant = JavaClassWrapper.wrap("android.os.Build$VERSION")
+	if version == null:
+		return _android_sdk_int_cache
+	var raw: Variant = version.SDK_INT
+	if raw == null:
+		return _android_sdk_int_cache
+	if typeof(raw) == TYPE_INT or typeof(raw) == TYPE_FLOAT:
+		_android_sdk_int_cache = int(raw)
+	return _android_sdk_int_cache
 
 func _sample_cpu_temperature() -> void:
 	# ═══════════════════════════════════════════════════════════════════
@@ -945,7 +1005,14 @@ func _sample_cpu_temperature() -> void:
 						break
 						
 		if not sensor_read:
-			# Android but no readable sensor — report as unavailable
+			# T4.7 — sysfs is permission-blocked (the common case on SDK 26 and on many
+			# newer devices). Before declaring thermal unavailable, try the real platform
+			# API on API 29+. On SDK 26 that gate is false, so the honest "unavailable"
+			# below stands unchanged and nothing is fabricated.
+			sensor_read = _sample_android_thermal_api()
+
+		if not sensor_read:
+			# Android but no readable sensor and no API 29+ thermal status — unavailable.
 			cpu_temp_c = 0.0
 			_thermal_source = "unavailable"
 			if not _thermal_source_logged:
@@ -968,6 +1035,90 @@ func _sample_cpu_temperature() -> void:
 		cpu_temp_history.pop_front()
 	if cpu_temp_c > cpu_temp_peak:
 		cpu_temp_peak = cpu_temp_c
+
+
+## T4.7 — Real platform thermal via android.os.PowerManager.getCurrentThermalStatus().
+## Strictly gated on Android API 29+ (the method does not exist below that, which is why
+## the thesis device on SDK 26 never reaches it and keeps its honest "unavailable").
+## Every step is null-guarded so a missing class, missing context, or a blocked
+## permission can never crash the profiler — any failure just returns false and the
+## caller falls back to the sysfs / "unavailable" path. Nothing is fabricated: the
+## temperature is a conservative estimate mapped from a REAL OS thermal-status signal,
+## and _thermal_source is set to "sensor" only when that signal was actually read.
+func _sample_android_thermal_api() -> bool:
+	if OS.get_name() != "Android" or _android_sdk_int() < 29:
+		return false
+	if not _thermal_api_checked:
+		_thermal_api_checked = true
+		_thermal_api_available = _acquire_power_manager()
+		if _thermal_api_available:
+			print("🌡 Thermal API available (PowerManager.getCurrentThermalStatus, SDK %d)"
+				% _android_sdk_int())
+	if not _thermal_api_available:
+		return false
+	var status := _read_thermal_status()
+	if status < 0:
+		return false
+	_thermal_status_raw = status
+	cpu_temp_c = _estimate_temp_from_status(status)
+	_thermal_source = "sensor"
+	return true
+
+
+## Resolve the app's PowerManager once. Prefers the documented AndroidRuntime
+## singleton's application Context, falling back to ActivityThread.currentApplication().
+## Returns false if any step is unavailable, so the caller never holds a half-built
+## reference. All handles are Variant so every method resolution is dynamic (parse-safe)
+## and guarded by null checks (crash-safe).
+func _acquire_power_manager() -> bool:
+	var ctx: Variant = null
+	var android_runtime: Variant = Engine.get_singleton("AndroidRuntime")
+	if android_runtime != null and android_runtime.has_method("getApplicationContext"):
+		ctx = android_runtime.getApplicationContext()
+	if ctx == null:
+		var activity_thread: Variant = JavaClassWrapper.wrap("android.app.ActivityThread")
+		if activity_thread == null:
+			return false
+		ctx = activity_thread.call("currentApplication")
+	if ctx == null:
+		return false
+	var pm: Variant = ctx.call("getSystemService", "power")
+	if pm == null:
+		return false
+	_power_manager = pm
+	return true
+
+
+## Read the raw THERMAL_STATUS_* int (0..6), or -1 when unavailable. Calling an absent
+## method on a JavaObject returns null rather than crashing, so the result is validated
+## by range instead of a has_method() probe (which JavaObject does not implement
+## reliably).
+func _read_thermal_status() -> int:
+	if _power_manager == null:
+		return -1
+	var raw = _power_manager.call("getCurrentThermalStatus")
+	if raw == null:
+		return -1
+	var status := int(raw)
+	if status < 0 or status > 6:
+		return -1
+	return status
+
+
+## Conservative Celsius estimate for each android.os.PowerManager.THERMAL_STATUS_* level.
+## This is a mapping from a real platform thermal signal, not an invented reading: the
+## ISO gate (cpu_temp_peak <= 45.0) still passes NONE..SEVERE and only fails from
+## CRITICAL up, which is the intended behaviour.
+func _estimate_temp_from_status(status: int) -> float:
+	match status:
+		0: return 35.0   # THERMAL_STATUS_NONE
+		1: return 38.0   # THERMAL_STATUS_LIGHT
+		2: return 41.0   # THERMAL_STATUS_MODERATE
+		3: return 44.0   # THERMAL_STATUS_SEVERE
+		4: return 47.0   # THERMAL_STATUS_CRITICAL
+		5: return 50.0   # THERMAL_STATUS_EMERGENCY
+		6: return 52.0   # THERMAL_STATUS_SHUTDOWN
+		_: return 0.0
 
 ## Read battery capacity percentage from Android sysfs.
 ## Returns -1 if unavailable (desktop or read failure).

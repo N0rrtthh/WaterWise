@@ -318,6 +318,7 @@ func _check_level():
 	if diff <= tolerance:
 		# Success!
 		tanks_fixed += 1
+		_record_touch_processed()
 		record_action(true)
 		get_node("ScoreDisplay").text = "🚽 %d / %d" % [tanks_fixed, target_tanks]
 		

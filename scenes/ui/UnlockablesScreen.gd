@@ -717,8 +717,18 @@ func _grid_for_tab(tab: String) -> GridContainer:
 		return cached
 	var grid := GridContainer.new()
 	grid.name = "Grid_%s" % tab
-	# Derive column count from actual panel width so the grid fills it
-	# evenly on any resolution instead of bunching to one side.
+	grid.columns = 1  # Recalculated after layout in _update_display()
+	grid.add_theme_constant_override("h_separation", 20)
+	grid.add_theme_constant_override("v_separation", 20)
+	grid.size_flags_horizontal = Control.SIZE_SHRINK_CENTER | Control.SIZE_EXPAND
+	grid.visible = false
+	_scroll_container.add_child(grid)
+	_tab_grids[tab] = grid
+	return grid
+
+
+func _recalculate_grid_columns(grid: GridContainer) -> void:
+	# Derive column count from actual panel width after layout has settled.
 	# Card min width = 160px, h_separation = 20px, margins = 30px each side.
 	var available_w: float = 0.0
 	if main_panel and main_panel.size.x > 0:
@@ -734,13 +744,6 @@ func _grid_for_tab(tab: String) -> GridContainer:
 	const CARD_MIN_W: float = 160.0
 	const H_SEP: float = 20.0
 	grid.columns = maxi(1, int((available_w + H_SEP) / (CARD_MIN_W + H_SEP)))
-	grid.add_theme_constant_override("h_separation", 20)
-	grid.add_theme_constant_override("v_separation", 20)
-	grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	grid.visible = false
-	_scroll_container.add_child(grid)
-	_tab_grids[tab] = grid
-	return grid
 
 
 ## Forces `tab` (default: the visible one) to rebuild next time it is shown. Call this
@@ -792,6 +795,9 @@ func _update_display() -> void:
 		return
 
 	await get_tree().process_frame
+
+	# Recompute column count now that main_panel has a valid size after layout.
+	_recalculate_grid_columns(grid)
 
 	if current_tab == "characters":
 		_show_characters()

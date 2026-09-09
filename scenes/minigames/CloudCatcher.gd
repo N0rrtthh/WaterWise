@@ -289,6 +289,7 @@ func _on_cloud_tapped(cloud: Node2D) -> void:
 	var condense = cloud.get_meta("condense") if cloud.has_meta("condense") else null
 	if condense is Tween and (condense as Tween).is_valid():
 		(condense as Tween).kill()
+	_record_touch_processed()
 	record_action(true)
 
 	# Spawn rain drops falling down

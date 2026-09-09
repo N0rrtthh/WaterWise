@@ -274,6 +274,8 @@ func _input(event):
 		pos = event.position
 		pressed = event.pressed
 		released = not event.pressed
+		# Raw delivery counting is centralised in TouchInputManager; only the
+		# game-logic hit side (_record_touch_processed below) is recorded here.
 	
 	if pressed:
 		# Nearest, not first in the list: the veggies spawn as a jittered pile inside the
@@ -290,6 +292,7 @@ func _input(event):
 				grabbed_d = d
 				grabbed = veggie as Node2D
 		if grabbed != null:
+			_record_touch_processed()
 			selected_veggie = grabbed
 			drag_offset = grabbed.position - pos
 			grabbed.scale = Vector2(1.2, 1.2)

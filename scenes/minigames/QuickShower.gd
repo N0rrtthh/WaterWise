@@ -229,6 +229,7 @@ func _check_timing():
 
 func _good_timing():
 	showers_taken += 1
+	_record_touch_processed()
 	record_action(true)
 	get_node("ScoreDisplay").text = "🚿 %d / %d" % [showers_taken, target_showers]
 	

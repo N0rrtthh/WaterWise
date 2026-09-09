@@ -26,6 +26,11 @@ extends Node
 ##   units and the same column fits with room to spare. The defect exists only at real
 ##   phone densities - which is where the report came from.
 ##
+##   Same reason the run itself must be WINDOWED, not --headless: measured 2026-09-06,
+##   a windowed run reproduces the defect on 9 of 11 shapes while a headless run of the
+##   same sweep reproduces it on 0 - without a window the screen never receives the
+##   shape/density the reproduction needs. The usage line below is corrected to match.
+##
 ## THE FIX UNDER TEST
 ##   The column now lives in a ScrollContainer (WaitingScroll). With vertical scrolling
 ##   enabled a ScrollContainer contributes NO minimum height, so the column stops
@@ -59,8 +64,8 @@ extends Node
 ##   production conversion reads, and a band is swept rather than one number bet on.
 ##   Reachability is proven here through the scroll value and through focus, not touch.
 ##
-## Usage:
-##   godot --headless --path . res://tools/VerifyWaitingRoomFit.tscn
+## Usage (WINDOWED - a headless run reproduces 0 shapes, see the note above):
+##   godot --path . res://tools/VerifyWaitingRoomFit.tscn
 
 const LOBBY: String = "res://scenes/ui/MultiplayerLobby.tscn"
 const PANEL_PATH: String = "MarginContainer/VBoxContainer/WaitingPanel"
@@ -243,7 +248,17 @@ func _case(c: Dictionary, as_host: bool, autoplay: bool) -> void:
 	await _frames(8)
 	print("     pre-fix shape (scrolling off): screen top y=%.1f, screen minimum height %.0f"
 		% [pre_top, pre_min])
-	if not fits:
+	# The top can only climb when the reverted screen TALLER than the viewport:
+	# the pre-fix Control grew its own size up to the combined minimum and
+	# GROW_DIRECTION_BOTH split the excess over both edges. At 268 dpi the column
+	# overflows the PANEL (87 units) but the screen's combined minimum stays
+	# under the 1080-unit viewport, so the reverted shape fits and a clip above
+	# y=0 is geometrically impossible there - the guard measured FAIL on a
+	# case the defect could not reach (screen min 1031 and 989 vs 1080).
+	# Gating on the screen, not the column, is what makes the per-case
+	# reproduction row state a fact rather than an arithmetic wish.
+	var screen_overflows: bool = pre_min > vp.y + 0.5
+	if screen_overflows:
 		var climbed: bool = pre_top < -0.5
 		if climbed:
 			_reproduced += 1
@@ -253,6 +268,9 @@ func _case(c: Dictionary, as_host: bool, autoplay: bool) -> void:
 			"screen top y=%.1f with scrolling disabled, %.1f with it enabled"
 				% [pre_top, _glass(outer).position.y]
 		)
+	else:
+		print("     (reverted screen still fits this shape - %.0f <= %.0f, no clip to reproduce)"
+			% [pre_min, vp.y])
 
 	await _fit_checks(lobby, scroll, column, panel, margin, outer, status, rows, page_h, fits)
 

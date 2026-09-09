@@ -406,6 +406,7 @@ func _on_caught(idx: int, drop: Node2D) -> void:
 		# Quota is counted here, not read off current_score: record_action awards
 		# 10 + floor(streak/3)*5, so the score is not a tally of catches.
 		caught_count += 1
+		_record_touch_processed()
 		record_hit(drum_node)
 		if caught_count >= target_score:
 			Juice.pop(drum_node, 1.5, 0.4)

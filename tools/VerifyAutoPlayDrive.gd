@@ -387,6 +387,146 @@ func _run() -> void:
 		"still paused %.1fs after a bare get_tree().paused = true" % (RECOVER_SECONDS + 2.0)
 	)
 
+	# ── tear down the [6]/[7]/[8] soak state BEFORE [9] ──────────────────
+	# [6]/[7]/[8] leave auto_play_enabled=true with the FixLeak probe still in the
+	# tree and driven. Starting [9] on top of that is what ran this harness away: the
+	# probe's round-end - or the real _process falling into _navigate_ui() while
+	# current_game is momentarily null - fires a REAL GameManager.change_scene(), which
+	# frees THIS harness node. get_tree() then returns null inside [9]'s drive loop
+	# ("Parameter data.tree is null"), the _run coroutine dies mid-iteration, and
+	# auto-play is left enabled with nothing to stop it: an endless self-launching
+	# session (Session Game #3, #4, ... never terminating). Free the probe, drop
+	# auto-play, unpause, and reset the state to MAIN_MENU so each [9] round completes
+	# MAIN_MENU->MINIGAME_RESULTS with no scene change, exactly as the standalone
+	# VerifyTouchDiagnostic drive does.
+	get_tree().paused = false
+	AutoPlayManager.set_auto_play_enabled(false)
+	AutoPlayManager.current_game = null
+	AutoPlayManager.game_name = ""
+	if is_instance_valid(probe):
+		if probe.is_inside_tree():
+			get_tree().root.remove_child(probe)
+		probe.free()
+	GameManager.current_state = GameManager.GameState.MAIN_MENU
+	await _frames(4)
+
+	# ── [9] T1.5: after an AUTOPLAY round every roster game reports a live touch
+	#         diagnostic - received>0, a non-empty event_log, and drop_rate_pct>=0.
+	#         This drives each game's REAL handler (game_name = scene id), not the
+	#         fallback of [4], so it is the end-to-end proof that the migrated
+	#         handlers inject through Input.parse_input_event(): a game the bot drove
+	#         but never touched reports received==0, the collapsed-round signature.
+	var tim = get_node_or_null("/root/TouchInputManager")
+	var dead_diag: PackedStringArray = []
+	if tim == null:
+		_check("[9] TouchInputManager reachable for the autoplay diagnostic", false)
+	else:
+		var was_mobile: bool = tim.is_mobile
+		# Count the bot's injected ScreenTouch directly, as a device does, so
+		# received>0 does not hinge on emulate_mouse_from_touch in headless.
+		tim.is_mobile = true
+		# Drive through the REAL AutoPlayManager._process (the engine ticks the
+		# autoload), exactly as VerifyAutoPlayProgress._drive_one does. Hand-calling
+		# _dispatch_game_strategy fought the shipped _process - which lifts the finger
+		# whenever game_active is momentarily false - and never waited for a slow
+		# playfield to spawn, so every hold/drag game reported a false received==0.
+		var drive_ms: int = 6000
+		var max_drive_ms: int = 24000
+		var wait_active_ms: int = 3000
+		for id in GameManager.ALL_SINGLEPLAYER_MINIGAMES:
+			var path: String = SCENE_FMT % str(id)
+			if not ResourceLoader.exists(path):
+				continue
+			var g: Node = (load(path) as PackedScene).instantiate()
+			if g == null:
+				continue
+			# Enabled BEFORE the game enters the tree: register_game() (in the game's
+			# own _ready) returns early unless auto-play is already on, and it is what
+			# sets current_game/game_name so the real _process drives THIS game.
+			AutoPlayManager.auto_play_enabled = true
+			AutoPlayManager.auto_play_duration = 0.0
+			AutoPlayManager.auto_play_start_time = 0
+			AutoPlayManager.current_game = null
+			AutoPlayManager.game_name = ""
+			get_tree().root.add_child(g)
+			await _frames(READY_FRAMES)
+			if g.has_method("_hide_instruction_overlay"):
+				g.call("_hide_instruction_overlay")
+			if g.has_method("start_game"):
+				g.call("start_game")
+			# Wait for the round to actually go live: the four minigames_v2 games make
+			# start_game() a coroutine that awaits a ~1s flash before game_active.
+			var w0: int = Time.get_ticks_msec()
+			while (Time.get_ticks_msec() - w0) < wait_active_ms:
+				await get_tree().process_frame
+				if not is_instance_valid(g) or not g.is_inside_tree():
+					break
+				if ("game_active" in g and g.game_active) or ("is_playing" in g and g.is_playing):
+					break
+			var went_active: bool = (
+				is_instance_valid(g) and g.is_inside_tree()
+				and ("game_active" in g) and bool(g.game_active)
+			)
+			# Let the shipped _process inject for a wall-clock window, stretched while
+			# nothing has been received yet (a slow playfield, e.g. DropletDash whose
+			# first item needs ~5.4s, is given the time it needs).
+			# Sample the LIVE diagnostic every frame and keep the PEAK received/log: a
+			# hold/drag game emits ONE ScreenTouch down for the whole round, and
+			# MiniGameBase re-captures _touch_diag_down_base when the round re-arms
+			# (its attempt/next-round path calls start_game() again) AFTER that down, so
+			# the FINAL read reports received==0. peak_rec can only exceed 0 if the
+			# game's own diagnostic reported received>0 at some frame - a genuine
+			# injected down - which is what "received input during the round" means.
+			var d: Dictionary = {}
+			var peak_rec: int = 0
+			var peak_log: int = 0
+			var drive_t0: int = Time.get_ticks_msec()
+			var deadline: int = drive_ms
+			while (Time.get_ticks_msec() - drive_t0) < deadline:
+				await get_tree().process_frame
+				if not is_instance_valid(g) or not g.is_inside_tree():
+					break
+				# Break the instant the round ends, exactly as _drive_one does: driving on
+				# past game_active=false lets the real _process fall into _navigate_ui(),
+				# which clicks through the results screen and launches the NEXT game.
+				if went_active and "game_active" in g and not g.game_active:
+					break
+				if get_tree().paused:
+					get_tree().paused = false
+				if is_instance_valid(g) and g.has_method("get_touch_diagnostic"):
+					d = g.get_touch_diagnostic()
+					peak_rec = maxi(peak_rec, int(d.get("received", 0)))
+					peak_log = maxi(peak_log, int(d.get("event_log", []).size()))
+				if int(d.get("received", 0)) == 0 and deadline < max_drive_ms:
+					deadline = max_drive_ms
+			if is_instance_valid(g) and g.has_method("get_touch_diagnostic"):
+				d = g.get_touch_diagnostic()
+				peak_rec = maxi(peak_rec, int(d.get("received", 0)))
+				peak_log = maxi(peak_log, int(d.get("event_log", []).size()))
+			var rate: float = float(d.get("drop_rate_pct", -1.0))
+			if not (peak_rec > 0 and peak_log > 0 and rate >= 0.0):
+				dead_diag.append("%s(recv=%d,log=%d,rate=%.1f)" % [str(id), peak_rec, peak_log, rate])
+			# Detach and clean up. Unpause BEFORE releasing so _release_pointer() lifts
+			# the finger instead of deferring (a paused tree swallows the lift).
+			AutoPlayManager.current_game = null
+			AutoPlayManager.auto_play_enabled = false
+			get_tree().paused = false
+			if AutoPlayManager.has_method("_release_pointer"):
+				AutoPlayManager.call("_release_pointer")
+			if AutoPlayManager.has_method("_reset_gesture"):
+				AutoPlayManager.call("_reset_gesture")
+			if is_instance_valid(g):
+				if g.is_inside_tree():
+					get_tree().root.remove_child(g)
+				g.free()
+			await _frames(2)
+		tim.is_mobile = was_mobile
+		_check(
+			"[9] every roster game reports a live touch diagnostic after an autoplay round",
+			dead_diag.is_empty(),
+			"%d dead: %s" % [dead_diag.size(), ", ".join(dead_diag).substr(0, 600)]
+		)
+
 	AutoPlayManager.current_game = null
 	AutoPlayManager.auto_play_enabled = false
 	if is_instance_valid(probe):

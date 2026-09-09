@@ -310,6 +310,7 @@ func _sort_bucket(bucket: Node2D, to_garden: bool) -> void:
 	var zone: Node2D = garden_zone if to_garden else drain_zone
 	if correct:
 		sorted_correct += 1
+		_record_touch_processed()
 		record_hit(zone)  # action + score punch + zone pop
 		var dest_x := -140.0 if to_garden else _vp_size.x + 140.0
 		var tw := create_tween()

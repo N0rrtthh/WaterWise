@@ -246,6 +246,7 @@ func _on_bucket_pressed(bucket: Node2D):
 	var is_correct = bucket.get_meta("is_correct")
 	
 	if is_correct:
+		_record_touch_processed()
 		record_action(true)
 		bucket.get_node("Body").color = Color(0.2, 0.9, 0.3)
 		

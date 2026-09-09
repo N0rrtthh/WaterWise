@@ -44,6 +44,76 @@ var active_touches: Dictionary = {}  # Track multi-touch
 var haptics_enabled: bool = true
 var _last_scene: Node = null
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# TOUCH DELIVERY DIAGNOSTICS
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#
+# Counted BEFORE the edge dead-zone filter: a bezel-adjacent press the gesture
+# layer rejects was still delivered by the OS, and for this investigation that
+# is the fact that matters.
+#
+# On desktop only left-mouse buttons are counted (real ScreenTouch events do
+# not occur there); on Android/emulated-touch platforms mouse events are NEVER
+# counted, because emulate_mouse_from_touch duplicates every real finger event
+# into an InputEventMouseButton and would double-count the stream.
+var diag_down_total: int = 0
+var diag_up_total: int = 0
+var diag_events: Array = []  # ring buffer, oldest first
+const DIAG_EVENT_CAP: int = 512
+
+func _record_diag_event(event: InputEvent) -> void:
+	var phase := ""
+	var idx := -1
+	var pos := Vector2.ZERO
+	if event is InputEventScreenTouch and is_mobile:
+		# Counted on touch platforms only. On desktop, ScreenTouch events exist
+		# only as emulation artifacts of the mouse stream (which the branch
+		# below already counts), so counting both would double the stream.
+		var t := event as InputEventScreenTouch
+		phase = "down" if t.pressed else "up"
+		idx = t.index
+		pos = t.position
+	elif event is InputEventMouseButton and not is_mobile:
+		var m := event as InputEventMouseButton
+		if m.button_index != MOUSE_BUTTON_LEFT:
+			return
+		phase = "down" if m.pressed else "up"
+		idx = 0
+		pos = m.position
+	else:
+		return
+
+	if phase == "down":
+		diag_down_total += 1
+	else:
+		diag_up_total += 1
+	diag_events.append({
+		"t_ms": Time.get_ticks_msec(),
+		"phase": phase,
+		"index": idx,
+		"x": snappedf(pos.x, 0.1),
+		"y": snappedf(pos.y, 0.1),
+	})
+	if diag_events.size() > DIAG_EVENT_CAP:
+		diag_events.pop_front()
+
+## Delivery counts and the raw event stream since `since_ms`, expressed as a
+## delta from the `down_base`/`up_base` totals the caller recorded when its
+## round started. Used by MiniGameBase.get_touch_diagnostic() to attribute a
+## slice of the global stream to one minigame round.
+func get_touch_diag_snapshot(since_ms: int, down_base: int, up_base: int) -> Dictionary:
+	var events: Array = []
+	for e in diag_events:
+		if int(e["t_ms"]) >= since_ms:
+			events.append(e)
+	return {
+		"down": diag_down_total - down_base,
+		"up": diag_up_total - up_base,
+		"events": events,
+	}
+
+
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # INITIALIZATION
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -136,6 +206,8 @@ func _apply_mobile_settings() -> void:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func _input(event: InputEvent) -> void:
+	# Raw delivery diagnostics first — independent of the gesture routing below.
+	_record_diag_event(event)
 	# Handle touch input
 	if event is InputEventScreenTouch:
 		_handle_screen_touch(event)

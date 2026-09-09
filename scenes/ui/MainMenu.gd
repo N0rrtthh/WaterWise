@@ -15,6 +15,9 @@ extends Control
 
 const INITIAL_SCREEN_PATH := "res://scenes/ui/InitialScreen.tscn"
 const MIN_LOADING_VISIBLE_MS: int = 450
+## Below this post-warmup average FPS the boot prewarm skips its heavy full-scene
+## load (T4.2). The shared-shader / background-texture warm still runs everywhere.
+const PREWARM_LOW_END_FPS: float = 24.0
 
 var _is_loading_scene: bool = false
 var _loading_text_timer: Timer
@@ -47,6 +50,11 @@ func _ready() -> void:
 		# Disable the legacy bobbing script so runtime hero animation remains deterministic.
 		character.set_process(false)
 	_start_character_animation()
+
+	# T4.2 — warm shaders / first-screen textures across the menu's idle frames so the
+	# cold-boot first-use compile does not land on a live frame. Fire-and-forget: the
+	# coroutine yields a frame at a time and never blocks _ready().
+	_prewarm_boot_assets()
 
 	# Start menu music
 	if AudioManager:
@@ -297,6 +305,99 @@ func _start_character_animation() -> void:
 			right_arm, "rotation", ra_base_rot + deg_to_rad(10.0), 0.7
 		).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
 
+
+## T4.2 — Prewarm shaders & first-screen assets during the menu's idle window.
+##
+## The cold-boot 1-2 fps spikes (8.34-15.38s on the Moto E5 Plus) came from first-use
+## shader compilation and texture atlas upload landing on a live frame. MainMenu is the
+## boot scene and sits idle until Play is pressed, so it is the right place to pay that
+## cost once, off the critical first frame. Work is spread one item per frame so no
+## single frame eats the whole budget. Steps 1-2 (shared shaders + the background
+## textures InitialScreen animates on its first frames) run everywhere; the heavier
+## full-scene preload in step 3 is skipped on memory-constrained devices.
+func _prewarm_boot_assets() -> void:
+	# Let the entrance animation and first paint settle before spending frame time here.
+	for _i in range(3):
+		await get_tree().process_frame
+	if not is_inside_tree():
+		return
+
+	# 1. Shared shaders. load() parses the GLSL and builds the Shader resource, and
+	#    touching a throwaway ShaderMaterial forces its render object to be created now
+	#    rather than on the first gameplay frame that uses it.
+	const SHADER_PATHS := [
+		"res://shaders/wave.gdshader",
+		"res://shaders/wave_menu.gdshader",
+		"res://shaders/wave_scroll.gdshader",
+		"res://shaders/grid.gdshader",
+		"res://shaders/backdrop_blur.gdshader",
+		"res://shaders/ui_grayscale.gdshader",
+	]
+	for path in SHADER_PATHS:
+		if not ResourceLoader.exists(path):
+			continue
+		var sh := load(path) as Shader
+		if sh:
+			var probe := ShaderMaterial.new()
+			probe.shader = sh
+		await get_tree().process_frame
+		if not is_inside_tree():
+			return
+
+	# 2. Background textures the very next screen (InitialScreen) draws and animates
+	#    immediately. Warming them here moves the decode + atlas upload off that screen's
+	#    first frames (the 42-49s 18-23fps window).
+	const BG_TEXTURES := [
+		"res://assets/bg_layers/waves_1.png",
+		"res://assets/bg_layers/waves_2.png",
+		"res://assets/bg_layers/waves_3.png",
+		"res://assets/bg_layers/hills.png",
+		"res://assets/bg_layers/house.png",
+		"res://assets/bg_layers/platform.png",
+	]
+	for path in BG_TEXTURES:
+		if ResourceLoader.exists(path):
+			load(path)
+		await get_tree().process_frame
+		if not is_inside_tree():
+			return
+
+	# 3. Heavier warm — the guaranteed next scene and the first minigame's textures.
+	#    Skipped on memory-constrained devices: a resident PackedScene + atlas from boot
+	#    until first use is a certain memory cost, and the shader/texture warm above
+	#    already covers the documented cold-start cause.
+	if _prewarm_should_skip_scene_load():
+		return
+	if ResourceLoader.exists(INITIAL_SCREEN_PATH):
+		load(INITIAL_SCREEN_PATH)
+		await get_tree().process_frame
+		if not is_inside_tree():
+			return
+	var first_game := _first_minigame_path()
+	if not first_game.is_empty() and ResourceLoader.exists(first_game):
+		load(first_game)
+	await get_tree().process_frame
+
+
+## True when the heavy full-scene preload should be skipped (T4.2 step 3).
+func _prewarm_should_skip_scene_load() -> bool:
+	if MobileUIManager and MobileUIManager.has_method("is_mobile_platform") \
+			and MobileUIManager.is_mobile_platform():
+		return true
+	if PerformanceProfiler and PerformanceProfiler.session_elapsed_sec > 5.0 \
+			and PerformanceProfiler.fps_avg < PREWARM_LOW_END_FPS:
+		return true
+	return false
+
+
+## Scene path of the first roster minigame, best-effort, for texture prewarm.
+func _first_minigame_path() -> String:
+	if not GameManager:
+		return ""
+	var roster: Array = GameManager.ALL_SINGLEPLAYER_MINIGAMES
+	if roster.is_empty():
+		return ""
+	return "res://scenes/minigames/%s.tscn" % str(roster[0])
 
 
 func _on_button_mouse_entered(btn: Button) -> void:

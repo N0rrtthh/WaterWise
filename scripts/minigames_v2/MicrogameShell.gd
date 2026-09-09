@@ -362,6 +362,8 @@ func _on_shell_gui_input(event: InputEvent) -> void:
 		var t := event as InputEventScreenTouch
 		_shell_saw_touch = true
 		if t.pressed:
+			# Raw delivery counting is centralised in TouchInputManager; the
+			# graded-hit side is recorded by the game's catch path.
 			if _shell_touch_index != NO_TOUCH_INDEX:
 				return
 			_shell_touch_index = t.index

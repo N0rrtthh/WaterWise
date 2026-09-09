@@ -290,6 +290,7 @@ func _process(delta):
 		_zone_time += delta
 		if _zone_time >= ZONE_SCORE_INTERVAL:
 			_zone_time -= ZONE_SCORE_INTERVAL
+			_record_touch_processed()
 			record_action(true)
 			# One pulse of the gauge fill per tick, so the reward is visible on the thing
 			# the player is actually watching. scale is independent of the polygon that

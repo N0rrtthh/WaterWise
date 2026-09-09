@@ -224,6 +224,7 @@ func _on_plant_tapped(index: int) -> void:
 	if hydration < 0.75:
 		# Plant is thirsty — good tap!
 		plant["hydration"] = min(1.0, hydration + 0.35)
+		_record_touch_processed()
 		record_action(true)
 		_show_water_effect(plant["node"].position)
 

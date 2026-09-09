@@ -250,6 +250,7 @@ func _dish_cleaned():
 	current_dish = null
 
 	dishes_cleaned += 1
+	_record_touch_processed()
 	record_action(true)
 	get_node("ScoreDisplay").text = "🍽️ %d / %d" % [dishes_cleaned, target_dishes]
 

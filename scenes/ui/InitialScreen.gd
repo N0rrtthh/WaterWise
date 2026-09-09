@@ -84,6 +84,18 @@ const MAX_CROWD_CHARS := 10
 ## Kept well below MAX_CROWD_CHARS so the menu stays inside its frame budget on
 ## the thesis target hardware; the rest still walk, bob and swing their arms.
 const PERSONALITY_ANIM_LIMIT := 4
+## T4.4 — low-end trim. On the thesis target tier (Moto E5 Plus / Cortex-A53) this
+## screen held 18-23fps through the 42-49s window because it ran ~50 looping tweens,
+## three full-width wave ShaderMaterials and a crowd of procedural Polygon2D droplets.
+## When the profiler reports a struggling device after warmup we trim the crowd, drop
+## the wave-shader overdraw, halve the cloud tweens and skip the per-limb flourishes.
+## The screen still renders and animates, just lighter. Normal devices keep everything.
+const LOW_END_FPS_THRESHOLD: float = 27.0
+## Looping tweens reserved for the title sway, the clouds and the hero when budgeting
+## the low-end crowd against mobile_config max_tweens.
+const LOW_END_CROWD_RESERVE: int = 6
+## Set once at the top of _ready(), before any procedural build reads it.
+var _low_end: bool = false
 # Persists across scene reloads — skip drop-in on return visits
 static var _has_been_shown: bool = false
 
@@ -136,6 +148,8 @@ const MULTIPLAYER_UNLOCK_GAMES: int = 1
 
 
 func _ready() -> void:
+	# T4.4 — decide the trim tier once, before any procedural build reads it.
+	_low_end = _is_low_end_device()
 	_ensure_fullscreen_backdrop()
 	_build_background()
 	_spawn_characters()
@@ -299,6 +313,32 @@ func _should_reduce_mobile_motion() -> bool:
 	if AccessibilityManager and AccessibilityManager.has_method("should_reduce_motion"):
 		return AccessibilityManager.should_reduce_motion()
 	return true
+
+
+## T4.4 — mirror of MiniGameIntroBridge._is_low_end_device(): a device that cannot hold
+## ~27fps after warmup is the thesis target tier and gets the trimmed background.
+## Desktop (and healthy phones) keep the full menu, so this never fires there.
+func _is_low_end_device() -> bool:
+	if MobileUIManager and MobileUIManager.has_method("is_mobile_platform") \
+			and not MobileUIManager.is_mobile_platform():
+		return false
+	if PerformanceProfiler and PerformanceProfiler.session_elapsed_sec > 5.0:
+		if PerformanceProfiler.fps_avg < LOW_END_FPS_THRESHOLD:
+			return true
+	return false
+
+
+## T4.4 — crowd size after the low-end trim, budgeted against mobile_config max_tweens
+## (10). Each trimmed crowd member costs exactly one looping tween (the idle bob); the
+## horizontal walk is integrated for free in _process(). LOW_END_CROWD_RESERVE tweens are
+## held back for the title sway, the clouds and the hero.
+func _effective_crowd_count() -> int:
+	if not _low_end:
+		return MAX_CROWD_CHARS
+	var budget := 10
+	if MobileUIManager and MobileUIManager.has_method("get_max_tweens"):
+		budget = MobileUIManager.get_max_tweens()
+	return clampi(budget - LOW_END_CROWD_RESERVE, 2, MAX_CROWD_CHARS)
 
 
 func _layout_characters_for_viewport(vp_size: Vector2) -> void:
@@ -569,7 +609,12 @@ func _spawn_clouds(vp: Vector2) -> void:
 		{"rx": 0.85, "ry": 0.10, "w": 260, "h": 82, "speed": 10.0, "alpha": 0.45},
 	]
 
-	for cd in cloud_data:
+	# T4.4 — halve the drifting clouds on a low-end device and build each puff from
+	# fewer polygon segments; four 3-puff clouds at 16 segments each are 12 convex
+	# Polygon2D fills the trim tier does not need.
+	var clouds_to_spawn: Array = cloud_data.slice(0, 2) if _low_end else cloud_data
+	var puff_segments: int = 10 if _low_end else 16
+	for cd in clouds_to_spawn:
 		var cloud = Node2D.new()
 		cloud.position = Vector2(vp.x * cd.rx, vp.y * cd.ry)
 		cloud.set_meta("speed", cd.speed)
@@ -582,7 +627,7 @@ func _spawn_clouds(vp: Vector2) -> void:
 			var puff = Polygon2D.new()
 			var pw = cd.w * (0.6 + 0.2 * j)
 			var ph = cd.h * (0.8 + 0.1 * j)
-			puff.polygon = _oval(pw * 0.5, ph * 0.5, 16)
+			puff.polygon = _oval(pw * 0.5, ph * 0.5, puff_segments)
 			puff.position = Vector2((j - 1) * cd.w * 0.28, (j % 2) * -cd.h * 0.15)
 			puff.color = Color(1, 1, 1, cd.alpha)
 			cloud.add_child(puff)
@@ -599,6 +644,12 @@ func _animate_waves() -> void:
 		var spr: Control = _wave_sprites[i]
 		var cfg: Array = _WAVE_CFG[i]
 		_wave_base_y.append(spr.position.y)
+
+		# T4.4 — on a low-end device skip the UV-scroll ShaderMaterial entirely: three
+		# full-width scrolling wave layers are pure fragment overdraw on an Adreno 308,
+		# and the vertical sine bob in _process() still animates them for free.
+		if _low_end:
+			continue
 
 		var mat := ShaderMaterial.new()
 		mat.shader = wave_shader
@@ -640,7 +691,10 @@ func _animate_clouds() -> void:
 			cloud, "position:x", base_x, speed
 		).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
 
-		# Gentle vertical bob
+		# Gentle vertical bob. T4.4 — skipped on a low-end device to halve the cloud
+		# tween count; the horizontal drift above keeps them moving.
+		if _low_end:
+			continue
 		var cloud_bob = create_tween().set_loops()
 		_ambient_tweens.append(cloud_bob)
 		var base_y = cloud.position.y
@@ -922,7 +976,7 @@ func _spawn_characters() -> void:
 	_characters.clear()
 	_crowd_walk_speeds.clear()
 	_crowd_walk_dirs.clear()
-	var count = mini(crowd_entries.size(), MAX_CROWD_CHARS)
+	var count = mini(crowd_entries.size(), _effective_crowd_count())
 	for i in range(count):
 		var entry = crowd_entries[i]
 		var role = str(entry.get("trait", BG_CHARACTER_ROLES[i % BG_CHARACTER_ROLES.size()]))
@@ -1495,7 +1549,7 @@ func _start_idle_loops() -> void:
 		# changes. The spinner's rotation carries no layout information, so it is
 		# started once here and left alone.
 		_start_crowd_bob(ch, i, depth_scale, char_trait)
-		if char_trait == "spinner":
+		if char_trait == "spinner" and not _low_end:
 			_start_crowd_spin(ch)
 
 		# Role-specific flourish (guitar strum, ball bounce, pom-poms, groove).
@@ -1503,20 +1557,25 @@ func _start_idle_loops() -> void:
 		# the crowd's role props sat frozen. Capped at PERSONALITY_ANIM_LIMIT
 		# characters and skipped under reduce-motion: each role adds up to two
 		# more looping tweens, and this screen already runs three per crowd
-		# member on the Cortex-A53 target.
+		# member on the Cortex-A53 target. T4.4 — on a low-end device the cap drops
+		# to zero so the crowd keeps only its single idle bob.
+		var personality_limit := 0 if _low_end else PERSONALITY_ANIM_LIMIT
 		var with_personality: bool = (
-			i < PERSONALITY_ANIM_LIMIT and not _should_reduce_mobile_motion()
+			i < personality_limit and not _should_reduce_mobile_motion()
 		)
 
 		# Walking leg swing + arm swing. Whichever limbs the role flourish is
 		# about to drive are left out here — two looping tweens writing the same
 		# rotation_degrees produce a stuttering limb, not a blended motion.
+		# T4.4 — skipped entirely on a low-end device: the crowd still walks across
+		# the platform (integrated in _process) and bobs, just without per-limb swings.
 		var role_name := str(ch.get_meta("role", "idle"))
 		var flourish_takes_arms: bool = (
 			with_personality and role_name in ["dancer", "musician", "cheerer"]
 		)
 		var flourish_takes_legs: bool = with_personality and role_name == "baller"
-		_start_walk_leg_animation(ch, i, not flourish_takes_arms, not flourish_takes_legs)
+		if not _low_end:
+			_start_walk_leg_animation(ch, i, not flourish_takes_arms, not flourish_takes_legs)
 
 		if with_personality:
 			_start_character_personality_animation(ch, i)
@@ -1735,7 +1794,7 @@ func _start_main_character_showtime() -> void:
 		hero_wave.tween_property(left_arm, "rotation_degrees", 6.0, 0.62)
 		hero_wave.parallel().tween_property(right_arm, "rotation_degrees", -5.0, 0.62)
 
-	if left_leg and right_leg and not reduce_motion:
+	if left_leg and right_leg and not reduce_motion and not _low_end:
 		var hero_steps = create_tween().set_loops()
 		_tweens.append(hero_steps)
 		hero_steps.tween_property(left_leg, "rotation_degrees", -5.0, 0.70)
@@ -1743,7 +1802,7 @@ func _start_main_character_showtime() -> void:
 		hero_steps.tween_property(left_leg, "rotation_degrees", 2.5, 0.70)
 		hero_steps.parallel().tween_property(right_leg, "rotation_degrees", -2.0, 0.70)
 
-	if sparkle:
+	if sparkle and not _low_end:
 		var star_twinkle = create_tween().set_loops()
 		_tweens.append(star_twinkle)
 		var sparkle_base = sparkle.position

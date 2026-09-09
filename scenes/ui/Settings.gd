@@ -69,6 +69,16 @@ var dev_profiler_check: CheckBox
 var dev_algorithm_check: CheckBox
 var auto_play_check: CheckBox
 var autoplay_duration_spinbox: SpinBox
+## Human-simulation realism controls (item 3). Built beside the auto-play rows and
+## shown only when the mode is not Perfect, so the default UI stays clean.
+var human_sim_mode_option: OptionButton
+var _hsim_tuning_rows: Array[Control] = []
+var _hsim_react_min_spin: SpinBox
+var _hsim_react_max_spin: SpinBox
+var _hsim_acc_min_spin: SpinBox
+var _hsim_acc_max_spin: SpinBox
+var _hsim_mistake_spin: SpinBox
+var _hsim_jitter_spin: SpinBox
 var dev_stats_button: Button
 var erase_data_button: Button
 var export_data_button: Button
@@ -407,6 +417,13 @@ func _setup_interaction_polish() -> void:
 		dev_algorithm_check,
 		auto_play_check,
 		autoplay_duration_spinbox,
+		human_sim_mode_option,
+		_hsim_react_min_spin,
+		_hsim_react_max_spin,
+		_hsim_acc_min_spin,
+		_hsim_acc_max_spin,
+		_hsim_mistake_spin,
+		_hsim_jitter_spin,
 		volume_slider,
 	]
 
@@ -857,6 +874,10 @@ func _setup_dev_mode_section() -> void:
 	duration_hbox.add_child(duration_hint)
 	dev_grid.add_child(duration_hbox)
 
+	# Human-simulation realism (item 3): a mode selector plus the tuning rows, shown
+	# only when the mode is not Perfect. Opt-in and inert by default.
+	_build_human_sim_controls(dev_grid)
+
 	# MP Auto-Play used to be a third row here. It has moved to the Multiplayer page, next to
 	# Ready / Auto Play / Start Game, and this row is gone rather than duplicated because it
 	# was an UNSYNCED second writer of one piece of session state: the lobby's AutoPlayButton
@@ -1050,6 +1071,11 @@ func _apply_dev_mode_visibility(enabled: bool) -> void:
 		auto_play_check.disabled = not enabled
 	if autoplay_duration_spinbox:
 		autoplay_duration_spinbox.editable = enabled
+	if human_sim_mode_option:
+		human_sim_mode_option.disabled = not enabled
+	for c in _hsim_tuning_rows:
+		if c is SpinBox:
+			(c as SpinBox).editable = enabled
 	if dev_stats_button:
 		dev_stats_button.disabled = not enabled
 	# has_meta() first: a NIL default reads as "no default" inside get_meta(), so this
@@ -1125,6 +1151,157 @@ func _on_auto_play_duration_changed(value: float) -> void:
 		return
 	if AutoPlayManager:
 		AutoPlayManager.set_auto_play_duration(value)
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# HUMAN-SIMULATION REALISM (item 3) — config surface
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# A mode selector (Perfect / Human-like / Custom) plus tuning rows, built beside
+# the auto-play rows in the same 2-column dev grid. The tuning rows are shown only
+# when the mode is not Perfect, so the default UI stays clean. Values persist via
+# AutoPlayManager's setters, which route to SaveManager's generic settings API.
+
+## Guards the programmatic spinbox writes in _refresh_hsim_tuning_values() from
+## re-entering _on_hsim_param_changed() (SpinBox.value assignment emits the signal).
+var _hsim_updating: bool = false
+
+func _make_hsim_spin(min_v: float, max_v: float, step_v: float, suffix: String, value: float) -> SpinBox:
+	var sb := SpinBox.new()
+	sb.min_value = min_v
+	sb.max_value = max_v
+	sb.step = step_v
+	sb.suffix = suffix
+	sb.custom_minimum_size = Vector2(150, 40)
+	sb.allow_greater = false
+	sb.allow_lesser = false
+	sb.value = value
+	return sb
+
+## Add a label|control pair to the dev grid and track BOTH for show/hide, so the
+## grid's column pairing stays aligned when the tuning rows are hidden in Perfect.
+func _add_hsim_row(dev_grid: GridContainer, key: String, fallback: String, control: Control) -> void:
+	var lbl := Label.new()
+	_register_localized_text_control(lbl, key, fallback)
+	lbl.add_theme_font_size_override("font_size", 18)
+	dev_grid.add_child(lbl)
+	dev_grid.add_child(control)
+	_hsim_tuning_rows.append(lbl)
+	_hsim_tuning_rows.append(control)
+
+## Read the current value for a param from AutoPlayManager, in DISPLAY units
+## (accuracy/mistake are stored 0..1 but shown as a percentage).
+func _hval(param: String) -> float:
+	if AutoPlayManager == null:
+		return 0.0
+	var v: float = float(AutoPlayManager.get_human_sim_param(param))
+	if param == "accuracy_min" or param == "accuracy_max" or param == "mistake_rate":
+		return v * 100.0
+	return v
+
+func _build_human_sim_controls(dev_grid: GridContainer) -> void:
+	# Mode row. Item IDs equal HumanSimProfile.Mode so an id maps straight to a mode.
+	var mode_label = Label.new()
+	_register_localized_text_control(mode_label, "settings_auto_play_sim_mode", "🎭 Realism")
+	mode_label.add_theme_font_size_override("font_size", 18)
+	dev_grid.add_child(mode_label)
+
+	human_sim_mode_option = OptionButton.new()
+	human_sim_mode_option.add_item(_loc("settings_sim_perfect", "Perfect"), HumanSimProfile.Mode.PERFECT)
+	human_sim_mode_option.add_item(_loc("settings_sim_human_like", "Human-like"), HumanSimProfile.Mode.HUMAN_LIKE)
+	human_sim_mode_option.add_item(_loc("settings_sim_custom", "Custom"), HumanSimProfile.Mode.CUSTOM)
+	human_sim_mode_option.custom_minimum_size = Vector2(150, 40)
+	human_sim_mode_option.tooltip_text = _loc("settings_sim_hint",
+		"Perfect = deterministic autoplay (no misses). Human-like / Custom inject reaction delay, aim jitter and mistakes.")
+	var saved_mode: int = HumanSimProfile.Mode.PERFECT
+	if AutoPlayManager:
+		saved_mode = int(AutoPlayManager.get_human_sim_mode())
+	var sel: int = human_sim_mode_option.get_item_index(saved_mode)
+	human_sim_mode_option.select(sel if sel >= 0 else 0)
+	human_sim_mode_option.item_selected.connect(_on_human_sim_mode_selected)
+	dev_grid.add_child(human_sim_mode_option)
+
+	# Tuning rows (label | spinbox). Hidden until the mode is not Perfect.
+	_hsim_react_min_spin = _make_hsim_spin(0.0, 3000.0, 10.0, " ms", _hval("reaction_min_ms"))
+	_hsim_react_min_spin.value_changed.connect(func(v: float) -> void: _on_hsim_param_changed("reaction_min_ms", v))
+	_add_hsim_row(dev_grid, "settings_sim_react_min", "Reaction min", _hsim_react_min_spin)
+
+	_hsim_react_max_spin = _make_hsim_spin(0.0, 3000.0, 10.0, " ms", _hval("reaction_max_ms"))
+	_hsim_react_max_spin.value_changed.connect(func(v: float) -> void: _on_hsim_param_changed("reaction_max_ms", v))
+	_add_hsim_row(dev_grid, "settings_sim_react_max", "Reaction max", _hsim_react_max_spin)
+
+	_hsim_acc_min_spin = _make_hsim_spin(0.0, 100.0, 1.0, " %", _hval("accuracy_min"))
+	_hsim_acc_min_spin.value_changed.connect(func(v: float) -> void: _on_hsim_param_changed("accuracy_min", v))
+	_add_hsim_row(dev_grid, "settings_sim_acc_min", "Accuracy min", _hsim_acc_min_spin)
+
+	_hsim_acc_max_spin = _make_hsim_spin(0.0, 100.0, 1.0, " %", _hval("accuracy_max"))
+	_hsim_acc_max_spin.value_changed.connect(func(v: float) -> void: _on_hsim_param_changed("accuracy_max", v))
+	_add_hsim_row(dev_grid, "settings_sim_acc_max", "Accuracy max", _hsim_acc_max_spin)
+
+	_hsim_mistake_spin = _make_hsim_spin(0.0, 100.0, 1.0, " %", _hval("mistake_rate"))
+	_hsim_mistake_spin.value_changed.connect(func(v: float) -> void: _on_hsim_param_changed("mistake_rate", v))
+	_add_hsim_row(dev_grid, "settings_sim_mistake", "Mistake rate", _hsim_mistake_spin)
+
+	_hsim_jitter_spin = _make_hsim_spin(0.0, 120.0, 1.0, " px", _hval("jitter_px"))
+	_hsim_jitter_spin.value_changed.connect(func(v: float) -> void: _on_hsim_param_changed("jitter_px", v))
+	_add_hsim_row(dev_grid, "settings_sim_jitter", "Aim jitter", _hsim_jitter_spin)
+
+	_apply_hsim_tuning_visibility(saved_mode)
+
+func _apply_hsim_tuning_visibility(mode: int) -> void:
+	var show: bool = mode != HumanSimProfile.Mode.PERFECT
+	for c in _hsim_tuning_rows:
+		if is_instance_valid(c):
+			c.visible = show
+
+## Re-read every tuning spinbox from AutoPlayManager (e.g. after Human-like seeds
+## the built-in defaults), without re-triggering the value_changed callbacks.
+func _refresh_hsim_tuning_values() -> void:
+	_hsim_updating = true
+	if _hsim_react_min_spin:
+		_hsim_react_min_spin.value = _hval("reaction_min_ms")
+	if _hsim_react_max_spin:
+		_hsim_react_max_spin.value = _hval("reaction_max_ms")
+	if _hsim_acc_min_spin:
+		_hsim_acc_min_spin.value = _hval("accuracy_min")
+	if _hsim_acc_max_spin:
+		_hsim_acc_max_spin.value = _hval("accuracy_max")
+	if _hsim_mistake_spin:
+		_hsim_mistake_spin.value = _hval("mistake_rate")
+	if _hsim_jitter_spin:
+		_hsim_jitter_spin.value = _hval("jitter_px")
+	_hsim_updating = false
+
+func _on_human_sim_mode_selected(index: int) -> void:
+	if AudioManager:
+		AudioManager.play_click()
+	if human_sim_mode_option == null:
+		return
+	if not _get_dev_setting("dev_mode", false):
+		# Dev mode off: do not apply; snap the selector back to the stored mode.
+		var cur: int = int(AutoPlayManager.get_human_sim_mode()) if AutoPlayManager else HumanSimProfile.Mode.PERFECT
+		human_sim_mode_option.select(human_sim_mode_option.get_item_index(cur))
+		return
+	var mode: int = human_sim_mode_option.get_item_id(index)
+	if AutoPlayManager:
+		AutoPlayManager.set_human_sim_mode(mode)
+		_refresh_hsim_tuning_values()
+	_apply_hsim_tuning_visibility(mode)
+
+func _on_hsim_param_changed(param: String, value: float) -> void:
+	if _hsim_updating:
+		return
+	if not _get_dev_setting("dev_mode", false) or AutoPlayManager == null:
+		return
+	# Editing a tuning value while in Human-like promotes to Custom: the built-in
+	# per-difficulty defaults are curated, so a manual override means Custom.
+	if int(AutoPlayManager.get_human_sim_mode()) == HumanSimProfile.Mode.HUMAN_LIKE:
+		AutoPlayManager.set_human_sim_mode(HumanSimProfile.Mode.CUSTOM)
+		if human_sim_mode_option:
+			human_sim_mode_option.select(
+				human_sim_mode_option.get_item_index(HumanSimProfile.Mode.CUSTOM))
+	var v: float = value
+	if param == "accuracy_min" or param == "accuracy_max" or param == "mistake_rate":
+		v = value / 100.0
+	AutoPlayManager.set_human_sim_param(param, v)
 
 func _sync_dev_overlay_state() -> void:
 	var dev_mode_enabled = _get_dev_setting("dev_mode", false)

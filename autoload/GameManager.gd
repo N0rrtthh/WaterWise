@@ -461,6 +461,53 @@ func transition_to_scene(scene_path: String, duration: float = 0.4) -> void:
 	if not ResourceLoader.exists(scene_path):
 		push_error("Cannot transition. Scene does not exist: %s" % scene_path)
 		return
+	# T4.1 — a background threaded request for this exact path may already hold the
+	# scene in memory. MiniGameIntroBridge kicks one off in _ready() and MainMenu does
+	# the same for InitialScreen, so by the time the intro clip / fade has run the load
+	# is normally THREAD_LOAD_LOADED. Grabbing it here lets the actual scene swap use
+	# change_scene_to_packed(), moving the disk read + parse OFF the transition frame
+	# (the source of the ~50/68/94/105s transition spikes). When the request was never
+	# made or is still in flight this returns null and _run_scene_transition() falls
+	# back to the synchronous change_scene_to_file() below — it never blocks on an
+	# incomplete load.
+	var packed := _take_threaded_packed_scene(scene_path)
+	await _run_scene_transition(packed, scene_path, duration)
+
+
+## T4.1 — transition straight to an already-loaded PackedScene, with the same fade
+## overlay, pause-clearing and re-entry guard as transition_to_scene(). Callers that
+## polled ResourceLoader.load_threaded_get_status() themselves (MiniGameIntroBridge)
+## use this so the disk read + parse they waited out on a background thread is not
+## repeated synchronously on the transition frame.
+func transition_to_packed(packed_scene: PackedScene, duration: float = 0.4) -> void:
+	if _is_transitioning:
+		return
+	if packed_scene == null or not packed_scene.can_instantiate():
+		push_error("Cannot transition to a null or non-instantiable PackedScene.")
+		return
+	await _run_scene_transition(packed_scene, "", duration)
+
+
+## Retrieve a fully-loaded PackedScene from an in-flight threaded request, or null.
+## load_threaded_get_status() returns THREAD_LOAD_INVALID_RESOURCE when no request
+## exists for this path (never made, or already retrieved) and THREAD_LOAD_IN_PROGRESS
+## while it is still loading; in every case other than THREAD_LOAD_LOADED we return
+## null so the caller falls back to a synchronous load rather than stalling the frame.
+func _take_threaded_packed_scene(scene_path: String) -> PackedScene:
+	if scene_path.is_empty():
+		return null
+	if ResourceLoader.load_threaded_get_status(scene_path) != ResourceLoader.THREAD_LOAD_LOADED:
+		return null
+	var res := ResourceLoader.load_threaded_get(scene_path)
+	if res is PackedScene and (res as PackedScene).can_instantiate():
+		return res as PackedScene
+	return null
+
+
+## Shared fade-overlay transition used by both transition_to_scene() and
+## transition_to_packed(). Exactly one of packed_scene / scene_path drives the swap:
+## the in-memory PackedScene when it is available, otherwise the synchronous path load.
+func _run_scene_transition(packed_scene: PackedScene, scene_path: String, duration: float) -> void:
 	if not _transition_rect or not is_instance_valid(_transition_rect):
 		_setup_transition_overlay()
 
@@ -494,8 +541,17 @@ func transition_to_scene(scene_path: String, duration: float = 0.4) -> void:
 	fade_out.set_pause_mode(Tween.TWEEN_PAUSE_PROCESS)
 	fade_out.tween_property(_transition_rect, "color:a", fade_alpha, fade_duration)
 	await fade_out.finished
-	# Change scene
-	get_tree().change_scene_to_file(scene_path)
+	# Change scene. Prefer the already-loaded PackedScene (its disk read + parse ran on
+	# a background thread during the intro), otherwise load synchronously from the path.
+	if packed_scene != null and packed_scene.can_instantiate():
+		get_tree().change_scene_to_packed(packed_scene)
+	elif not scene_path.is_empty():
+		get_tree().change_scene_to_file(scene_path)
+	else:
+		push_error("_run_scene_transition: neither a PackedScene nor a path was supplied.")
+		_transition_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_is_transitioning = false
+		return
 	# Wait a frame for the new scene to load
 	await get_tree().process_frame
 	await get_tree().process_frame
@@ -1742,7 +1798,8 @@ func complete_minigame(
 	round_score_override: int = -1,
 	best_combo: int = 0,
 	was_successful: bool = true,
-	game_id: String = ""
+	game_id: String = "",
+	touch_diagnostic: Dictionary = {}
 ) -> void:
 	var gid: String = game_id.strip_edges()
 	if gid.is_empty():
@@ -1827,7 +1884,7 @@ func complete_minigame(
 			# latency, or round duration when the round graded no discrete actions).
 			# The log has to carry the same number the algorithm saw, or the exported
 			# sigma cannot be recomputed from the log.
-			_session_logger.record_sp_game(gid, round_score, accuracy, reaction_time, mistakes, _sp_diff, _droplets_this_round)
+			_session_logger.record_sp_game(gid, round_score, accuracy, reaction_time, mistakes, _sp_diff, _droplets_this_round, touch_diagnostic)
 	else:
 		# Multiplayer uses CoopAdaptation (per-player difficulty with sync scoring)
 		# Note: In multiplayer, performance is tracked via submit_score RPC
