@@ -47,6 +47,11 @@ var _resume_requested: bool = false
 
 # Duration settings (in seconds, 0 = unlimited)
 var auto_play_duration: float = 0.0  # 0 = unlimited
+## True ONLY while the deadline abort (_abort_round) is walking the round's own
+## quit handler. SessionLogger reads it to stamp "interrupted_by_timeout" on the
+## in-progress round the configured duration expired inside, so the Trepn+JSON
+## dataset can filter deadline-cut rounds from real 0% failures.
+var deadline_interrupt_active: bool = false
 var auto_play_start_time: int = 0
 var auto_play_elapsed: float = 0.0
 
@@ -737,7 +742,17 @@ func _abort_round(g: Node) -> void:
 		return
 	print("🤖 Auto-play deadline: ending the round in progress (%s -> %s())"
 		% [g.name, method])
+	# Trepn-dataset guard: a round the configured duration cut short is NOT a
+	# real 0% failure. Latch while the round's own quit handler runs —
+	# complete_minigame() is reached synchronously inside it — so
+	# SessionLogger.record_sp_game() can stamp the row with
+	# "interrupted_by_timeout". Also tag the node so a deferred report path
+	# could still see why the round ended. Cleared after the call returns so a
+	# human's QUIT press (or a later normal round end) is never misflagged.
+	deadline_interrupt_active = true
+	g.set_meta("autoplay_interrupted", true)
 	g.call(method)
+	deadline_interrupt_active = false
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # PAUSE RECOVERY

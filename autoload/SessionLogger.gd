@@ -311,6 +311,18 @@ func _auto_play_active() -> bool:
 	return true if _auto_play_ever else false
 
 
+## True only while AutoPlayManager's deadline abort is ending the round in
+## progress (its configured duration expired mid-minigame). AutoPlayManager
+## raises the latch for exactly the span of the round's own quit handler, and
+## record_sp_game() is reached synchronously inside that span, so the row this
+## function builds is stamped honestly. Defensive against the autoload being
+## absent (headless harnesses that bypass the normal boot order).
+func _is_deadline_interrupted() -> bool:
+	if AutoPlayManager == null:
+		return false
+	return bool(AutoPlayManager.deadline_interrupt_active)
+
+
 func record_sp_game(
 	game_name: String,
 	score: int,
@@ -342,6 +354,12 @@ func record_sp_game(
 		"reaction_time_s": snapf(float(reaction_time_ms) / 1000.0, 2),
 		"mistakes": mistakes,
 		"difficulty": difficulty,
+		# Deadline-cut round marker: true only when the configured auto-play
+		# duration expired while THIS round was still active and the deadline
+		# abort ended it through its own quit handler. A normal round end and a
+		# human's QUIT press both report false. Filter these out of accuracy /
+		# failure analysis instead of reading them as 0% failures.
+		"interrupted_by_timeout": _is_deadline_interrupted(),
 		# Recorded so a reader can tell a real reaction-time sample from the
 		# round-duration fallback used by games with no discrete graded actions.
 		"reaction_time_source": _reaction_time_source(),

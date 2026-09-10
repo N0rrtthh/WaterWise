@@ -350,6 +350,29 @@ func _case_sp(apm: Node, tag: String, scene_path: String, hold_ms: int = 2500,
 				str(last.get("game", "?")), float(last.get("accuracy", -1.0)),
 				int(last.get("score", -1))])
 
+	# The Trepn-dataset guard: the deadline-cut round must be DISTINGUISHABLE from a
+	# real 0% failure in sp_game_records, not silently merged into it.
+	#
+	# Positive half: the row the abort just wrote carries interrupted_by_timeout=true.
+	# Negative half: a row written with no abort in flight (this synthetic control)
+	# carries false — the flag marks the deadline event, never the round content.
+	var sl: Node = get_node_or_null("/root/SessionLogger")
+	if sl != null and rs1 > rs0 and sl.has_method("record_sp_game"):
+		var sps: Array = sl.get("sp_games")
+		var lastsp: Dictionary = sps[sps.size() - 1] if sps.size() > 0 else {}
+		_p("%s: deadline-cut round is flagged interrupted_by_timeout" % tag,
+			bool(lastsp.get("interrupted_by_timeout", false)),
+			"game='%s' interrupted_by_timeout=%s" % [
+				str(lastsp.get("game_name", "?")),
+				str(lastsp.get("interrupted_by_timeout", "<missing>"))])
+		var n0: int = sps.size()
+		sl.record_sp_game("_flag_control", 0, 0.0, 100, 0, "Easy", 0)
+		var sps2: Array = sl.get("sp_games")
+		var ctrl: Dictionary = sps2[sps2.size() - 1] if sps2.size() > n0 else {}
+		_p("%s: a round that ended normally is not flagged" % tag,
+			sps2.size() == n0 + 1 and not bool(ctrl.get("interrupted_by_timeout", true)),
+			"interrupted_by_timeout=%s" % str(ctrl.get("interrupted_by_timeout", "<missing>")))
+
 	# ── and the app actually leaves ──────────────────────────────────────────────────
 	var left: bool = await _wait_until(
 		func(): return not is_instance_valid(g) or get_tree().current_scene != g,
