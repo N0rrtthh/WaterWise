@@ -2941,6 +2941,15 @@ func _load_translations() -> void:
 			"en": "🤖 AUTO PLAY",
 			"tl": "🤖 AUTO PLAY"
 		},
+		# The multiplayer-lobby simulation-mode cycling button. The label is localized;
+		# the three VALUES stay as-is in both languages because they are the same QA
+		# terms the single-player Settings screen and AutoPlayManager's log lines use
+		# ("Perfect", "Human-like", "Custom") - renaming them per language would make
+		# a bilingual pair's logs disagree about which mode ran.
+		"mp_sim_mode": {
+			"en": "🧠 Simulation:",
+			"tl": "🧠 Simulasyon:"
+		},
 		"mp_session_log_note": {
 			"en": "Recorded in session log — exported on app quit",
 			"tl": "Nakatala sa session log — ilalabas kapag isinara ang app"

@@ -506,8 +506,15 @@ class Subject extends Node:
 			func() -> bool: return lobby_roots.size() == 1, 6.0,
 			func() -> String: return "lobbies=%d %s" % [lobby_roots.size(), _state()])
 		var out_ms: int = Time.get_ticks_msec() - drop2_ms
-		_check("hold + transition fit inside VerifyHostDeparture's 12 s bound",
-			out_ms < 12000, "%d ms from drop to lobby" % out_ms)
+		# Bound derived from the hold, not hardcoded: VerifyHostDeparture's bound
+		# was 12 s while the hold was 6 s (6 s hold + ~1 s transition + slack).
+		# The hold is 30 s now - the multiplayer-recovery requirement raised it so
+		# a 10-15 s outage reconnects instead of expiring - so the bound moves
+		# with it: hold + 10 s of transition slack.
+		var out_bound_ms: float = (NetworkManager.RECONNECT_HOLD_SECONDS + 10.0) * 1000.0
+		_check("hold + transition fit inside the drop-to-lobby bound (hold %.0fs + 10 s slack)"
+			% NetworkManager.RECONNECT_HOLD_SECONDS,
+			out_ms < out_bound_ms, "%d ms from drop to lobby (bound %.0f)" % [out_ms, out_bound_ms])
 		# ── the frozen seconds must not be charged to the players ──
 		# Measured across the SECOND hold: nobody rejoins it, so it runs the whole
 		# RECONNECT_HOLD_SECONDS with the tree paused, which is a window big enough to

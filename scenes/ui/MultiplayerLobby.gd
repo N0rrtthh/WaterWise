@@ -97,6 +97,30 @@ var round_timer_button: Button = null
 var leaderboard_button: Button = null
 var leaderboard_panel: Control = null
 
+## Cycling button for the human-simulation realism mode (Perfect / Human-like /
+## Custom) that AutoPlayManager already applies to MP autoplay through its shared
+## input-injection primitives (_hsim_active() checks mp_auto_play_enabled too).
+## Before this row the mode was only reachable from the single-player Settings
+## screen, so a two-phone MP test ran whatever the last SP session left behind.
+##
+## DELIBERATELY LOCAL, not RPC-synced, unlike the duration row above it: the
+## duration ends the round for both peers so it is a shared session fact, while
+## the sim profile only shapes each peer's OWN injected input - two testers
+## running different realism on the two halves of the pair is a legitimate
+## (and useful) configuration. Each side cycles its own mode.
+##
+## A cycling Button rather than an OptionButton for the same three reasons the
+## round-timer row cites: the 48dp touch floor MobileUIManager enforces on
+## BaseButtons, no soft keyboard, and a three-value list where "typed 7, got 5"
+## snapping cannot exist.
+var sim_mode_button: Button = null
+
+const SIM_MODE_STEPS: Array[int] = [
+	HumanSimProfile.Mode.PERFECT,
+	HumanSimProfile.Mode.HUMAN_LIKE,
+	HumanSimProfile.Mode.CUSTOM,
+]
+
 ## Full-rect root container of the screen, panned up while the soft keyboard
 ## covers the focused IP field. See the keyboard-pan block in _ready().
 @onready var margin_root: MarginContainer = $MarginContainer
@@ -205,7 +229,16 @@ func _ready() -> void:
 	# Check if already connected (returning from game)
 	if _is_connected():
 		_show_waiting_panel()
-		status_label.text = _t("player_connected")
+		# A dissolved session lands the HOST here still listening: _resolve_lost_peer()'s
+		# host branch deliberately keeps the server socket alive so the partner can
+		# re-dial it. That state used to display "player connected" - a lie, and one
+		# with no IP in it, so the host had to press Create all over again before the
+		# other phone had anything to join. Re-derive from the live peer list instead:
+		# alone on the server means the waiting-for-player panel, IP and all.
+		if _is_host() and _get_connected_peer_ids().size() < 2:
+			status_label.text = _host_waiting_status()
+		else:
+			status_label.text = _t("player_connected")
 		_sync_local_ready(false)
 	else:
 		_show_mode_selection()
@@ -219,6 +252,8 @@ func _ready() -> void:
 
 	# Build MP AutoPlay duration row (placed after AutoPlayButton)
 	_create_mp_duration_row()
+	# Simulation realism (Perfect / Human-like / Custom) rides with autoplay too.
+	_create_sim_mode_row()
 	# P5: the round timer belongs with the session controls, not in Settings.
 	_create_round_timer_row()
 	# Build leaderboard button in waiting panel
@@ -346,6 +381,60 @@ func _create_mp_duration_row() -> void:
 	vbox.move_child(mp_duration_row, ap_idx + 1)
 
 
+func _create_sim_mode_row() -> void:
+	# Simulation-realism cycling row, inserted after the duration row so the
+	# reading order is "auto play, for how long, playing how humanly".
+	var vbox = auto_play_button.get_parent()
+	if not vbox:
+		return
+	sim_mode_button = Button.new()
+	sim_mode_button.name = "SimModeButton"
+	sim_mode_button.custom_minimum_size = Vector2(0, 50)
+	sim_mode_button.add_theme_font_size_override("font_size", 18)
+	sim_mode_button.visible = false  # Hidden until AutoPlay is enabled
+	sim_mode_button.pressed.connect(_on_sim_mode_pressed)
+	var after: Node = mp_duration_row if mp_duration_row else auto_play_button
+	vbox.add_child(sim_mode_button)
+	vbox.move_child(sim_mode_button, after.get_index() + 1)
+	_refresh_sim_mode_button()
+
+
+func _sim_mode_name(mode: int) -> String:
+	match mode:
+		HumanSimProfile.Mode.HUMAN_LIKE:
+			return "Human-like"
+		HumanSimProfile.Mode.CUSTOM:
+			return "Custom"
+	return "Perfect"
+
+
+func _refresh_sim_mode_button() -> void:
+	if sim_mode_button == null:
+		return
+	var mode: int = (
+		AutoPlayManager.get_human_sim_mode() if AutoPlayManager
+		else HumanSimProfile.Mode.PERFECT
+	)
+	sim_mode_button.text = "%s %s" % [
+		Localization.get_text("mp_sim_mode"), _sim_mode_name(mode)
+	]
+
+
+func _on_sim_mode_pressed() -> void:
+	if not AutoPlayManager:
+		return
+	# persist=true is safe here: AutoPlayManager._may_persist() already refuses to
+	# write settings from a headless harness, so a tools/ run cannot poison the
+	# next windowed session with a non-PERFECT default.
+	var current: int = AutoPlayManager.get_human_sim_mode()
+	var idx: int = SIM_MODE_STEPS.find(current)
+	if idx < 0:
+		idx = 0
+	var next_mode: int = SIM_MODE_STEPS[(idx + 1) % SIM_MODE_STEPS.size()]
+	AutoPlayManager.set_human_sim_mode(next_mode, true)
+	_refresh_sim_mode_button()
+
+
 func _create_round_timer_row() -> void:
 	var vbox = auto_play_button.get_parent()
 	if not vbox:
@@ -463,6 +552,13 @@ func _is_connected() -> bool:
 		and multiplayer.multiplayer_peer != null
 	)
 
+## The host's waiting-for-a-partner status line, with the IP the other phone needs.
+## One helper, three call sites (_ready on a dissolved session, _on_host_pressed,
+## _on_player_disconnected) because each of them used to build the string slightly
+## differently - and the differences were exactly which one forgot the IP.
+func _host_waiting_status() -> String:
+	return _t("waiting_for_player") + "\n" + _t("ip_label") + ": " + _get_local_ip()
+
 func _is_host() -> bool:
 	return GameManager and GameManager.is_host
 
@@ -553,8 +649,7 @@ func _on_host_pressed() -> void:
 	if GameManager and GameManager.host_game():
 		ready_status_by_peer.clear()
 		_show_waiting_panel()
-		var local_ip = _get_local_ip()
-		status_label.text = _t("waiting_for_player") + "\n" + _t("ip_label") + ": " + local_ip
+		status_label.text = _host_waiting_status()
 		_sync_local_ready(false)
 	else:
 		_show_error(_t("connection_failed"))
@@ -613,13 +708,15 @@ func _sync_auto_play_state(enabled: bool) -> void:
 			auto_play_button.modulate = Color.WHITE
 	if mp_duration_row:
 		mp_duration_row.visible = enabled
-	if enabled:
-		# Auto mark self as ready
-		if _is_connected() and not is_ready:
-			_sync_local_ready(true)
-		# Auto-start if host and all players are already ready
-		if _is_host() and _are_all_players_ready():
-			_do_start_game()
+	if sim_mode_button:
+		sim_mode_button.visible = enabled
+	# Enabling autoplay deliberately does NOT mark this player ready and does NOT
+	# start the game from here. It used to auto-ready and, whenever the partner was
+	# already waiting, call _do_start_game() on the spot — so the host could never
+	# reach the duration SpinBox above before the round loaded, and a game started
+	# with players who had not readied up. The start now waits for the one trigger
+	# that represents consent: everyone ready (_on_network_player_ready_changed /
+	# _on_both_players_ready), which auto-starts while autoplay is on.
 
 @rpc("any_peer", "call_local", "reliable")
 func _sync_mp_duration(minutes: float) -> void:
@@ -704,7 +801,9 @@ func _on_disconnect_pressed() -> void:
 		auto_play_button.modulate = Color.WHITE
 	if mp_duration_row:
 		mp_duration_row.visible = false
-	
+	if sim_mode_button:
+		sim_mode_button.visible = false
+
 	_show_mode_selection()
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -947,7 +1046,16 @@ func _on_player_connected(peer_id: int) -> void:
 func _on_player_disconnected(peer_id: int) -> void:
 	print("❌ Player disconnected: %d" % peer_id)
 	ready_status_by_peer.erase(peer_id)
-	status_label.text = _t("waiting_for_player")
+	# The host is alone on its still-listening server again, and the phone-side
+	# symptom was exactly here: this rewrite (which fires AFTER the lobby's _ready
+	# on a dissolved session, because the resolution's teardown is deferred behind
+	# the scene change) used to replace the with-IP status with a bare
+	# "waiting for another player" - the IP vanished and the host had to re-Create
+	# the session just to see it again.
+	if _is_host() and _get_connected_peer_ids().size() < 2:
+		status_label.text = _host_waiting_status()
+	else:
+		status_label.text = _t("waiting_for_player")
 	_update_player_list()
 	_update_start_button_state()
 
@@ -1135,6 +1243,9 @@ func _update_translations() -> void:
 	# _update_translations() runs early in _ready(), before the row is built.
 	if round_timer_button:
 		_refresh_round_timer_button()
+	# Same reason as the round timer above: the sim-mode caption is half localized.
+	if sim_mode_button:
+		_refresh_sim_mode_button()
 	disconnect_button.text = _t("disconnect")
 	# The subtitle carries either the tagline or the reason the last round ended. It sits above
 	# all three panels, so it is the one label that is visible on the mode-selection view a

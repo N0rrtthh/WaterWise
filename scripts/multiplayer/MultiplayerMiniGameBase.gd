@@ -68,6 +68,28 @@ var partner_role: String = ""
 var local_score: int = 0
 var is_waiting_for_partner: bool = false
 
+## True from the moment this scene sits down to wait for its round to start (waiting
+## overlay or countdown) until start_game()/end_game() clears it. It is the discriminator
+## the rejoin kick needs: game_active and is_waiting_for_partner are both false during
+## the countdown, so without this flag a rejoined peer whose GO was missed cannot be
+## told apart from a scene that has genuinely finished its round.
+var _awaiting_round_start: bool = false
+
+## Set while the quit scoreboard is up. Quitting disconnects the peer IMMEDIATELY
+## (releasing the partner, exactly like the old quit did) but stays in the round
+## scene to show the final board — so our own disconnect must not route us out
+## from under it. The two session-termination handlers below stand down while
+## this is set; the board's own button performs the lobby route. Dies with the
+## scene, so it can never leak into the next session.
+var _quit_board_open: bool = false
+
+## First-play intro beat state. The card shows once per game (gated on the same
+## tutorial-pages key the instruction beat uses, which marks itself shown), plays
+## strictly before the instruction dismiss that fires the ready handshake, and
+## never delays a rejoin into a live round (skipped when a kick is pending or a
+## reconnect hold is open).
+var _intro_beat_done: bool = false
+
 # Cached reference to the progress bar for smooth 60fps update.
 var _timer_progress_bar: ProgressBar = null
 
@@ -228,12 +250,24 @@ func _ready() -> void:
 	if instructions_text != "":
 		_build_first_play_pages(instructions_text)
 		show_instructions(instructions_text)
+		# First-play intro card: title + role + mascot + the "why it matters"
+		# line, before the dismiss that fires the ready handshake. Local-only,
+		# once per game, skippable, and skipped entirely on rejoins.
+		_maybe_play_intro_beat()
 	else:
 		# No instructions, start immediately
 		if requires_countdown:
-			if NetworkManager.is_server():
-				NetworkManager.start_countdown()
-			_show_countdown_overlay()
+			_awaiting_round_start = true
+			# A rejoining peer whose resync reloaded this scene while the host is
+			# already playing must not sit down to wait for a countdown that already
+			# fired — the host's one-chain latch means no second chain is coming.
+			if NetworkManager.has_method("consume_pending_live_rejoin_kick") \
+					and NetworkManager.consume_pending_live_rejoin_kick():
+				kick_rejoined_live_round_start()
+			else:
+				if NetworkManager.is_server():
+					NetworkManager.start_countdown()
+				_show_countdown_overlay()
 		else:
 			start_game()
 
@@ -933,6 +967,154 @@ func show_instructions(instructions_text: String) -> void:
 		if click_catcher and click_catcher is Button:
 			click_catcher.disabled = false
 
+## How long the first-play intro card stays up before it dismisses itself.
+## Short on purpose: it plays once per game, and a tap skips it instantly.
+const MP_INTRO_BEAT_SECONDS: float = 2.5
+
+## First-play intro beat: a small local "cause card" (title, role, mascot, the
+## teaching line) shown once per game BEFORE the instruction dismiss that fires
+## the ready handshake — the multiplayer equivalent of single player's intro
+## cutscene, without a separate scene that would break round-load sync.
+##
+## Sync-safe by construction: nothing here touches readiness. The ready signal
+## still fires only at instruction dismiss, and the still-reading flag (set by
+## _build_first_play_pages) already holds the host's force-start fallback for
+## the whole beat. Skipped when there are no tutorial pages (not first play),
+## when a rejoin kick is already pending, or while a reconnect hold is open — a
+## peer rejoining into a live round joins NOW. A kick armed mid-card is consumed
+## at dismiss as usual, so the beat can delay a rejoin by at most its length.
+func _maybe_play_intro_beat() -> void:
+	if _intro_beat_done:
+		return
+	if _tutorial_pages.is_empty():
+		return
+	if hud_layer == null or instruction_overlay == null:
+		return
+	if NetworkManager != null:
+		if NetworkManager.has_method("has_pending_live_rejoin_kick") \
+				and bool(NetworkManager.call("has_pending_live_rejoin_kick")):
+			_log(" Intro beat skipped - rejoining into a live round")
+			return
+		if NetworkManager.has_method("is_reconnect_hold_active") \
+				and bool(NetworkManager.call("is_reconnect_hold_active")):
+			_log(" Intro beat skipped - reconnect hold open")
+			return
+	_intro_beat_done = true
+	_log(" Intro beat shown")
+	# Hold the dismiss until the card is gone: the ClickCatcher is the ready
+	# handshake's trigger, and a tap meant for the card must not fire it early.
+	# Re-enabled when the card closes (or immediately below if building fails).
+	var catcher := instruction_overlay.get_node_or_null("ClickCatcher") as Button
+	if catcher != null:
+		catcher.disabled = true
+
+	var overlay := Control.new()
+	overlay.name = "IntroBeatOverlay"
+	overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
+	hud_layer.add_child(overlay)
+
+	var bg := ColorRect.new()
+	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	bg.color = Color(0, 0, 0, 0.85)
+	overlay.add_child(bg)
+
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	overlay.add_child(center)
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 10)
+	center.add_child(vbox)
+
+	var mascot := _build_summary_mascot(true)
+	if mascot != null:
+		var mrow := CenterContainer.new()
+		mrow.custom_minimum_size = Vector2(0, 128)
+		mrow.add_child(mascot)
+		vbox.add_child(mrow)
+
+	var title := Label.new()
+	title.text = display_title()
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 52)
+	title.add_theme_color_override("font_color", Color(0.65, 0.88, 1.0))
+	vbox.add_child(title)
+
+	var role := Label.new()
+	role.text = Localization.get_text("mp_your_role") % _role_display(my_role)
+	role.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	role.add_theme_font_size_override("font_size", 26)
+	role.add_theme_color_override("font_color", Color(1.0, 0.85, 0.4))
+	vbox.add_child(role)
+
+	# The "why it matters" line: the first teaching page, which is also what the
+	# instruction panel opens on. Reading it here costs the player nothing later.
+	var cause := Label.new()
+	cause.text = _tutorial_pages[0]
+	cause.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	cause.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	cause.custom_minimum_size = Vector2(560, 0)
+	cause.add_theme_font_size_override("font_size", 24)
+	vbox.add_child(cause)
+
+	var hint := Label.new()
+	hint.text = Localization.get_text("mp_tap_to_continue")
+	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	hint.add_theme_font_size_override("font_size", 20)
+	hint.add_theme_color_override("font_color", Color(1, 1, 1, 0.6))
+	vbox.add_child(hint)
+
+	# Tap anywhere to skip: finishes the beat now instead of at the timeout.
+	var skip := Button.new()
+	skip.set_anchors_preset(Control.PRESET_FULL_RECT)
+	skip.flat = true
+	skip.focus_mode = Control.FOCUS_NONE
+	skip.text = ""
+	var empty_style := StyleBoxEmpty.new()
+	skip.add_theme_stylebox_override("normal", empty_style)
+	skip.add_theme_stylebox_override("hover", empty_style)
+	skip.add_theme_stylebox_override("pressed", empty_style)
+	skip.add_theme_stylebox_override("focus", empty_style)
+	skip.pressed.connect(_finish_intro_beat)
+	overlay.add_child(skip)
+
+	# Entrance: card fades in, mascot lands. Scene-bound tweens pause with the
+	# tree, so a reconnect hold freezes the card mid-beat instead of playing
+	# on behind a frozen screen.
+	overlay.modulate.a = 0.0
+	var tw := create_tween()
+	tw.tween_property(overlay, "modulate:a", 1.0, 0.25)
+	if mascot != null:
+		mascot.pivot_offset = Vector2(60, 120)
+		mascot.scale = Vector2(1.25, 0.7)
+		tw.parallel().tween_property(mascot, "scale", Vector2.ONE, 0.28) \
+			.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+
+	# Auto-advance. Second arg false = pausable timer: it freezes with a
+	# reconnect hold's pause, exactly like the partner-ready fallback poll.
+	# Guarded after the await: the scene may have moved on underneath.
+	await get_tree().create_timer(MP_INTRO_BEAT_SECONDS, false).timeout
+	_finish_intro_beat()
+
+
+## Close the intro card and hand control back to the instruction dismiss.
+## Idempotent: the timeout and a tap race each other here, and both must win
+## exactly once. Safe to call after the scene moved on (no-op then).
+func _finish_intro_beat() -> void:
+	if not is_inside_tree() or hud_layer == null:
+		return
+	var overlay: Node = hud_layer.get_node_or_null("IntroBeatOverlay")
+	if overlay == null:
+		return
+	hud_layer.remove_child(overlay)
+	overlay.queue_free()
+	_log(" Intro beat closed")
+	if instruction_overlay == null:
+		return
+	var catcher := instruction_overlay.get_node_or_null("ClickCatcher") as Button
+	if catcher != null and instruction_overlay.visible:
+		catcher.disabled = false
+
 ## Build the first-play how-to-play beat for THIS round, or leave it empty.
 ##
 ## THE DEFECT
@@ -1075,10 +1257,22 @@ func _on_instruction_dismissed() -> void:
 
 	# Show waiting overlay and notify readiness. The still-reading flag is cleared FIRST, so
 	# a partner already inside its fallback loop never sees "ready" and "still reading" at
-	# once and can act on the ready on its very next poll.
-	_show_waiting_for_start()
+	# once and can act on the ready on its very next poll. It must also be cleared BEFORE
+	# the rejoin-kick branch below: a peer kicked into a live round returns there and never
+	# reaches the set_local_player_ready() call further down, and a "reading" left true by
+	# that path holds the host's force-start fallback in its reading grace in the NEXT round.
+	_awaiting_round_start = true
 	if NetworkManager.has_method("set_local_player_reading"):
 		NetworkManager.set_local_player_reading(false)
+	# A rejoining peer whose resync reloaded this scene while the host is already playing
+	# skips the wait: no countdown is coming (the host's one-chain latch is spent), so the
+	# waiting overlay would be a dead end — the "frozen on the countdown" reported when a
+	# disconnect landed in the countdown phase.
+	if NetworkManager.has_method("consume_pending_live_rejoin_kick") \
+			and NetworkManager.consume_pending_live_rejoin_kick():
+		kick_rejoined_live_round_start()
+		return
+	_show_waiting_for_start()
 	if NetworkManager.has_method("set_local_player_ready"):
 		NetworkManager.set_local_player_ready()
 	else:
@@ -1108,7 +1302,11 @@ func _await_partner_then_force_start() -> void:
 	var deadline: float = PARTNER_READY_FALLBACK_SECONDS
 	var extended: bool = false
 	while waited < deadline and not game_active:
-		await get_tree().create_timer(FALLBACK_POLL_SECONDS).timeout
+		# process_always=false: the fallback poll must freeze with a reconnect hold's
+		# pause. With the default (true) the deadline kept running while the partner
+		# was away, force-starting the countdown into an empty connection and leaving
+		# the rejoined peer with a round it could never be started into.
+		await get_tree().create_timer(FALLBACK_POLL_SECONDS, false).timeout
 		if not is_inside_tree():
 			return
 		waited += FALLBACK_POLL_SECONDS
@@ -1177,7 +1375,9 @@ func _on_countdown_tick(count: int) -> void:
 			tween.set_loops(1)
 			tween.tween_property(countdown_label, "scale", Vector2(1.5, 1.5), 0.2).from(Vector2.ZERO)
 			tween.tween_property(countdown_label, "scale", Vector2(1.0, 1.0), 0.2)
-			await get_tree().create_timer(GO_HOLD_SECONDS).timeout
+			# process_always=false: the GO hold freezes with a reconnect hold's pause,
+			# like the tick chain in NetworkManager._execute_countdown().
+			await get_tree().create_timer(GO_HOLD_SECONDS, false).timeout
 			_on_countdown_complete()
 
 # 
@@ -1206,6 +1406,12 @@ func start_game() -> void:
 	if waiting_overlay:
 		waiting_overlay.visible = false
 	game_active = true
+	# The pre-start window is over, and the rejoin resync needs to know the round is
+	# being played: a peer that drops during the countdown and returns has to be
+	# kicked straight into the game (no second countdown chain is possible).
+	_awaiting_round_start = false
+	if NetworkManager:
+		NetworkManager.notify_round_went_live()
 	# Provisional stamp, re-taken at the bottom of this function once the round is
 	# actually built. It is set here as well so that nothing reached during the build
 	# can read a previous round's stamp (or 0 on the first round, which reads as an
@@ -1381,6 +1587,23 @@ func _on_time_up() -> void:
 	else:
 		end_game(true) # Survival success
 
+## The rejoin kick: this peer came back while the host's copy of this round is
+## already live. Poked directly by NetworkManager's resync when this scene survived
+## the drop (equal baseline), or fed from the pending-kick flag when the resync had
+## to reload the scene. Either way the GO was missed and cannot be re-delivered —
+## start_countdown()'s one-chain latch is spent for this round — so the round starts
+## now, exactly as the GO's own 1-second-later start would have done.
+## Returns whether the kick landed, so the caller can disarm its pending flag.
+func kick_rejoined_live_round_start() -> bool:
+	if game_active or is_waiting_for_partner or not _awaiting_round_start:
+		# Not in the pre-start state: either already playing, or the round is over
+		# (waiting for partner / results) and must not be resurrected.
+		return false
+	_awaiting_round_start = false
+	_log("🔁 Rejoined into a round already in progress - starting now (the GO was missed while away)")
+	_on_countdown_complete()
+	return true
+
 func _on_countdown_complete() -> void:
 	# Called when countdown reaches GO
 	_hide_countdown_overlay()
@@ -1390,8 +1613,10 @@ func end_game(success: bool) -> void:
 	# End the game and report results
 	if not game_active:
 		return
-	
+
 	game_active = false
+	# The round is over; a late-arriving rejoin kick must not resurrect it.
+	_awaiting_round_start = false
 	
 	_log(" Game ended - %s" % ("Success" if success else "Failed"))
 	_play_scoped_music("scoring", 0.3, self)
@@ -1774,15 +1999,23 @@ func _on_quit_pressed() -> void:
 		_bar_timer.stop()
 	
 	_log(" Player quitting session")
-	
-	# Use GameManager to fully close the ENet peer and reset all state,
-	# which triggers server_disconnected on the partner side so they
-	# are returned to mode-selection instead of being stuck on the
-	# waiting panel with a stale connection.
-	if GameManager:
-		GameManager.return_to_multiplayer_lobby()
-	else:
-		get_tree().change_scene_to_file("res://scenes/ui/MultiplayerLobby.tscn")
+
+	# Scoreboard first, lobby second — BUT the network teardown still happens
+	# NOW, not on the board's button. Board-first with a live connection left
+	# the round half-alive behind the scores: games whose spawners are not gated
+	# on the base game_active kept playing (measured: FlushToilets dirt, misses
+	# and a life loss AFTER the quit log), partner RPCs kept arriving, and the
+	# round could even resolve over the board. So: stop the session timelines,
+	# disconnect the peer immediately (the partner is released exactly as with
+	# the old instant-quit), suppress our own disconnect routing while the board
+	# is up, and let the button do only the scene change.
+	if NetworkManager:
+		NetworkManager.game_in_progress = false
+		NetworkManager.round_in_progress = false
+	_quit_board_open = true
+	if GameManager and GameManager.has_method("disconnect_multiplayer"):
+		GameManager.disconnect_multiplayer()
+	_show_mp_final_scoreboard(true)
 
 func _on_remote_pause() -> void:
 	# One transition arrived from the authority — whoever asked for it. Drawing the
@@ -1807,8 +2040,16 @@ func _on_remote_resume() -> void:
 ## kept playing without me". The dropped seconds are excluded from the round clock by the
 ## NOTIFICATION_PAUSED accounting above, so nobody loses time to the wait.
 func _on_reconnect_hold_started(seconds: float) -> void:
-	if not game_active:
-		return
+	# The hold opens ONLY for a live round (NetworkManager gates on game_in_progress
+	# plus scene evidence), so this scene ALWAYS freezes here. An earlier guard
+	# returned early when game_active/is_waiting_for_partner were both false unless
+	# game_in_progress was set — and game_in_progress desynced on some paths — so
+	# the survivor kept playing an unpaused round against nobody while the timers
+	# ran out solo into "waiting for partner" forever. Freeze unconditionally: the
+	# overlay + abandon button + tree.paused below are the whole point of the hold.
+	# Countdown / fallback / ui_timer / _bar_timer all run on pausable timers, so
+	# they stop with the tree and resume on rejoin with no time lost (the dropped
+	# seconds are excluded from the round clock by NOTIFICATION_PAUSED accounting).
 	_log(" Connection lost - holding round for %.0f s" % seconds)
 	if hud_layer and hud_layer.get_node_or_null("ReconnectOverlay") == null:
 		var overlay := Control.new()
@@ -1837,6 +2078,23 @@ func _on_reconnect_hold_started(seconds: float) -> void:
 		message.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		message.add_theme_font_size_override("font_size", 22)
 		vbox.add_child(message)
+		# "Return to Lobby": 30 s is a long window and the player must not be
+		# locked inside it. Tapping this ends the hold the same way an expiry
+		# does — round resolved, notice queued, lobby routing through
+		# _resolve_lost_peer — just sooner and on purpose. The button runs on
+		# PROCESS_MODE_ALWAYS because the tree is paused for the whole hold; a
+		# default-processed button would be as dead as everything else behind
+		# the overlay.
+		var abandon := Button.new()
+		abandon.text = Localization.get_text("mp_return_to_lobby")
+		abandon.custom_minimum_size = Vector2(280, 60)
+		abandon.add_theme_font_size_override("font_size", 22)
+		abandon.process_mode = Node.PROCESS_MODE_ALWAYS
+		abandon.pressed.connect(func():
+			if NetworkManager and NetworkManager.has_method("abandon_reconnect"):
+				NetworkManager.abandon_reconnect()
+		)
+		vbox.add_child(abandon)
 	var tree := get_tree()
 	if tree:
 		_pause_before_hold = tree.paused
@@ -1870,6 +2128,11 @@ func _on_reconnect_hold_ended(rejoined: bool) -> void:
 	_log(" Partner reconnected - round resumed")
 
 func _on_player_left_session(_peer_id: int) -> void:
+	# The quit scoreboard owns this scene now: a drop racing the quit (or our
+	# own teardown echoing back) must not yank the board away with the old 2 s
+	# lobby timer. The board's button is the only exit from here.
+	if _quit_board_open:
+		return
 	# A recoverable drop is NOT a terminated session. NetworkManager emits
 	# player_disconnected on every drop, including the ones it is about to hold the round
 	# open for, so without this the "player disconnected / session terminated" overlay
@@ -1879,7 +2142,7 @@ func _on_player_left_session(_peer_id: int) -> void:
 	
 	# Logged AFTER the gate, not before it. It used to sit at the top of the function, so
 	# a drop that was in fact being held open printed "terminating for all players"
-	# immediately above "Holding the round open for 6s" - two lines that contradict each
+	# immediately above "Holding the round open for 30s" - two lines that contradict each
 	# other, in a log being read to find out which one actually happened.
 	_log(" Player left session - terminating for all players")
 	game_active = false
@@ -1932,6 +2195,10 @@ func _on_server_disconnected() -> void:
 	# Same reason as _on_player_left_session(): while the hold is open the outcome is not
 	# decided yet. If it expires, _resolve_lost_peer() runs the branch below itself.
 	if NetworkManager and NetworkManager.is_reconnect_hold_active():
+		return
+	# Quit scoreboard open: our own teardown, or a drop racing the quit. The
+	# board stays; its button routes out.
+	if _quit_board_open:
 		return
 	_log(" Server disconnected - terminating session")
 	
@@ -2038,6 +2305,23 @@ func _on_team_lives_updated(remaining_lives: int) -> void:
 	# Check for game over
 	if remaining_lives <= 0:
 		_on_game_over()
+
+## Session over (team out of lives): hold the verdict on screen.
+##
+## _on_game_over() used to show the results screen and nothing else, while the
+## HOST timeline kept running — _check_both_completed() awaited 2 s and called
+## _transition_to_next_round(), which loaded the next round right over the
+## game-over screen. The user-visible symptom: "after the lives are all
+## depleted... it just goes on to the lobby / next round" with no scoring
+## screen to read. game_in_progress = false is what stops that timeline (the
+## transition guard checks it via round_in_progress state downstream), and the
+## results overlay is kept up until the player taps the button.
+func _on_game_over() -> void:
+	_log(" GAME OVER")
+	if NetworkManager:
+		NetworkManager.game_in_progress = false
+		NetworkManager.round_in_progress = false
+	_show_results_screen(false)
 
 func _on_resource_received(
 	from_player: int,
@@ -2207,84 +2491,204 @@ func _on_game_start() -> void:
 	# Override: Called when game actually starts
 	pass
 
-func _on_game_over() -> void:
-	# Override: Called when team runs out of lives
-	_log(" GAME OVER")
-	_show_results_screen(false)
-
-
 
 func _show_game_over_screen() -> void:
-	# Show game over screen when lives are depleted
-	var overlay = Control.new()
-	overlay.name = "GameOverOverlay"
+	# Team out of lives — the session is over. Full scoreboard, not just the
+	# verdict: team total, rounds survived, per-player contributions and the
+	# per-round list, mirroring what single player gets on FinalScore.
+	_show_mp_final_scoreboard(false)
+
+## Shared end-of-session scoreboard for multiplayer. Local-only UI (no RPCs, no
+## protocol change): every peer builds its own from NetworkManager session totals
+## and SessionLogger round records, which are already synced/identical on both.
+##
+## ended_early == false → lives depleted ("GAME OVER", final scores).
+## ended_early == true  → player quit mid-session ("SESSION ENDED", partial scores
+## up to the round they left on — labelled as partial so a 2-round quit never
+## reads as a finished session).
+func _show_mp_final_scoreboard(ended_early: bool) -> void:
+	if hud_layer.get_node_or_null("FinalScoreOverlay") != null:
+		return
+	# Session totals. get_mp_session_scores() is keyed p1_total/p2_total/team_total.
+	var p1_total: int = 0
+	var p2_total: int = 0
+	var team_total: int = 0
+	if NetworkManager and NetworkManager.has_method("get_mp_session_scores"):
+		var ss: Dictionary = NetworkManager.get_mp_session_scores()
+		p1_total = int(ss.get("p1_total", 0))
+		p2_total = int(ss.get("p2_total", 0))
+		team_total = int(ss.get("team_total", p1_total + p2_total))
+	var rounds: int = 0
+	if NetworkManager:
+		rounds = int(NetworkManager.get("rounds_survived"))
+	# Per-round rows, oldest first. get_mp_leaderboard() appends a totals
+	# sentinel (round_num == -1) which is skipped here — totals come from above.
+	var rows: Array = []
+	var _sl := get_node_or_null("/root/SessionLogger")
+	if _sl and _sl.has_method("get_mp_leaderboard"):
+		for entry in _sl.call("get_mp_leaderboard"):
+			if entry is Dictionary and int(entry.get("round_num", -1)) >= 0:
+				rows.append(entry)
+	# Render proof in the session log: if a future phone report says "stuck on
+	# game over", the presence/absence of this line tells whether the board was
+	# built or died before it.
+	_log(" MP scoreboard shown (%s, %d rounds, team %d)" % [
+		"ended early" if ended_early else "game over", rows.size(), team_total])
+
+	var overlay := Control.new()
+	overlay.name = "FinalScoreOverlay"
 	overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
 	hud_layer.add_child(overlay)
-	
-	var bg = ColorRect.new()
+
+	var bg := ColorRect.new()
 	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
 	bg.color = Color(0, 0, 0, 0.9)
 	overlay.add_child(bg)
-	
-	var center = CenterContainer.new()
+
+	var center := CenterContainer.new()
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
 	overlay.add_child(center)
-	
-	var vbox = VBoxContainer.new()
-	vbox.add_theme_constant_override("separation", 30)
+
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 12)
 	center.add_child(vbox)
-	
-	var title = Label.new()
-	title.text = Localization.get_text("game_over")
+
+	var title := Label.new()
+	title.text = Localization.get_text("game_over") if not ended_early else "SESSION ENDED"
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.add_theme_font_size_override("font_size", 72)
-	title.add_theme_color_override("font_color", Color(1.0, 0.3, 0.3))
+	title.add_theme_font_size_override("font_size", 64)
+	title.add_theme_color_override(
+		"font_color", Color(1.0, 0.3, 0.3) if not ended_early else Color(1.0, 0.85, 0.4))
 	title.add_theme_constant_override("outline_size", 8)
 	title.add_theme_color_override("font_outline_color", Color.BLACK)
 	vbox.add_child(title)
-	
-	var sub = Label.new()
-	sub.text = Localization.get_text("mp_team_out_of_lives")
+
+	var sub := Label.new()
+	if ended_early:
+		sub.text = "You left early — scores below are partial."
+	else:
+		sub.text = Localization.get_text("mp_team_out_of_lives")
 	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	sub.add_theme_font_size_override("font_size", 32)
+	sub.add_theme_font_size_override("font_size", 28)
 	vbox.add_child(sub)
 
-	# The verdict above is correct here — the session really is over. What was missing is the
-	# reaction: the brief asks for a funny readable failure, not just the word.
-	var react = Label.new()
+	var react := Label.new()
 	react.text = Localization.get_text("mp_react_session_over")
 	react.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	react.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	react.custom_minimum_size = Vector2(560, 0)
-	react.add_theme_font_size_override("font_size", 28)
+	react.add_theme_font_size_override("font_size", 26)
 	react.add_theme_color_override("font_color", Color(1.0, 0.78, 0.45))
 	vbox.add_child(react)
-	
-	var score_label = Label.new()
-	# Two keys the table has carried since the co-op UI was first written. Their only
-	# consumer was MultiplayerGameOver.gd, which nothing loads but MultiplayerCoordinator.
+
+	var score_label := Label.new()
 	score_label.text = "%s\n%s" % [
-		Localization.get_text("multiplayer_final_score") % NetworkManager.get_total_score(),
-		Localization.get_text("multiplayer_rounds_survived") % NetworkManager.rounds_survived
+		Localization.get_text("multiplayer_final_score") % team_total,
+		Localization.get_text("multiplayer_rounds_survived") % rounds
 	]
 	score_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	score_label.add_theme_font_size_override("font_size", 36)
 	score_label.add_theme_color_override("font_color", Color.YELLOW)
 	vbox.add_child(score_label)
-	
-	var btn = Button.new()
+
+	# Per-player contributions with shares of the team total.
+	var p1_pct: float = 0.0
+	var p2_pct: float = 0.0
+	if team_total > 0:
+		p1_pct = float(p1_total) / float(team_total) * 100.0
+		p2_pct = float(p2_total) / float(team_total) * 100.0
+	var contrib := Label.new()
+	contrib.text = "Player 1: %d pts (%.0f%%)   •   Player 2: %d pts (%.0f%%)" % [
+		p1_total, p1_pct, p2_total, p2_pct]
+	contrib.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	contrib.add_theme_font_size_override("font_size", 28)
+	contrib.add_theme_color_override("font_color", Color(0.75, 0.95, 1.0))
+	vbox.add_child(contrib)
+
+	# Per-round breakdown, newest sessions can run 10+ rounds so this scrolls.
+	if not rows.is_empty():
+		var list_title := Label.new()
+		list_title.text = "ROUND BY ROUND"
+		list_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		list_title.add_theme_font_size_override("font_size", 24)
+		list_title.add_theme_color_override("font_color", Color(0.7, 0.7, 0.7))
+		vbox.add_child(list_title)
+
+		var scroll := ScrollContainer.new()
+		scroll.custom_minimum_size = Vector2(560, minf(300.0, 44.0 * rows.size()))
+		scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+		vbox.add_child(scroll)
+
+		var list := VBoxContainer.new()
+		list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		list.add_theme_constant_override("separation", 4)
+		scroll.add_child(list)
+
+		for entry in rows:
+			var rn: int = int(entry.get("round_num", 0))
+			var a: int = int(entry.get("p1_score", 0))
+			var b: int = int(entry.get("p2_score", 0))
+			var ts: int = int(entry.get("team_score", a + b))
+			var mark: String = "✓" if bool(entry.get("team_success", false)) else "✗"
+			var row := Label.new()
+			row.text = "R%d  P1 %d • P2 %d • Team %d  %s" % [rn, a, b, ts, mark]
+			row.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			row.add_theme_font_size_override("font_size", 24)
+			list.add_child(row)
+
+	var btn := Button.new()
 	btn.text = Localization.get_text("mp_return_to_lobby")
-	btn.custom_minimum_size = Vector2(200, 60)
+	btn.custom_minimum_size = Vector2(280, 60)
 	btn.add_theme_font_size_override("font_size", 24)
-	btn.pressed.connect(func(): 
-		if NetworkManager and NetworkManager.has_method("return_to_lobby"):
-			NetworkManager.return_to_lobby()
-		get_tree().change_scene_to_file("res://scenes/ui/MultiplayerLobby.tscn")
+	# ALWAYS, because this screen is reachable with the tree PAUSED: the session can
+	# be torn down while a reconnect hold has the round frozen, and a default-processed
+	# button never receives the press at all — the "go to lobby button does nothing
+	# when pressed" reported from the phones.
+	btn.process_mode = Node.PROCESS_MODE_ALWAYS
+	# One route, not two. The old handler broadcast NetworkManager.return_to_lobby()
+	# AND THEN changed the scene raw, which left `paused` set behind the lobby (the
+	# SceneTree property survives a raw change) and NetworkManager's half of the
+	# session populated under it. return_to_multiplayer_lobby() unpauses, tears both
+	# halves down and transitions once.
+	btn.pressed.connect(func():
+		_log(" MP scoreboard exit → lobby")
+		if GameManager:
+			GameManager.return_to_multiplayer_lobby()
+		else:
+			get_tree().change_scene_to_file("res://scenes/ui/MultiplayerLobby.tscn")
+		# Watchdog: if that route silently fails, force the exit. Self-cancelling
+		# — a successful route frees this scene, which drops the connection.
+		# process_always + ignore_time_scale so it fires even on a paused tree.
+		var wd := get_tree().create_timer(4.0, true, false, true)
+		wd.timeout.connect(_force_scoreboard_exit)
 	)
-	
-	var btn_container = CenterContainer.new()
+
+	var btn_container := CenterContainer.new()
 	btn_container.add_child(btn)
 	vbox.add_child(btn_container)
+
+	# Entrance pop. The tree is NOT paused on either path that reaches here
+	# (game-over RPC lands on a live round; quit unpauses first), so a tween runs.
+	overlay.modulate.a = 0.0
+	var tween := create_tween()
+	tween.tween_property(overlay, "modulate:a", 1.0, 0.35)
+
+
+## Last-resort exit for the end-of-session scoreboard. If the button's lobby
+## route silently failed (users reported sitting on the finished board with no
+## way out), this raw change finishes the job. No-ops whenever the normal route
+## worked: a freed scene drops the timer connection before it can fire, and a
+## scene that already moved on fails the identity check.
+func _force_scoreboard_exit() -> void:
+	if not is_inside_tree():
+		return
+	if get_tree().current_scene != self:
+		return
+	_log(" MP scoreboard exit watchdog — forcing lobby")
+	get_tree().paused = false
+	if NetworkManager and NetworkManager.has_method("clear_pause_state"):
+		NetworkManager.clear_pause_state()
+	get_tree().change_scene_to_file("res://scenes/ui/MultiplayerLobby.tscn")
 
 func _show_results_screen(success: bool) -> void:
 	# Remove any existing results overlay to prevent duplicates
@@ -2364,13 +2768,65 @@ func _show_results_screen(success: bool) -> void:
 	vbox.add_child(score_label)
 	
 	is_waiting_for_partner = true
-	
+
+	# Pass/fail reaction: flash + title fade, the visual half of what single
+	# player gets (MiniGameResults plays fanfare; FinalScore pops the title).
+	# Audio lives on the round SUMMARY (the resolved verdict both peers share),
+	# not here — playing it here too would fanfare twice per round, once per
+	# finisher. Local-only, no sync.
+	_play_mp_result_juice(success, overlay, title, false)
+
 	# Connect to NetworkManager signal for round transition
 	if (
 		NetworkManager
 		and not NetworkManager.both_players_completed.is_connected(_on_both_players_completed)
 	):
 		NetworkManager.both_players_completed.connect(_on_both_players_completed)
+
+## Pass/fail juice for MP round results. Deliberately small and guarded:
+##  - audio cue (success/failure), same calls single player uses — only when
+##    with_audio is true (the round summary owns the sound; the waiting screen
+##    stays silent so a round never fanfares twice);
+##  - a brief full-screen green/red flash fading out;
+##  - title fades in instead of appearing instantly.
+## Skipped entirely while the tree is paused (a tween built on a frozen tree never
+## advances and would leave the flash stuck half-transparent — worse than no
+## juice), and the flash is skipped when reduced-motion/particles-off is set
+## (audio still plays). All nodes are created fresh and freed with the overlay,
+## so there is nothing to leak and no state to reset.
+func _play_mp_result_juice(success: bool, overlay: Control, title: Label, with_audio: bool = true) -> void:
+	if overlay == null or not is_instance_valid(overlay):
+		return
+	var tree := get_tree()
+	if tree == null or tree.paused:
+		return
+	if with_audio:
+		var am := get_node_or_null("/root/AudioManager")
+		if am != null:
+			if success and am.has_method("play_success"):
+				am.call("play_success")
+			elif not success and am.has_method("play_failure"):
+				am.call("play_failure")
+	var show_flash: bool = true
+	var acc := get_node_or_null("/root/AccessibilityManager")
+	if acc != null and acc.has_method("should_show_particles"):
+		show_flash = bool(acc.call("should_show_particles"))
+	if show_flash:
+		var flash := ColorRect.new()
+		flash.set_anchors_preset(Control.PRESET_FULL_RECT)
+		flash.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var fc := Color(0.3, 1.0, 0.4, 0.22) if success else Color(1.0, 0.3, 0.25, 0.22)
+		flash.color = fc
+		# Added last so it sits above bg + content, then fades away. IGNORE mouse
+		# filter so it can never eat the tap that dismisses this screen.
+		overlay.add_child(flash)
+		var ftween := create_tween()
+		ftween.tween_property(flash, "modulate:a", 0.0, 0.5).from(1.0)
+		ftween.tween_callback(flash.queue_free)
+	if title != null and is_instance_valid(title):
+		title.modulate.a = 0.0
+		var ttween := create_tween()
+		ttween.tween_property(title, "modulate:a", 1.0, 0.3)
 
 ## Live partner progress on the "waiting for partner" overlay.
 ##
@@ -2565,6 +3021,148 @@ func _show_round_summary(
 	next_label.add_theme_font_size_override("font_size", 22)
 	next_label.add_theme_color_override("font_color", Color(1, 1, 1, 0.6))
 	vbox.add_child(next_label)
+
+	# DWTD-style round-end flourish. Before this the co-op summary was the one
+	# screen in the loop with no motion at all: the single-player flow ends a
+	# round on an animated tally (pop-in title, staggered rows, a character
+	# reaction), and co-op ended on a wall of text that appeared all at once -
+	# the "multiplayer has no animation" report. This is the multiplayer
+	# equivalent, built here rather than reused from MiniGameBase because the
+	# summary layouts differ, and kept MP-only on purpose (the single-player
+	# tally is locked).
+	_animate_round_summary(overlay, vbox, my_success and partner_success)
+
+## Animated entrance for the co-op round summary: a droplet mascot that reacts
+## to the team result, a title pop, and staggered row fades.
+##
+## Bounds (low-end devices): one Polygon2D body + two eyes + one mouth ≈ 6
+## draw nodes; four tweens total, every loop bounded (the idle bob runs twice,
+## the fail shake four times) so nothing runs away behind the "next round"
+## transition. Everything animates from the scene's own create_tween(), so a
+## tree pause (reconnect hold) freezes it with the rest of the round instead of
+## running on behind a frozen screen.
+func _animate_round_summary(overlay: Control, vbox: VBoxContainer, won: bool) -> void:
+	if overlay == null or vbox == null:
+		return
+
+	# The verdict sound. Guarded like everything in _play_mp_result_juice: no
+	# audio on a frozen tree, and the waiting screen stays silent so a round
+	# fanfares exactly once — here, on the resolved result.
+	if get_tree() != null and not get_tree().paused:
+		var am := get_node_or_null("/root/AudioManager")
+		if am != null:
+			if won and am.has_method("play_success"):
+				am.call("play_success")
+			elif not won and am.has_method("play_failure"):
+				am.call("play_failure")
+
+	# ── mascot row, above the title ──
+	var mascot_row := CenterContainer.new()
+	mascot_row.custom_minimum_size = Vector2(0, 128)
+	vbox.add_child(mascot_row)
+	vbox.move_child(mascot_row, 0)
+	var mascot := _build_summary_mascot(won)
+	if mascot:
+		mascot_row.add_child(mascot)
+
+	# ── entrance tweens ──
+	# One tween, entirely parallel: the title pop, the mascot landing and every
+	# row fade all start inside the same 0.7 s window (rows staggered by
+	# set_delay). A sequential tween here was measured by
+	# tools/VerifyMPSummaryFlourish fading the last row at ~2 s - far too slow
+	# for a screen the player reads for two seconds.
+	var tw := create_tween()
+	tw.set_parallel(true)
+	# Title pop: scale from small with a back-ease overshoot, pivot centred.
+	var title := vbox.get_child(1) as Control if vbox.get_child_count() > 1 else null
+	if title:
+		title.pivot_offset = title.size * 0.5
+		title.scale = Vector2(0.6, 0.6)
+		tw.tween_property(title, "scale", Vector2.ONE, 0.3) \
+			.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	# Mascot: squash-stretch landing, then a bounded idle bob.
+	if mascot:
+		mascot.pivot_offset = Vector2(60, 120)
+		mascot.scale = Vector2(1.25, 0.7)
+		tw.tween_property(mascot, "scale", Vector2.ONE, 0.28) \
+			.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+		var bob := create_tween()
+		bob.tween_interval(0.35)
+		bob.tween_property(mascot, "position:y", -8.0, 0.4) \
+			.as_relative().set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+		bob.tween_property(mascot, "position:y", 8.0, 0.4) \
+			.as_relative().set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+		bob.set_loops(2)
+	# Failure: a short, bounded shake reads as "ouch" without mocking the player.
+	if not won and mascot:
+		var shake := create_tween()
+		shake.tween_interval(0.4)
+		for _i in range(4):
+			shake.tween_property(mascot, "position:x", 9.0, 0.05).as_relative()
+			shake.tween_property(mascot, "position:x", -9.0, 0.05).as_relative()
+		shake.tween_property(mascot, "position:x", 0.0, 0.05)
+	# Rows: staggered fade-in, capped so a future layout change cannot grow this
+	# into dozens of tweens.
+	var rows := mini(vbox.get_child_count(), 8)
+	for i in range(rows):
+		var row := vbox.get_child(i) as Control
+		if row == null or row == mascot_row:
+			continue
+		row.modulate.a = 0.0
+		var delay := 0.1 + float(i) * 0.06
+		tw.tween_property(row, "modulate:a", 1.0, 0.22).set_delay(delay)
+
+## The summary's reacting character: a droplet, drawn from primitives so no new
+## asset ships with this change. Happy face on a team win, deflated on a fail -
+## the cause-and-effect read the co-op loop was missing between "round ended"
+## and the score rows.
+func _build_summary_mascot(won: bool) -> Control:
+	var holder := Control.new()
+	holder.custom_minimum_size = Vector2(120, 120)
+	holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	var body := Polygon2D.new()
+	var pts := PackedVector2Array()
+	for i in range(24):
+		var a := TAU * float(i) / 24.0
+		# Teardrop: a circle pinched toward the top where the stem would be.
+		var rx := 38.0 * (1.0 - 0.45 * maxf(0.0, sin(a + PI * 0.5)))
+		pts.append(Vector2(60.0, 66.0) + Vector2(cos(a) * rx, sin(a) * 44.0))
+	body.polygon = pts
+	body.color = Color(0.42, 0.76, 0.95, 1.0) if won else Color(0.45, 0.62, 0.78, 1.0)
+	holder.add_child(body)
+
+	var eye_color := Color(0.08, 0.16, 0.24)
+	for side in [-1.0, 1.0]:
+		var eye := Polygon2D.new()
+		var eye_pts := PackedVector2Array()
+		for i in range(10):
+			var a := TAU * float(i) / 10.0
+			eye_pts.append(Vector2(60.0 + side * 14.0, 54.0)
+				+ Vector2(cos(a) * 6.0, sin(a) * (4.0 if won else 6.0)))
+		eye.polygon = eye_pts
+		eye.color = eye_color
+		holder.add_child(eye)
+
+	# Mouth: a smile arc on a win, a flat-grim line on a fail.
+	var mouth := Line2D.new()
+	var mouth_pts := PackedVector2Array()
+	if won:
+		for i in range(9):
+			var t := float(i) / 8.0
+			mouth_pts.append(Vector2(46.0 + t * 28.0,
+				76.0 + sin(t * PI) * 9.0))
+	else:
+		mouth_pts.append(Vector2(48.0, 80.0))
+		mouth_pts.append(Vector2(72.0, 77.0))
+	mouth.points = mouth_pts
+	mouth.width = 4.0
+	mouth.default_color = eye_color
+	mouth.begin_cap_mode = Line2D.LINE_CAP_ROUND
+	mouth.end_cap_mode = Line2D.LINE_CAP_ROUND
+	holder.add_child(mouth)
+
+	return holder
 
 ## Android Back inside a co-op round: toggle pause, never leave.
 ##

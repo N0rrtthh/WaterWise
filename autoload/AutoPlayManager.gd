@@ -786,6 +786,16 @@ func _abort_round(g: Node) -> void:
 ##    in that log. NetworkManager now drops the repeats, but the bot should not be
 ##    generating them: it asks once and waits for the pause to actually lift.
 func _try_resume_from_pause() -> bool:
+	# The reconnect hold OWNS the freeze while it is open: the round is waiting for
+	# its peer, not deadlocked. The bot must neither dismiss it (request_resume is
+	# refused during a hold) nor "fix" it via the force-clear below after
+	# PAUSE_GRACE_SECONDS — that would unfreeze a round that is waiting for its
+	# peer and let it play on solo. Stand down and keep the caller parked.
+	var _nm_hold := get_node_or_null("/root/NetworkManager")
+	if _nm_hold and _nm_hold.has_method("is_reconnect_hold_active") \
+			and bool(_nm_hold.call("is_reconnect_hold_active")):
+		_paused_seconds = 0.0
+		return true
 	# A pause a player asked for is theirs to lift. Autoplay keeps its deadlock guard
 	# below for pauses nobody owns, but it no longer fights a human.
 	var nm := get_node_or_null("/root/NetworkManager")
@@ -879,6 +889,14 @@ func _navigate_ui(delta: float) -> void:
 
 	# ── Main Menu ─────────────────────────────────────────────────
 	if "MainMenu" in path:
+		# MP-only autoplay never enters single-player. Play on this screen is the
+		# single-player entry, and clicking it from an MP soak whose session just
+		# ended is exactly how the bot ended up playing solo games on a phone where
+		# only the MULTIPLAYER autoplay toggle was on. The SP bot (auto_play_enabled)
+		# clicks it as before.
+		if mp_auto_play_enabled and not auto_play_enabled:
+			print("🤖 AutoNav: on MainMenu with only MP auto-play on — standing by")
+			return
 		var btn: Button = scene.get_node_or_null("UI/VBoxContainer/PlayButton")
 		if btn:
 			print("🤖 AutoNav: clicking Play on MainMenu")
@@ -894,6 +912,19 @@ func _navigate_ui(delta: float) -> void:
 			if close_btn:
 				close_btn.pressed.emit()
 				return
+		# MP-only autoplay does not click PLAY here — that is the single-player
+		# entry, and an MP soak that lands on the hub (session terminated, lobby
+		# backed out of) must not turn into a solo run. It walks back to the
+		# multiplayer menu instead, or stands by when co-op is still locked, so
+		# the two-device session can be re-established by the players.
+		if mp_auto_play_enabled and not auto_play_enabled:
+			var mp_btn: Button = scene.get_node_or_null("UI/ButtonContainer/MultiplayerButton")
+			if mp_btn and not mp_btn.disabled and mp_btn.visible:
+				print("🤖 AutoNav: only MP auto-play on — heading back to multiplayer")
+				mp_btn.pressed.emit()
+			else:
+				print("🤖 AutoNav: only MP auto-play on and multiplayer is locked — standing by")
+			return
 		# Always click single-player Play (multiplayer requires two devices)
 		var play_btn: Button = scene.get_node_or_null("UI/ButtonContainer/PlayButton")
 		if play_btn and not play_btn.disabled and play_btn.visible:

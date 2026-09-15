@@ -67,6 +67,16 @@ var sp_games: Array = []
 ##              team_success, team_score, sync_score}
 var mp_rounds: Array = []
 
+## Each entry: {elapsed_sec, timestamp, kind, reason, team_score, rounds_survived,
+##              is_host, game}
+## Session-level multiplayer events that are not rounds: a session ended by a
+## disconnect that did not recover, one ended by the player abandoning the
+## reconnect window, one ended by the partner leaving. Without these, a session
+## that never finished produced NO file at all - the export only ran on the
+## final-score screen - so the exact failures the thesis needs recorded (wifi
+## drop, frozen partner, quit-during-hang) were the ones the log never captured.
+var mp_session_events: Array = []
+
 ## Each entry: {scene, elapsed_sec, timestamp}
 var scenes_visited: Array = []
 
@@ -253,6 +263,14 @@ func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_CLOSE_REQUEST:
 		export_session()
 		get_tree().quit()
+	elif what == NOTIFICATION_APPLICATION_PAUSED:
+		# Android fires this the moment the app leaves the foreground — which is
+		# the only reliable hook on a phone, where the way out of a hung game is
+		# switching away and killing the app. WM_CLOSE_REQUEST never arrives in
+		# that flow, so without this export the session's last state (including
+		# the hang itself) never reached disk. export_session() rewrites the one
+		# file in place, so repeated backgrounding cannot multiply artifacts.
+		export_session()
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # SCENE TRACKING (called by scenes on _ready)
@@ -493,6 +511,25 @@ func _on_perf_warning(metric: String, value: float, threshold: float) -> void:
 			"threshold": snapf(threshold, 2)
 		})
 
+## Record one multiplayer session-level event: a session that ended other than by
+## playing it out. Called from NetworkManager's lost-peer resolution and from
+## GameManager's lobby return, i.e. exactly the exits that used to produce no file.
+## `kind` distinguishes the shape (disconnected / abandoned / lobby_return); `reason`
+## carries the producer's own phrase (e.g. "partner did not return within 30s").
+func record_mp_session_event(kind: String, reason: String, detail: Dictionary = {}) -> void:
+	# Game Lab sessions never enter the exported log.
+	if GameManager and GameManager.sandbox_mode:
+		return
+	var record: Dictionary = {
+		"elapsed_sec": _elapsed(),
+		"timestamp": Time.get_datetime_string_from_system(),
+		"kind": kind,
+		"reason": reason
+	}
+	record.merge(detail, true)
+	mp_session_events.append(record)
+	print("📋 MP session event | %s | %s" % [kind, reason])
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # PERFORMANCE SNAPSHOT
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -662,7 +699,10 @@ func get_mp_leaderboard() -> Array:
 ## Every call in one session rewrites ONE file (see _session_file_path), so calling this
 ## repeatedly cannot multiply the artifact.
 func export_session(force: bool = false) -> String:
-	if not force and sp_games.is_empty() and mp_rounds.is_empty():
+	# mp_session_events counts as content alongside the round lists: an interrupted
+	# session with zero completed rounds is precisely the artifact the thesis needs
+	# (the "it hangs and nothing is recorded" report), and it has no rounds at all.
+	if not force and sp_games.is_empty() and mp_rounds.is_empty() and mp_session_events.is_empty():
 		print("\U0001F4CA SessionLogger: no rounds recorded - export skipped (pass force=true to write anyway)")
 		return ""
 	_take_perf_snapshot()  # Final snapshot before export
@@ -988,6 +1028,7 @@ func export_session(force: bool = false) -> String:
 		"performance": perf_summary,
 		"sp_game_records": sp_games,
 		"mp_round_records": mp_rounds,
+		"mp_session_events": mp_session_events,
 		"scenes_visited": scenes_visited,
 		"performance_snapshots": perf_snapshots,
 		"game_log": game_log

@@ -108,6 +108,14 @@ func _reset(nm: Node) -> void:
 	nm.disconnection_timer.stop()
 	nm.disconnection_timer.wait_time = nm.RECONNECT_GRACE_PERIOD
 	nm.grace_period_active = false
+	# The hold state too: since the reconnect hold landed, _on_server_disconnected()
+	# opens BOTH windows on a mid-round drop, so a case that opens one without
+	# closing it (case 7, deliberately) would otherwise leak an open hold into
+	# whatever came after.
+	nm._reconnect_hold_timer.stop()
+	nm._reconnect_hold_timer.wait_time = nm.RECONNECT_HOLD_SECONDS
+	nm._reconnect_retry_timer.stop()
+	nm.reconnect_hold_active = false
 	nm.game_in_progress = false
 	nm.connection_active = false
 	nm.is_host = false
@@ -126,6 +134,21 @@ func _on_timer_fired() -> void:
 
 
 func _ready() -> void:
+	# Case 7 ends in _resolve_lost_peer() -> return_to_multiplayer_lobby() ->
+	# change_scene_to_file(), which FREES get_tree().current_scene. That is THIS
+	# node — the scene root, a direct child of /root, so "reparent to /root" is a
+	# no-op and the suspended _run() coroutine dies with it: RESULT never prints
+	# and the process sits in the loaded lobby forever. The probe survives by
+	# handing the current_scene role to a throwaway anchor first; the transition
+	# then frees the anchor and leaves this node, and the coroutine inside it,
+	# alive. (Same trap, sibling fix to the Subject-under-/root pattern in
+	# tools/VerifyHostSocketDeath.gd.) One frame first because /root is still
+	# busy setting up children during this _ready().
+	await get_tree().process_frame
+	var anchor := Node.new()
+	anchor.name = "GracePeriodProbeAnchor"
+	get_tree().root.add_child(anchor)
+	get_tree().current_scene = anchor
 	_run.call_deferred()
 
 
@@ -248,19 +271,51 @@ func _run() -> void:
 	_check("rejoin cleared grace_period_active", not nm.grace_period_active, _state(nm))
 	_check("rejoin stopped the timer", nm.disconnection_timer.is_stopped(), _state(nm))
 
-	# CASE 7: the fix must not turn the grace period into a no-op.
-	# A window nobody cancels still has to expire and still has to resolve the
-	# round. Without this case, "never start the timer" would pass cases 2 to 6.
-	print("  [7] an UNcancelled window still expires and still resolves the round")
+	# CASE 7: the fix must not turn either window into a no-op. Nobody comes back and
+	# nobody cancels, so the timers must still fire and the round must still be
+	# resolved. Since the reconnect hold landed, that resolution is TWO-STAGE on a
+	# mid-round drop: grace and hold open together in _on_server_disconnected();
+	# the grace expiry then DEFERS to the hold (the guard at the top of
+	# _on_grace_period_timeout — the hold owns the outcome while it is open, and
+	# grace clearing game_in_progress out from under the hold's own expiry handler
+	# is exactly the cross-resolution bug that guard exists to prevent); and the
+	# HOLD's expiry is what resolves the round, through _end_reconnect_hold(false)
+	# -> _resolve_lost_peer(false). Both clocks are compressed here — grace to
+	# 0.4 s, hold to 0.9 s — and the mid-point between them is where the deferral
+	# itself is observable.
+	print("  [7] an UNcancelled drop still expires and still resolves the round")
 	_reset(nm)
 	nm.connection_active = true
 	nm.game_in_progress = true
 	nm.disconnection_timer.wait_time = 0.4
+	nm._reconnect_hold_timer.wait_time = 0.9
 	nm._on_server_disconnected()
-	await get_tree().create_timer(0.9).timeout
-	_check("the timeout did fire", _timeouts_seen == 1, _state(nm))
+	await get_tree().create_timer(0.65).timeout
+	_check("the grace timeout did fire", _timeouts_seen == 1, _state(nm))
 	_check("expiry cleared grace_period_active", not nm.grace_period_active, _state(nm))
-	_check("expiry cleared game_in_progress", not nm.game_in_progress, _state(nm))
+	_check("grace expiry deferred to the hold instead of resolving the round itself",
+		nm.game_in_progress and nm.reconnect_hold_active,
+		"%s (the hold owns the outcome while it is open)" % _state(nm))
+	await get_tree().create_timer(1.1).timeout
+	_check("the hold's expiry cleared game_in_progress", not nm.game_in_progress, _state(nm))
+	_check("no hold is left open behind the resolved round",
+		not nm.reconnect_hold_active, _state(nm))
+	# And the resolution ROUTES: _resolve_lost_peer() defers
+	# GameManager.return_to_multiplayer_lobby(), a fade transition, so this needs a
+	# real wait. A drop whose round was resolved but whose peer was never moved out
+	# of the freed round scene is the "frozen on the win page" phone bug from the
+	# other side of the connection.
+	var lobby_up := false
+	for _i in range(120):
+		var cs := get_tree().current_scene
+		if cs != null and is_instance_valid(cs) \
+				and cs.scene_file_path == "res://scenes/ui/MultiplayerLobby.tscn":
+			lobby_up = true
+			break
+		await get_tree().create_timer(0.1).timeout
+	_check("the hold's expiry routed the peer out of the dead round",
+		lobby_up, "current_scene=%s" % str(
+			null if get_tree().current_scene == null else get_tree().current_scene.scene_file_path))
 
 	_reset(nm)
 	print("")

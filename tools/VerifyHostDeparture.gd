@@ -479,8 +479,14 @@ class Subject extends Node:
 				% [str(snap.get("counter")), snap_total, HOST_POINTS + CLIENT_POINTS])
 
 		# ── the route out ──
+		# Bound derived from the hold: the dead round resolves when the
+		# reconnect hold expires, so drop-to-lobby is hold + transition. The
+		# hold is 30 s (multiplayer-recovery requirement: a 10-15 s outage must
+		# reconnect, not expire), so the bound is hold + 10 s slack - the old
+		# hardcoded 12 s was calibrated to the old 6 s hold.
 		await _eventually("the client leaves the dead round instead of soft-locking in it",
-			func() -> bool: return lobby_roots.size() > 0, 12.0,
+			func() -> bool: return lobby_roots.size() > 0,
+			NetworkManager.RECONNECT_HOLD_SECONDS + 10.0,
 			func() -> String: return _state())
 		# Let the double invocation land if it is going to: the base family routes out from the
 		# round AND GameManager routes out from its own handler, and one of the two is deferred.

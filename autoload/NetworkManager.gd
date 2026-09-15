@@ -59,10 +59,46 @@ const RECONNECT_GRACE_PERIOD: float = 30.0  # 30 seconds
 ## a frozen round needs an answer quickly, and tools/VerifyHostDeparture.tscn asserts the
 ## client is out of a dead round within 12 s, so the hold plus one scene load must fit
 ## inside that.
-const RECONNECT_HOLD_SECONDS: float = 6.0
-## Spacing of the client's rejoin attempts inside the hold: four tries, at 0.0 s (issued
-## immediately), 1.5 s, 3.0 s and 4.5 s.
+## How long a live round stays frozen waiting for a dropped peer to come back.
+##
+## 6 s for most of this project's life: long enough for a wifi reassociate, short
+## enough that VerifyHostDeparture's drop-to-lobby bound stayed under 12 s. Raised
+## to 30 s on the multiplayer-recovery requirement: the acceptance test is "disable
+## the network for 10-15 s, restore, and the round must still be there" - a 6 s
+## window failed that test by construction, expiring into _resolve_lost_peer() and
+## routing both peers to the lobby while the outage was still inside its own
+## 10-15 s envelope. 30 s covers it with margin, matches RECONNECT_GRACE_PERIOD
+## (the two windows now describe the same outage), and stays bounded - it is NOT
+## an infinite wait: on expiry _resolve_lost_peer() routes to the lobby with the
+## "partner did not return" notice, exactly as before. Cost of the longer window
+## is one rejoin dial every RECONNECT_RETRY_INTERVAL (1.5 s -> ~20 UDP dials over
+## 30 s), which is negligible on the thesis's low-end devices.
+const RECONNECT_HOLD_SECONDS: float = 30.0
+## Spacing of the client's rejoin attempts inside the hold. First four dials run
+## at RECONNECT_RETRY_INTERVAL (the host usually frees the slot within seconds —
+## measured phone rejoins land at 4–15 s), then spacing backs off to 3 s and 5 s
+## so a dead 30 s window costs ~11 dials instead of ~20. Implemented by rewriting
+## the repeating timer's wait_time after each actual dial (takes effect next
+## tick); the timer itself is never stopped early, so retries cannot strand.
 const RECONNECT_RETRY_INTERVAL: float = 1.5
+## Per-point score chatter. increment_local() and _merge_counter() each _log() every
+## single point, and _log() prints AND buffers into SessionLogger — on a 30 s round
+## with both peers scoring that is hundreds of entries per round and thousands per
+## session (measured: the phone exports carry them all). Milestone logs (quota met,
+## completions, merges that cross the win quota) still log; only the per-point
+## tick is gated. Flip to true when diagnosing score desync.
+const VERBOSE_SCORE_LOG: bool = false
+## Keep-alive spacing. ENet only declares a peer dead when a RELIABLE packet it sent is
+## never acknowledged - an idle connection (lobby, paused round, waiting-for-partner
+## screen) has no pending traffic, so a peer whose wifi vanished without a disconnect
+## notification was never timed out: the survivor kept playing an unpaused round against
+## nobody, and the host's ENet table kept the dead client's slot occupied, refusing every
+## re-dial until the 30 s hold expired into the lobby. One tiny reliable RPC per second
+## gives both sides a pending acknowledgement to miss, so a dead link is detected on both
+## devices within ENet's ~5 s timeout, the survivor's round pauses, and the freed slot
+## admits the re-dial. Measured shape of the failure this exists for: two real phones,
+## "second disconnect of a session never reconnects and the other device freezes".
+const HEARTBEAT_INTERVAL: float = 1.0
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # STATE VARIABLES
@@ -88,17 +124,60 @@ var grace_period_active: bool = false
 var reconnect_hold_active: bool = false
 var _reconnect_hold_timer: Timer = null
 var _reconnect_retry_timer: Timer = null
+var _heartbeat_timer: Timer = null
 var _reconnect_hold_as_host: bool = false
+## Actual re-dials issued in the current hold (reset on open and on resolve).
+## Drives the retry backoff: attempts 1–4 at RECONNECT_RETRY_INTERVAL, 5–8 at
+## 3 s, 9+ at 5 s. Counted only when a dial is really issued, never for a
+## skipped tick (connected handshake / in-flight dial), so the cadence follows
+## effort, not wall time.
+var _rejoin_attempt_count: int = 0
+## True once THIS session's exit has been narrated into SessionLogger by
+## _resolve_lost_peer(). GameManager.return_to_multiplayer_lobby() reads it so a
+## disconnect-driven exit records one "disconnected" row, not a second generic one.
+## Reset in adopt_existing_peer(), which every session start funnels through.
+var _mp_disconnect_recorded_this_session: bool = false
+## One-shot reason override: abandon_reconnect() sets it before the hold resolves so
+## _resolve_lost_peer() can tell "the player gave up waiting" from "the window expired".
+var _mp_exit_reason_override: String = ""
 ## The address this peer last joined, so a dropped client can dial the same host again.
 ## join_server() used to take these as arguments and forget them, which is why in-round
 ## reconnect could not be implemented without them.
 var _last_join_ip: String = ""
 var _last_join_port: int = DEFAULT_PORT
+## Port this device's own server was created on. Needed by _relisten_as_host()
+## after the host's server socket dies: the replacement server must bind the SAME
+## port the partner's re-dial is aimed at. Recorded by create_server() and
+## adopt_existing_peer().
+var _last_host_port: int = DEFAULT_PORT
+## Msec timestamp of the re-dial currently in flight (0 = none). _attempt_rejoin()
+## reads it so a still-progressing ENet handshake is left alone instead of being
+## torn down mid-connection. See the retry-race note in _attempt_rejoin().
+var _rejoin_dial_started_msec: int = 0
+
+## Host-side bookkeeping for the rejoin round-resync: the round the host is
+## currently running, recorded by _load_next_round() when it loads it, and sent
+## to a rejoined peer by _end_reconnect_hold() so both peers land on the same
+## round instead of diverging across a drop.
+var _current_round_ctx: Dictionary = {}
+
+## Set when _transition_to_next_round() runs while a reconnect hold is open.
+## The transition must not broadcast a round-load to a peer that is gone; it is
+## re-run by _end_reconnect_hold() once the hold resolves.
+var _pending_round_transition: bool = false
 
 # Game session
 var current_scenario_id: String = ""
 var game_in_progress: bool = false
 var _ready_signal_emitted: bool = false
+## True once the team ran out of lives (set by both game-over RPCs). While set,
+## the session is dead: rounds will never load again, so a drop must route to
+## the lobby, never open a reconnect hold. Without this, a drop on the
+## game-over/scoreboard screen opened a hold "on scene evidence" (a round scene
+## IS on screen) and froze a finished session for 30 s instead of leaving it.
+## Cleared by _reset_round_status() (a fresh round means a live session) and by
+## disconnect_multiplayer().
+var _mp_session_over: bool = false
 
 ## True from the moment start_countdown() puts a 3-2-1 chain on the wire until the
 ## next _reset_round_status(). Two independent callers ask for the round's countdown
@@ -113,6 +192,44 @@ var _ready_signal_emitted: bool = false
 ## round_starting emissions, two GO ticks, two start_game() calls and two live
 ## ui_timer children on the round node. tools/VerifyCountdownOnce.tscn locks this in.
 var _countdown_started_this_round: bool = false
+
+## True once this round's scene actually went live (start_game() ran on this peer).
+## The rejoin resync needs it: a peer that drops during the countdown comes back to a
+## round whose countdown chain can never be re-fired for it (the one-chain latch above
+## is already spent), so if the HOST's copy is live the rejoined peer must be kicked
+## into the game directly instead of waiting for a GO that already happened.
+var _round_went_live: bool = false
+
+## Armed by resync_round_to_peer() when a rejoining peer has to load a round the host
+## is already playing. The kick cannot be delivered by poking the scene — the round
+## scene is about to be REPLACED by _load_next_round(), so the poke would reach a
+## dying node — so it rides as a flag and the fresh scene consumes it at the point
+## where it would otherwise sit down to wait for a countdown.
+var _pending_live_rejoin_kick: bool = false
+## Baseline the armed kick belongs to. A kick is valid ONLY for the round whose GO
+## was missed (equal-baseline resync, or the fresh load a different-baseline resync
+## just performed). Without this, a flag armed for round N and never consumed (poke
+## missed the scene, scene was null/lobby, peer idled on instructions while the host
+## moved on) is eaten by round N+1's fresh scene, which skips its ready handshake
+## and hangs the host in "waiting for partner". The consumer compares this against
+## round_score_baseline and drops a mismatch.
+var _pending_kick_baseline: int = -1
+
+## The local player's own completion payload for the round in progress, as filed by
+## report_player_completion(). A rejoining client arrives on a NEW peer id, so the
+## entry it filed before the drop is keyed by an id nobody owns any more - and the
+## report RPC itself may have been lost with the connection. This copy is what lets
+## the peer re-file under its new id after a rejoin (_refile_completion_after_rejoin),
+## so a round that was half-finished before the drop can still resolve.
+var _local_round_completion: Dictionary = {}
+
+## One both_players_completed resolution per round. A completion re-filed after a
+## rejoin can arrive while this peer has already resolved the round through another
+## path; without the latch the second _check_both_completed() pass would re-emit the
+## signal, re-advance the round summary and - on the host - run
+## _transition_to_next_round() twice, skipping a round. Cleared everywhere the
+## completion table is reset for a fresh round.
+var _round_resolution_emitted: bool = false
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # G-COUNTER CRDT (Conflict-Free Replicated Data Type)
@@ -146,6 +263,11 @@ func _ready() -> void:
 	disconnection_timer = Timer.new()
 	disconnection_timer.wait_time = RECONNECT_GRACE_PERIOD
 	disconnection_timer.one_shot = true
+	# ALWAYS: the hold pauses the tree, and a pausable grace timer frozen for the
+	# whole hold would thaw AFTER the hold resolved and fire into the next session.
+	# It is cancelled on hold end, but while a hold is open it must keep real time
+	# so the two windows stay aligned instead of stacking.
+	disconnection_timer.process_mode = Node.PROCESS_MODE_ALWAYS
 	disconnection_timer.timeout.connect(_on_grace_period_timeout)
 	add_child(disconnection_timer)
 
@@ -165,7 +287,17 @@ func _ready() -> void:
 	_reconnect_retry_timer.process_mode = Node.PROCESS_MODE_ALWAYS
 	_reconnect_retry_timer.timeout.connect(_attempt_rejoin)
 	add_child(_reconnect_retry_timer)
-	
+
+	# ALWAYS mode for the same reason as the two hold timers above: the peer has to
+	# stay observable DURING a hold, when the tree is paused for the whole window.
+	_heartbeat_timer = Timer.new()
+	_heartbeat_timer.wait_time = HEARTBEAT_INTERVAL
+	_heartbeat_timer.one_shot = false
+	_heartbeat_timer.process_mode = Node.PROCESS_MODE_ALWAYS
+	_heartbeat_timer.timeout.connect(_send_heartbeat)
+	add_child(_heartbeat_timer)
+	_heartbeat_timer.start()
+
 	_log("NetworkManager initialized")
 
 ## Adopt a peer somebody else created, and remember where it dialled.
@@ -193,7 +325,16 @@ func adopt_existing_peer(as_host: bool, ip: String = "", port: int = 0) -> bool:
 	network = existing_peer
 	is_host = as_host
 	local_player_id = 1 if as_host else 2
-	if not as_host and ip != "":
+	# A fresh session gets a fresh exit ledger: the previous session's
+	# "disconnected" row must not suppress this one's lobby_return record.
+	_mp_disconnect_recorded_this_session = false
+	_mp_exit_reason_override = ""
+	if as_host:
+		# Recorded so _relisten_as_host() can rebind the same port after this
+		# device's own server socket dies. GameManager.host_game() is the shipped
+		# host path and it passes its port through here.
+		_last_host_port = port if port > 0 else DEFAULT_PORT
+	elif ip != "":
 		_last_join_ip = ip
 		_last_join_port = port if port > 0 else DEFAULT_PORT
 
@@ -206,6 +347,10 @@ func adopt_existing_peer(as_host: bool, ip: String = "", port: int = 0) -> bool:
 	remote_player_id = 0
 	_ready_signal_emitted = false
 	_countdown_started_this_round = false
+	_round_went_live = false
+	_pending_live_rejoin_kick = false
+	_local_round_completion = {}
+	_round_resolution_emitted = false
 
 	# Ensure multiplayer signals are connected.
 	if not multiplayer.peer_connected.is_connected(_on_player_connected):
@@ -300,6 +445,7 @@ func create_server(port: int = DEFAULT_PORT) -> bool:
 	is_host = true
 	connection_active = true
 	local_player_id = 1
+	_last_host_port = port
 	
 	# Register host as Player 1
 	players[multiplayer.get_unique_id()] = {
@@ -522,6 +668,9 @@ func join_server(ip: String, port: int = DEFAULT_PORT) -> bool:
 	# Remembered so _attempt_rejoin() can dial the same host again after a drop.
 	_last_join_ip = ip
 	_last_join_port = port
+	# When THIS dial was placed, so the retry loop can tell a progressing
+	# handshake from a stuck one (see _attempt_rejoin()).
+	_rejoin_dial_started_msec = Time.get_ticks_msec()
 	
 	# Disconnect existing signals to prevent duplicates
 	if multiplayer.connected_to_server.is_connected(_on_connected_to_server):
@@ -544,6 +693,12 @@ func _on_connected_to_server() -> void:
 	_log("✅ Connected to server!")
 	_log("🎮 You are Player 2 (User)")
 	connection_active = true
+	# The dial landed. Stop the retry loop HERE, not only inside
+	# _end_reconnect_hold(): that one early-returns when no hold is open, and a
+	# dial that straddled the hold's expiry would otherwise leave the timer
+	# spinning for the rest of the session.
+	if not _reconnect_retry_timer.is_stopped():
+		_reconnect_retry_timer.stop()
 	
 	# The peer came back. Close the window it opened, otherwise the timer that was
 	# waiting for this reconnect fires 30 s later and clears game_in_progress on the
@@ -571,7 +726,31 @@ func _on_connection_failed() -> void:
 	connection_failed.emit()
 
 func _on_server_disconnected() -> void:
-	# Called when server disconnects (client side)
+	# Called when the server connection drops. That is normally the CLIENT seeing
+	# the host go away — but NOT only that: SceneMultiplayer emits server_disconnected
+	# on ANY CONNECTED→DISCONNECTED transition of the multiplayer peer, and on the
+	# HOST that transition is its own ENet server dying (wifi dropped on the host
+	# phone: the ENet service loop errors out and the engine close()s the peer).
+	# Measured on two real phones, session_2026-09-14T01-49-22.json:
+	#   175.72s  ⚠️ Server disconnected!          ← ON THE HOST DEVICE
+	#   205.68s  Reconnect hold ended (expired)
+	#            Host disconnected during game, returning to lobby...
+	# The hardcoded client path below made the host run the CLIENT exit branch of
+	# _resolve_lost_peer() — "Host disconnected" logged on the host itself — which
+	# tore its own server down via return_to_multiplayer_lobby(). The partner's
+	# re-dial then had nothing to rejoin: first drop of a session recovered, the
+	# second killed it permanently. The host must RE-LISTEN, not leave.
+	if is_host and game_in_progress:
+		# Hold the round open as host (freeze + overlay, no re-dial — the host has
+		# nothing to dial), and rebind the port so the returning partner can rejoin.
+		# The re-listen itself is DEFERRED for the same reason _attempt_rejoin() is:
+		# this handler runs inside the dead ENet peer's own poll, and swapping
+		# multiplayer_peer under a poll on the stack is how you get a crash
+		# instead of a recovery.
+		_log("⚠️ Server socket lost on THIS device (host) — holding and re-listening")
+		_begin_reconnect_hold(true)
+		call_deferred("_relisten_as_host")
+		return
 	_log("⚠️ Server disconnected!")
 	# Queue the reason BEFORE the teardown: the lobby this peer is about to be dropped into
 	# reads it in its _ready(). A key, not a sentence — see GameManager.set_multiplayer_notice().
@@ -595,18 +774,51 @@ func _on_server_disconnected() -> void:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 func _on_player_connected(peer_id: int) -> void:
-	# Called on server when a player connects
-	if players.size() >= MAX_PLAYERS:
+	# peer_connected fires on BOTH sides: on the server for the client that
+	# arrived, and on a client for peer 1 (the host) the moment its own dial
+	# completes. The capacity gate below is server business only. It used to run
+	# unguarded, and on a REJOINING client it read its own players dict — which
+	# still held {1, the client's pre-drop id} until the host's list sync
+	# arrived a round trip later — as "full", and called disconnect_peer(1) on
+	# the connection it had just spent the grace period rebuilding. The client
+	# then dropped itself, opened a fresh hold, re-dialed, and rejected itself
+	# again: on the phones this showed up as a rejoin that succeeded exactly
+	# once and then flapped until the hold expired. tools/VerifyHostSocketDeath.tscn.
+	if is_host and players.size() >= MAX_PLAYERS:
 		_log("❌ Max players reached, rejecting connection")
 		network.disconnect_peer(peer_id)
 		return
 	
 	# Host side of the same thing: the partner is back, so the window that was
 	# counting down for their absence has to close, and a held round resumes.
-	_cancel_grace_period("peer rejoined")
-	_end_reconnect_hold(true)
-
+	#
+	# remote_player_id is written BEFORE _end_reconnect_hold(true), not after: a
+	# rejoining ENet client arrives on a NEW peer id, and _end_reconnect_hold()
+	# reads remote_player_id to aim resync_round_to_peer at the peer that just
+	# came back. With the write below the call it still held the pre-drop id, so
+	# the resync RPC went to a peer that no longer existed ("Invalid target
+	# peer"), the rejoined client never learned which round the host was on, and
+	# the two peers sat waiting for each other's completions forever - the
+	# intermittent post-rejoin freeze. tools/VerifyInRoundReconnect.tscn.
 	remote_player_id = peer_id
+	_cancel_grace_period("peer rejoined")
+	# Captured BEFORE the hold closes: _end_reconnect_hold() resyncs the returner
+	# itself when it owned a hold, and this peer must not be brought onto the
+	# round twice.
+	var _had_hold: bool = reconnect_hold_active
+	_end_reconnect_hold(true)
+	# A peer arriving mid-session with no hold open on this side still missed
+	# every broadcast sent while it was gone (round loads, completions, pause):
+	# the host may never have noticed the drop at all (a killed dial fails on
+	# the client in milliseconds; the host learns it only via heartbeat timeout,
+	# if ever), so no hold, no resync, and the returner silently disagrees with
+	# the session — missed round (stuck on the old one, "waiting" forever) or
+	# missed pause (dead pause button on one phone). Not a first join: those
+	# happen in the lobby with no round running. Skipped while a session is
+	# over — scores are final and the next stop is the lobby, not a round.
+	if is_host and game_in_progress and not _had_hold and not _mp_session_over:
+		_bring_peer_onto_current_round(peer_id)
+
 	_log("✅ Player connected (Peer ID: " + str(peer_id) + ")")
 
 @rpc("any_peer", "reliable")
@@ -637,6 +849,12 @@ func _sync_player_list(updated_players: Dictionary) -> void:
 	# Sync player list from server to clients
 	players = updated_players
 	_log("Player list synced: " + str(players.size()) + " players")
+	# A completion can be filed under a peer id that only becomes part of the
+	# player table NOW - a rejoining client's re-filed report can land on the
+	# host before its own _register_player round trip does. The freshly synced
+	# table can be what completes the player-number pair, so the resolution
+	# check has to run again (it is latched, so this cannot double-resolve).
+	_check_both_completed()
 
 func _on_player_disconnected(peer_id: int) -> void:
 	# Called when a player disconnects
@@ -669,6 +887,17 @@ func _on_player_disconnected(peer_id: int) -> void:
 		# every listener still runs in this frame either way.
 		_begin_reconnect_hold(is_host)
 		player_disconnected.emit(peer_id)
+	elif peer_id == remote_player_id:
+		# The partner dropped before its _register_player RPC ever arrived —
+		# measured on-device when a re-dial was killed by the retry race 30 ms
+		# after connecting, before registration landed. players has no entry, so
+		# without this branch NO hold opened and no hold expiry either: the other
+		# side sat waiting for a completion that could never arrive (the frozen
+		# "you win / waiting for partner" page). players.has() says we never
+		# registered it; remote_player_id says it was the partner anyway.
+		remote_player_id = 0
+		_begin_reconnect_hold(is_host)
+		player_disconnected.emit(peer_id)
 
 ## True while a live round is frozen waiting for a dropped peer.
 ##
@@ -693,12 +922,42 @@ func _begin_reconnect_hold(as_host: bool) -> void:
 	if reconnect_hold_active:
 		# Second handler for the same drop. The first one owns it.
 		return
-	if not game_in_progress:
-		# No live round to hold open — resolve immediately, as before.
+	if _mp_session_over:
+		# Finished session (game-over/scoreboard screen): there is no round to
+		# hold open and nothing to rejoin into. Resolve straight to the lobby
+		# instead of freezing dead scores for 30 s.
 		_resolve_lost_peer(as_host)
 		return
+	if not game_in_progress:
+		# A round scene on screen IS a live round even if this peer's flag says
+		# otherwise (client desync, harness path, legacy start). Trust the scene:
+		# open the hold so the drop gets an overlay, a freeze and a 30 s boot to
+		# the lobby instead of being swallowed silently.
+		var cs := get_tree().current_scene
+		var looks_like_round: bool = cs != null and cs != self and (
+			cs.has_method("kick_rejoined_live_round_start") \
+			or cs.has_method("_on_reconnect_hold_started"))
+		if looks_like_round:
+			game_in_progress = true
+			_log("⏳ Hold opened on scene evidence (game_in_progress was false)")
+		else:
+			# No live round to hold open — resolve immediately, as before.
+			_resolve_lost_peer(as_host)
+			return
 	reconnect_hold_active = true
 	_reconnect_hold_as_host = as_host
+	_rejoin_attempt_count = 0
+	_reconnect_retry_timer.wait_time = RECONNECT_RETRY_INTERVAL
+	# AUTO-PAUSE ON DISCONNECT: the survivor freezes the moment the drop is known,
+	# so the round never "progresses in the background" against nobody. Recorded so
+	# the pre-hold player pause (if any) is restored on rejoin instead of forgotten,
+	# and so is_paused() tells the truth during the hold (the scene used to freeze
+	# the tree directly while _pause_active stayed false, which made the next pause
+	# press behave divergently). Local only — the peer is gone, there is nobody to
+	# broadcast to; the resync on rejoin brings them back onto the frozen round.
+	_pause_before_hold_had_pause = _pause_active
+	_pause_active = true
+	_pause_source = PAUSE_SOURCE_HOLD
 	_reconnect_hold_timer.start()
 	if not as_host:
 		_reconnect_retry_timer.start()
@@ -718,17 +977,297 @@ func _end_reconnect_hold(rejoined: bool) -> void:
 	reconnect_hold_active = false
 	_reconnect_hold_timer.stop()
 	_reconnect_retry_timer.stop()
+	_rejoin_attempt_count = 0
+	# Release the hold's claim on the pause authority BEFORE the scene unpauses:
+	# on rejoin the pre-hold player pause (if any) is restored, otherwise the
+	# authority is clean so the next pause press lands. On expiry the resolution
+	# below routes to the lobby, which unpauses itself.
+	if rejoined:
+		_pause_active = _pause_before_hold_had_pause
+		_pause_source = PAUSE_SOURCE_PLAYER if _pause_before_hold_had_pause else ""
+	else:
+		_pause_active = false
+		_pause_source = ""
+	_pause_before_hold_had_pause = false
+	# The grace window and the hold open together on server_disconnected, so they
+	# must also close together. Without this the 30 s grace timer (a plain
+	# pausable node Timer, frozen for the whole hold) thawed out AFTER the hold
+	# had already resolved the drop, and fired its own resolution — clearing
+	# game_in_progress and emitting reconnect_failed — into whatever session
+	# state followed: the lobby, or a fresh round started inside 30 s.
+	_cancel_grace_period("reconnect hold resolved")
 	var as_host: bool = _reconnect_hold_as_host
-	_log("⏳ Reconnect hold ended (%s)" % ("peer returned" if rejoined else "expired"))
+	# abandon_reconnect() sets _mp_exit_reason_override BEFORE this runs (and
+	# _resolve_lost_peer() clears it after), so the override is still set here
+	# exactly when the player gave up waiting. Plain if/else on purpose: a
+	# nested ternary here is correct but unreadable, and this line is read when
+	# diagnosing every single reconnect.
+	var hold_outcome: String = "expired"
+	if _mp_exit_reason_override != "":
+		hold_outcome = "abandoned by player"
+	elif rejoined:
+		hold_outcome = "peer returned"
+	_log("⏳ Reconnect hold ended (%s)" % hold_outcome)
 	# Emitted BEFORE the round is resolved so the scene can drop its overlay and unpause
 	# first: _resolve_lost_peer() changes scene, and a scene freed while still paused
 	# leaves the tree paused behind the lobby.
 	reconnect_hold_ended.emit(rejoined)
 	if not rejoined:
+		_pending_round_transition = false
 		_resolve_lost_peer(as_host)
+	elif as_host and game_in_progress:
+		# The host owns the round timeline, so the rejoined peer has to be
+		# brought back onto the SAME round the host is on - this is what turns
+		# "reconnected but frozen forever" into "reconnected and playing".
+		# Two shapes the world can be in after a 30 s drop:
+		#   1. a transition was deferred while the hold was open → run it now;
+		#   2. a round ctx exists → resync the peer to it. The resync covers both
+		#      sub-cases - equal baseline means the peer still has the round and
+		#      just resumes, different means it missed the round-load broadcast
+		#      and loads it.
+		# There is deliberately NO "start a fresh round" fallback. round_in_progress
+		# is a COMPLETION latch, not a liveness flag: _reset_round_status() clears
+		# it at every round load and only report_player_completion() sets it, so it
+		# is false for the whole first half of every live round. The old fallback
+		# keyed on it, so a mid-round rejoin whose round was started without a
+		# level set (empty ctx - e.g. the manual start path) matched "no round
+		# under way", discarded the LIVE round on both peers and reset the
+		# session state with it (measured: tools/VerifyInRoundReconnect.tscn,
+		# "the round was freed" on the host and the client's difficulty sentinel
+		# landing on the fresh round's 1.00 default). Any round that has genuinely
+		# ended is covered by branch 1 or 2: its transition either ran while the
+		# peer was away (ctx was recorded) or is parked behind this hold
+		# (_pending_round_transition). For a live ctx-less round the right action
+		# is nothing at all - both peers are already in that round, and the
+		# client unpauses itself in _on_reconnect_hold_ended(true).
+		# The resync (round ctx, lost completion, pause state) runs in
+		# _bring_peer_onto_current_round(). A deferred transition runs a round
+		# load next, which resets all of that on both sides anyway.
+		if _pending_round_transition:
+			_pending_round_transition = false
+			_transition_to_next_round.call_deferred()
+		elif not _current_round_ctx.is_empty():
+			_bring_peer_onto_current_round(remote_player_id)
+
+## Bring one (re)connected peer onto the round the host is running: round ctx,
+## the host's own completion if it finished while the peer was away, and the
+## pause authority's state. Called from _end_reconnect_hold() (hold path) and
+## from _on_player_connected() (a peer arriving mid-session with no hold open
+## on this side — e.g. the host never noticed the drop, so no hold, no resync,
+## and every broadcast the peer missed stays missed). All three payloads are
+## idempotent or baseline-gated, so an already-converged peer ignores them.
+func _bring_peer_onto_current_round(peer: int) -> void:
+	if peer == 0 or peer == multiplayer.get_unique_id():
+		return
+	# Pause-state convergence runs with or without a round ctx (a ctx-less live
+	# round still has a pause authority worth agreeing on); the round payload
+	# needs the ctx. Pause broadcasts are reliable but NOT retried: one sent
+	# while this peer was gone is lost, not queued, so after a rejoin the two
+	# sides can disagree about _pause_active — the side holding "paused" drops
+	# every new press as a duplicate while the other side waits for a transition
+	# that never comes ("pause does nothing on one phone"). _apply_pause_state
+	# is idempotent, and on the hold path _pause_active already holds the
+	# restored pre-hold value (never the hold's own freeze), so an
+	# already-converged peer ignores this.
+	_apply_pause_state.rpc_id(peer, _pause_active, _pause_source)
+	if _current_round_ctx.is_empty():
+		return
+	var ctx: Dictionary = _current_round_ctx
+	resync_round_to_peer.rpc_id(
+		peer, ctx["level_set"], ctx["baseline"], ctx["lives"], ctx["rounds"],
+		_round_went_live)
+	# This side's own completion report is a reliable RPC like any other:
+	# the copy aimed at a peer that was gone was LOST, not queued. Without
+	# this re-delivery, a host that finished the round while the partner
+	# was away greets the rejoin with a partner that never learns the
+	# round is half-resolved - both sides then sit on "waiting for
+	# partner" forever. Baseline-gated on the receiver so it can never
+	# pollute a round the resync did not land on.
+	var own_entry: Dictionary = round_completion_status.get(multiplayer.get_unique_id(), {})
+	if not own_entry.is_empty():
+		_sync_host_round_completion.rpc_id(peer, ctx["baseline"], own_entry)
+
+## Re-align ONE rejoined peer with the round the host is running.
+##
+## Sent by the host when a hold ends with the peer back. The peer compares the
+## baseline inside the payload against its own: equal means it is already in
+## this round (the drop happened mid-round) and it just resumes; different means
+## it missed this round's opening broadcast while disconnected, and it loads the
+## round the host is actually in instead of waiting on one that already moved.
+## No score is rewritten here - the payload carries the SAME baseline the host
+## loaded the round with, and the G-Counter merge stays element-wise max.
+##
+## round_live covers the countdown-phase drop: the rejoined peer's scene never saw
+## the GO (the one-countdown latch means the chain cannot be re-fired for it), so
+## when the host's copy of the round is already live the peer must be started
+## directly rather than left waiting on a countdown that already happened.
+@rpc("authority", "reliable")
+func resync_round_to_peer(level_set: Dictionary, baseline: int, lives: int, rounds: int,
+		round_live: bool) -> void:
+	if baseline == round_score_baseline:
+		_log("🔁 Resync: already in this round (baseline %d) - resuming" % baseline)
+		if round_live:
+			# Arm first, poke second. The poke covers a scene already sitting in its
+			# pre-start wait; the flag covers one that is still on its instruction
+			# pages (it reaches the pre-start point only when the player dismisses
+			# them, long after this resync has come and gone).
+			_pending_live_rejoin_kick = true
+			_pending_kick_baseline = baseline
+			_kick_rejoined_scene_live()
+		# The same round is resuming, so a completion filed before the drop still
+		# belongs to it - under a peer id the re-dial has replaced.
+		_refile_completion_after_rejoin()
+		return
+	_log("🔁 Resync: missed this round's start (baseline %d vs %d) - loading it" % [round_score_baseline, baseline])
+	_load_next_round(level_set, baseline, lives, rounds)
+	# Armed AFTER _load_next_round(): that call runs _reset_round_status() on its way
+	# through, and arming before it would have the reset eat the kick. The flag is
+	# consumed by the fresh scene at the point where it would otherwise wait.
+	# Scoped to the newly loaded baseline so it can never leak into the NEXT round.
+	if round_live:
+		_pending_live_rejoin_kick = true
+		_pending_kick_baseline = baseline
+
+
+## Re-file this peer's own round completion after a rejoin, under the CURRENT peer id.
+##
+## Runs only from the resume path of resync_round_to_peer() - the round on screen is
+## the same one the completion belongs to, so the payload is still valid. Two losses
+## it repairs, both of which otherwise deadlock the round at "waiting for partner":
+##   - the report RPC never reached the partner (the drop won the race), so the
+##     partner's round_completion_status is missing this player entirely, and the
+##     partner that finishes next waits forever for a completion that already
+##     happened;
+##   - the report DID arrive, but keyed by the pre-drop peer id, which the re-dial
+##     replaced and _check_both_completed() no longer counts.
+## If this side had not finished the round before the drop, there is nothing to
+## re-file and this is a no-op.
+func _refile_completion_after_rejoin() -> void:
+	if _local_round_completion.is_empty():
+		return
+	var my_id := multiplayer.get_unique_id()
+	if round_completion_status.has(my_id):
+		return  # Already filed under the current id - nothing to repair
+	round_completion_status[my_id] = _local_round_completion.duplicate()
+	_sync_player_completion.rpc_id(1, my_id,
+		_local_round_completion.get("success", false),
+		_local_round_completion.get("score", 0),
+		_local_round_completion.get("accuracy", -1.0),
+		_local_round_completion.get("reaction_time_ms", -1))
+	_log("🔁 Re-filed my round completion under new peer id %d after the rejoin" % my_id)
+	_check_both_completed()
+
+
+## The host's own round completion, re-delivered to a peer that has just rejoined.
+##
+## Sent by _end_reconnect_hold() right after resync_round_to_peer(), because the
+## original report was a reliable RPC aimed at a peer that was gone - lost, not
+## queued. The rejoined peer files it and re-runs the resolution check, which is
+## what un-sticks a survivor that has been sitting on "waiting for partner" since
+## before the rejoin.
+@rpc("authority", "reliable")
+func _sync_host_round_completion(baseline: int, payload: Dictionary) -> void:
+	# Baseline gate: if the resync that preceded this re-loaded a DIFFERENT round
+	# for this peer, the payload describes a round that is over and must not
+	# pollute the fresh one. (The reload sets round_score_baseline to the same ctx
+	# baseline, so a completion of the round now loading still lands correctly.)
+	if payload.is_empty() or baseline != round_score_baseline:
+		return
+	round_completion_status[1] = payload
+	_log("🔁 The host's round completion was re-delivered after the rejoin")
+	_check_both_completed()
+
+
+## Round-start bookkeeping the round scenes report. MultiplayerMiniGameBase.start_game()
+## calls this so the rejoin resync can tell a returning peer whether the round it is
+## rejoining is already being played.
+func notify_round_went_live() -> void:
+	_round_went_live = true
+
+
+## Read-and-clear for the round scene: a True return means "you are a rejoining peer,
+## the host is already playing this round - skip the waiting/countdown and start".
+## Scoped to the round that armed it: a kick armed for a DIFFERENT baseline is stale
+## and is dropped (and disarmed) here instead of skipping this round's ready
+## handshake. This is the final guard rail — even if a stale flag survives a reset
+## or a missed poke, it can never fire into the wrong round.
+func consume_pending_live_rejoin_kick() -> bool:
+	if not _pending_live_rejoin_kick:
+		return false
+	if _pending_kick_baseline != -1 and _pending_kick_baseline != round_score_baseline:
+		_log("🔁 Dropping stale rejoin kick (armed for baseline %d, now on %d)" % [_pending_kick_baseline, round_score_baseline])
+		_pending_live_rejoin_kick = false
+		_pending_kick_baseline = -1
+		return false
+	_pending_live_rejoin_kick = false
+	_pending_kick_baseline = -1
+	return true
+
+
+## Non-consuming peek at the rejoin kick, for the round scene's intro beat: a peer
+## rejoining into a live round must join NOW, not watch a 2.5 s card first. Unlike
+## consume_*, this never disarms — the dismiss path still consumes normally.
+func has_pending_live_rejoin_kick() -> bool:
+	return _pending_live_rejoin_kick
+
+
+## Deliver the rejoin kick to a scene that is already loaded and sitting in its
+## pre-start wait (the equal-baseline resync case - the scene survived the drop).
+## A kick that lands also disarms the pending flag: the flag exists for the scene
+## that has not reached its pre-start point yet, and leaving it armed after a
+## successful poke would let it mis-start the NEXT round this scene loads.
+func _kick_rejoined_scene_live() -> void:
+	var cs := get_tree().current_scene
+	if cs == null or cs == self:
+		# No round scene to kick (mid-transition / lobby): the kick has nowhere to
+		# land and must NOT stay armed for the next round to eat. The resync path
+		# re-arms after the fresh load when it needs to.
+		_pending_live_rejoin_kick = false
+		_pending_kick_baseline = -1
+		return
+	if not cs.has_method("kick_rejoined_live_round_start"):
+		_pending_live_rejoin_kick = false
+		_pending_kick_baseline = -1
+		return
+	if cs.has_method("kick_rejoined_live_round_start"):
+		# A scene that is already playing, or already past its round into the
+		# results wait, has no pre-start left for this kick: the rejoin needs no
+		# start at all. The flag MUST be disarmed here too, not only on a landed
+		# kick - this is the armed-by-a-live-scene case, and an armed flag left
+		# behind is consumed by the NEXT round's fresh scene as if IT had missed
+		# the GO, skipping that round's ready handshake (the phone-reported
+		# "waiting for partner" hang). Only a scene still on its instruction
+		# pages keeps the flag armed: that is the one case the flag exists for.
+		if bool(cs.get("game_active")) or bool(cs.get("is_waiting_for_partner")):
+			_pending_live_rejoin_kick = false
+			_pending_kick_baseline = -1
+			_log("🔁 Rejoin needs no kick - the scene is already past its pre-start wait")
+			return
+		_log("🔁 Round already live on the host - kicking the rejoined peer's scene into the game")
+		var kicked: bool = cs.kick_rejoined_live_round_start()
+		if kicked:
+			_pending_live_rejoin_kick = false
+			_pending_kick_baseline = -1
+		# NOT kicked (scene still on instructions): flag stays armed, scoped to
+		# this baseline, consumed at instruction-dismiss.
 
 
 func _on_reconnect_hold_timeout() -> void:
+	_end_reconnect_hold(false)
+
+
+## The player gives up waiting and cuts the connection themselves.
+##
+## The reconnecting overlay carries a "Return to Lobby" button because 30 s is a
+## long window and the player must not be locked inside it: this ends the hold
+## exactly the way an expiry does (round resolved, notices queued, lobby
+## routing through _resolve_lost_peer), just sooner and on purpose. Inert when
+## no hold is open, so a double tap cannot resolve a round twice.
+func abandon_reconnect() -> void:
+	if not reconnect_hold_active:
+		return
+	_log("🚪 Player chose to leave while the reconnect hold was open")
+	_mp_exit_reason_override = "the player left through the reconnect window's Return to Lobby button"
 	_end_reconnect_hold(false)
 
 
@@ -736,6 +1275,33 @@ func _on_reconnect_hold_timeout() -> void:
 func _attempt_rejoin() -> void:
 	if is_host or _last_join_ip == "":
 		return
+	# NEVER tear down a dial that is still progressing.
+	#
+	# The retry timer fires every RECONNECT_RETRY_SECONDS unconditionally, and this
+	# function used to close whatever peer was in hand and re-dial — including a
+	# dial that was one round trip from completing. The ENet handshake finishes on
+	# the HOST first: the server admits the client (peer_connected) a full round
+	# trip before the client's own connected_to_server fires, and the retry timer
+	# lands in exactly that window. Measured on-device (two phones,
+	# session_2026-09-14T01-49-22.json):
+	#   146.92  Player connected (Peer ID: 673633655)     ← dial #1 admitted by host
+	#   146.95  Player disconnected (Peer ID: 673633655)  ← killed by its own retry 30 ms later
+	#   147.03  Player connected (Peer ID: 1950866154)    ← dial #2
+	# Each needless kill also re-randomises the client's peer id, so any state
+	# keyed by it (G-Counter slots, completion reports) has to be rebuilt. Give a
+	# progressing dial two retry intervals to land before replacing it.
+	if network and is_instance_valid(network):
+		var dial_status := network.get_connection_status()
+		if dial_status == MultiplayerPeer.CONNECTION_CONNECTED:
+			# Already in. connected_to_server owns closing the hold; a retry firing
+			# after that (late timer tick) must not rip the live session out.
+			if not _reconnect_retry_timer.is_stopped():
+				_reconnect_retry_timer.stop()
+			return
+		if dial_status == MultiplayerPeer.CONNECTION_CONNECTING:
+			var dial_age_ms := Time.get_ticks_msec() - _rejoin_dial_started_msec
+			if dial_age_ms < int(RECONNECT_RETRY_INTERVAL * 2000.0):
+				return  # Still in flight — let the handshake finish.
 	# The dead peer has to go first: create_client() on a live multiplayer_peer would
 	# leave two peers behind, and join_server()'s own connection_active guard would
 	# refuse the call outright.
@@ -744,8 +1310,139 @@ func _attempt_rejoin() -> void:
 		network = null
 	multiplayer.multiplayer_peer = null
 	connection_active = false
-	_log("🔄 Rejoin attempt → %s:%d" % [_last_join_ip, _last_join_port])
+	# Backoff lives here, on the dial itself — never on a skipped tick — so the
+	# cadence follows real effort: 1–4 at 1.5 s, 5–8 at 3 s, 9+ at 5 s. Rewriting
+	# wait_time on the running repeating timer takes effect next tick, and the
+	# timer is never stopped early, so retries cannot strand mid-hold.
+	_rejoin_attempt_count += 1
+	if _rejoin_attempt_count <= 4:
+		_reconnect_retry_timer.wait_time = RECONNECT_RETRY_INTERVAL
+	elif _rejoin_attempt_count <= 8:
+		_reconnect_retry_timer.wait_time = RECONNECT_RETRY_INTERVAL * 2.0
+	else:
+		_reconnect_retry_timer.wait_time = 5.0
+	_log("🔄 Rejoin attempt %d → %s:%d" % [_rejoin_attempt_count, _last_join_ip, _last_join_port])
 	join_server(_last_join_ip, _last_join_port)
+
+
+## One reliable keep-alive per second, both directions, for the lifetime of any
+## connection. See HEARTBEAT_INTERVAL for why this has to exist at all: ENet detects a
+## dead peer only through unacknowledged reliable traffic, and every state a real
+## session sits in between rounds (lobby, paused hold, waiting-for-partner) is otherwise
+## silent. The body is empty ON PURPOSE - the acknowledgement the transport owes for the
+## packet is the entire message. A dial in progress is not heartbeated: rpc() against a
+## CONNECTING peer is an error, and the hold's retry loop owns that peer.
+func _send_heartbeat() -> void:
+	if not connection_active or network == null or not is_instance_valid(network):
+		return
+	var live_peer := multiplayer.multiplayer_peer
+	if live_peer == null:
+		return
+	if live_peer.get_connection_status() != MultiplayerPeer.CONNECTION_CONNECTED:
+		return
+	_heartbeat.rpc()
+
+
+@rpc("any_peer", "reliable")
+func _heartbeat() -> void:
+	pass
+
+
+## One row per session exit, whoever narrates it. _resolve_lost_peer() records the
+## disconnect story (expiry / abandonment / partner gone); this covers every OTHER
+## way a live multiplayer session reaches the lobby — the pause menu's exit, the
+## game-over button, the lobby's disconnect — and is a no-op when the disconnect
+## path already spoke, so one exit never writes two contradictory reasons.
+func record_mp_exit_if_pending() -> void:
+	if _mp_disconnect_recorded_this_session:
+		return
+	_mp_disconnect_recorded_this_session = true
+	var detail: Dictionary = {
+		"team_score": get_total_score(),
+		"rounds_survived": rounds_survived,
+		"is_host": is_host,
+	}
+	if not _current_round_ctx.is_empty() and _current_round_ctx.has("level_set"):
+		var ls: Dictionary = _current_round_ctx["level_set"]
+		detail["round_games"] = [
+			String(ls.get("player1_game", "")).get_file(),
+			String(ls.get("player2_game", "")).get_file(),
+		]
+	if SessionLogger:
+		SessionLogger.record_mp_session_event("lobby_return",
+			"the multiplayer session ended back at the lobby", detail)
+
+
+## Rebind the host's server port after its own socket died.
+##
+## Reached from _on_server_disconnected() when THIS device is the host and a round
+## is live: Godot delivered server_disconnected on the server because the ENet host
+## object broke (network interface gone), and the engine has already close()d it.
+## The old peer is dead and will never accept anything, but the partner that lost
+## connectivity is running its own retry loop and will re-dial _last_join_ip:port.
+## Binding a fresh ENet server on that same port is what makes the re-dial land.
+## UDP has no TIME_WAIT, so rebinding immediately is safe, and a bind with the
+## interface still down succeeds too — the socket simply starts receiving once the
+## network returns. Session state (round ctx, G-Counter, lives, difficulty) lives in
+## the autoloads and survives the socket swap untouched.
+func _relisten_as_host() -> void:
+	# The hold opened one frame ago; anything may have happened in between (the
+	# player quit, the session was torn down). Never resurrect a session that
+	# already decided to end.
+	if not is_host or not game_in_progress or not reconnect_hold_active:
+		return
+	# The dead partner's bookkeeping has to go with its socket. peer_disconnected
+	# never arrived for it — the old server died before it could report — so
+	# players still holds its entry, and _on_player_connected() would reject the
+	# re-dial against MAX_PLAYERS with the slot still occupied by a ghost. Same
+	# for its round-completion report: the returning peer arrives on a NEW id and
+	# re-reports when its round resolves, and a stale second entry would let
+	# _check_both_completed() read "both players completed" for a round whose
+	# second player was never played to the end.
+	var stale_peers: Array = []
+	for pid in players.keys():
+		if int(players[pid].get("player_num", 0)) != 1:
+			stale_peers.append(pid)
+	for pid in stale_peers:
+		players.erase(pid)
+		round_completion_status.erase(pid)
+	remote_player_id = 0
+
+	var old_peer := network
+	network = ENetMultiplayerPeer.new()
+	var err := network.create_server(_last_host_port, MAX_PLAYERS - 1)
+	if err != OK:
+		_log("❌ Could not re-listen on port %d after the server died (%s) — this session cannot recover"
+			% [_last_host_port, error_string(err)])
+		network = old_peer
+		_end_reconnect_hold(false)
+		return
+	multiplayer.multiplayer_peer = network
+	if old_peer and old_peer != network:
+		old_peer.close()
+	connection_active = true
+	_log("🔁 Server socket died on this device — re-listening on port %d for the partner to rejoin"
+		% _last_host_port)
+
+
+## Show the end-of-session board on the way out of a dead session, instead of
+## routing straight to the lobby with nothing to read. Returns true when the
+## board took over the exit (its own button performs the lobby route, and its
+## watchdog forces it); false when there is no round scene to show it on, in
+## which case the caller falls through to its original immediate routing.
+## A finished session (lives out) renders as GAME OVER, anything earlier as the
+## partial SESSION ENDED board. Unpauses first: the hold froze the tree on the
+## way here, and both the board's tween and its button need a live tree
+## (the button is PROCESS_MODE_ALWAYS regardless, so it works even if a later
+## freeze lands on top).
+func _show_resolve_scoreboard() -> bool:
+	get_tree().paused = false
+	clear_pause_state()
+	var cs := get_tree().current_scene
+	if cs == null or cs == self or not cs.has_method("_show_mp_final_scoreboard"):
+		return false
+	cs.call("_show_mp_final_scoreboard", not _mp_session_over)
+	return true
 
 
 ## End a round whose peer did not come back, and route this side out of it.
@@ -756,8 +1453,60 @@ func _attempt_rejoin() -> void:
 ## gate: with no round in progress this is a deliberate teardown, which must not queue a
 ## notice and must not change scene.
 func _resolve_lost_peer(as_host: bool) -> void:
-	var had_round: bool = game_in_progress
+	# A finished session counts as a round to resolve: scores are final and the
+	# only correct exit is the lobby (with the partner/host-left notice), never
+	# silence. Without this, a drop on the game-over screen fell into the
+	# no-round early return and stranded both phones on dead scores.
+	var had_round: bool = game_in_progress or _mp_session_over
 	if not had_round:
+		# No round to resolve, but never leave a stale freeze behind: a hold that
+		# never opened pauses nothing, yet a prior pause/hold may have. Failing
+		# to clear here left the next session's first pause press swallowed.
+		get_tree().paused = false
+		clear_pause_state()
+		return
+	# The exit is narrated BEFORE the teardown clears the score it is describing. A
+	# multiplayer session that ends here — expiry, abandonment, or the partner never
+	# coming back — is the exact session the thesis needs a JSON row for, and until
+	# this block existed the export only ever ran on the final-score screen, so a
+	# session that died mid-round left no file at all: the failures that ended a test
+	# on the phones were the one thing the log never recorded. Score, rounds and the
+	# round's games are captured as they stood at the break, which is also the
+	# "score survives a disconnect" evidence.
+	_mp_disconnect_recorded_this_session = true
+	var exit_reason: String = _mp_exit_reason_override
+	_mp_exit_reason_override = ""
+	if exit_reason.is_empty():
+		exit_reason = ("the partner did not return within the %.0fs reconnect window"
+			% RECONNECT_HOLD_SECONDS) if as_host \
+			else ("the host did not return within the %.0fs reconnect window"
+				% RECONNECT_HOLD_SECONDS)
+	var exit_detail: Dictionary = {
+		"team_score": get_total_score(),
+		"rounds_survived": rounds_survived,
+		"is_host": as_host,
+	}
+	if not _current_round_ctx.is_empty() and _current_round_ctx.has("level_set"):
+		var ls: Dictionary = _current_round_ctx["level_set"]
+		exit_detail["round_games"] = [
+			String(ls.get("player1_game", "")).get_file(),
+			String(ls.get("player2_game", "")).get_file(),
+		]
+	if SessionLogger:
+		SessionLogger.record_mp_session_event("disconnected", exit_reason, exit_detail)
+	# Early exit shows the final board instead of dumping straight to the lobby:
+	# quitting or timing out with zero readable scores is exactly what the phones
+	# reported ("exits and goes to the lobby" with nothing shown). The board's
+	# own button performs the lobby route below, so nothing is skipped.
+	# Timelines stop here either way, so nothing resolves over the board.
+	game_in_progress = false
+	round_in_progress = false
+	# Session-end hygiene runs on both exits (board or immediate): stale
+	# completions/ctx must never leak into the next session.
+	round_completion_status.clear()
+	_current_round_ctx = {}
+	_pending_round_transition = false
+	if _show_resolve_scoreboard():
 		return
 	var is_host_role: bool = as_host
 	if not is_host_role:
@@ -795,10 +1544,15 @@ func _resolve_lost_peer(as_host: bool) -> void:
 		# CoopAdaptation, corrupting the adaptive-difficulty window with
 		# synthetic data.
 		game_in_progress = false
-		round_completion_status.clear()
-		round_in_progress = false
 		_log("🔌 Partner left during game, returning to lobby...")
 		GameManager.set_multiplayer_notice("notice_partner_left")
+		# Same one-row export the client branch gets through
+		# GameManager.return_to_multiplayer_lobby(): this branch routes RAW (the
+		# server must stay listening behind the lobby), so no other code path
+		# writes the file for a session that ended here — and this is exactly the
+		# "partner did not come back" session the thesis log must not lose.
+		if SessionLogger:
+			SessionLogger.export_session()
 		var host_lobby = "res://scenes/ui/MultiplayerLobby.tscn"
 		# Unfreeze before leaving. This branch changes scene RAW - deliberately, because
 		# unlike the client above the host is still the server and must keep listening so
@@ -852,6 +1606,12 @@ func _cancel_grace_period(reason: String) -> void:
 func _on_grace_period_timeout() -> void:
 	# The reconnection window closed with the peer still gone.
 	grace_period_active = false
+	if reconnect_hold_active:
+		# The hold owns the outcome while it is open — it has its own timeout and
+		# its own resolution. This window is for drops with no live round (no hold
+		# opens then); firing here anyway would clear game_in_progress out from
+		# under the hold's expiry handler and neuter its routing.
+		return
 	_log("⏰ Grace period expired - peer did not return")
 	
 	if not game_in_progress:
@@ -874,17 +1634,21 @@ func _on_grace_period_timeout() -> void:
 	GameManager.set_multiplayer_notice("notice_partner_no_return")
 	round_completion_status.clear()
 	round_in_progress = false
-	# Routing is left to the scene rather than done here, matching how
-	# server_disconnected is consumed (MultiplayerMiniGameBase connects it and calls
-	# GameManager.return_to_multiplayer_lobby). An autoload that changes scenes on
-	# its own would also free whatever is mid-transition.
-	#
-	# REACHABILITY, STATED PLAINLY: still not reached on the paths that ship, and now
-	# for a different reason. In-round reconnect IS implemented — see
-	# _begin_reconnect_hold() — but it holds the round for RECONNECT_HOLD_SECONDS (6 s),
-	# not for this 30 s window, and on expiry it resolves the round itself and routes
-	# out, whose teardown cancels this window. This handler remains the correct
-	# resolution for any future scene that holds a session open for the full window.
+	_current_round_ctx = {}
+	_pending_round_transition = false
+	# GUARANTEED BOOT: route out here instead of leaving the routing to the scene.
+	# Nothing in the shipped UI subscribes to reconnect_failed, so emitting alone
+	# left the player frozen in a dead round forever. Unpause first: the hold may
+	# have frozen the tree before this fired.
+	get_tree().paused = false
+	clear_pause_state()
+	var _gm := get_node_or_null("/root/GameManager")
+	if _gm and _gm.has_method("return_to_multiplayer_lobby"):
+		_gm.call_deferred("return_to_multiplayer_lobby")
+	# REACHABILITY: in-round drops normally resolve through _begin_reconnect_hold()
+	# (30 s hold, own timeout, own routing) whose teardown cancels this window, so
+	# this handler is the fallback for drops the hold path missed — but it must
+	# still boot to the lobby, never just emit.
 	reconnect_failed.emit()
 
 func disconnect_multiplayer() -> void:
@@ -900,7 +1664,14 @@ func disconnect_multiplayer() -> void:
 		reconnect_hold_active = false
 		_reconnect_hold_timer.stop()
 		_reconnect_retry_timer.stop()
-	
+		_rejoin_attempt_count = 0
+	# And for the round ctx: it names a round that no longer exists, and the next
+	# session's _end_reconnect_hold() would resync a returning peer into it. Cleared
+	# BEFORE the connection_active guard for the same reason the two clears above are.
+	_current_round_ctx = {}
+	_pending_round_transition = false
+	_mp_session_over = false
+
 	if not connection_active:
 		return
 	
@@ -933,7 +1704,18 @@ func disconnect_multiplayer() -> void:
 	remote_player_id = 0
 	_ready_signal_emitted = false
 	_countdown_started_this_round = false
-	
+	_round_went_live = false
+	_pending_live_rejoin_kick = false
+	_pending_kick_baseline = -1
+	# A teardown that leaves _pause_active set swallows the next session's first
+	# pause press (request_pause drops when already paused, with no UI feedback —
+	# the "host sometimes can't pause" report). Only the round-load, quit and host
+	# resolve paths cleared it; every other exit leaked it.
+	clear_pause_state()
+	_pause_before_hold_had_pause = false
+	_local_round_completion = {}
+	_round_resolution_emitted = false
+
 	_log("🔌 Disconnected from multiplayer")
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1158,13 +1940,30 @@ func _load_game_scene(scene_path: String, round_baseline: int = -1) -> void:
 	if result != OK:
 		_log("❌ Failed to change scene, error code: " + str(result))
 
+
 @rpc("authority", "call_local", "reliable")
 func _reset_round_status() -> void:
 	# Clear stale completion and in-game ready state before a new game loads.
 	round_completion_status.clear()
+	# The rejoin re-file copy and the resolution latch are per-round with it: a
+	# completion that belongs to the round being thrown away must not be re-filed
+	# into the next one, and the next round has to be resolvable exactly once.
+	_local_round_completion = {}
+	_round_resolution_emitted = false
 	round_in_progress = false
+	_mp_session_over = false
 	_ready_signal_emitted = false
 	_countdown_started_this_round = false
+	# A rejoin kick belongs to the round that was live at the rejoin - the one whose
+	# GO the returning peer missed. The round this reset is making room for is a NEW
+	# one, so any kick still armed is stale: consuming it would skip this round's
+	# ready handshake on a rejoined peer, leaving the host waiting for a ready that
+	# never comes (the "waiting for partner" hang seen on the phones). Safe against
+	# the resync path: resync_round_to_peer() arms its kick AFTER _load_next_round()
+	# returns, and this reset runs inside that call - the arm still wins.
+	_pending_live_rejoin_kick = false
+	_pending_kick_baseline = -1
+	_round_went_live = false
 	# Both per-round latches go with the round: a stale pause would swallow the first
 	# press of the next one, and a stale shared-target flag would stop the next round
 	# ever closing early.
@@ -1233,6 +2032,15 @@ func start_multiplayer_game_pair(p1_scene: String, p2_scene: String, level_set: 
 	# Reset round completion state on ALL peers before loading new scenes
 	rpc("_reset_round_status")
 	
+	# Every session starts a fresh team: lives, rounds survived and the
+	# per-player session totals. reset_team_lives() existed but had ZERO
+	# callers, so after a game-over the pool stayed at 0 and the next hosted
+	# session started already dead — the "new session is on 0 lives, needs a
+	# full restart" report. The reset broadcasts through _sync_team_lives
+	# (call_local), so the host and the client both start at START_TEAM_LIVES.
+	reset_team_lives()
+
+
 	_log("🎮 Loading INTERCONNECTED games:")
 	_log("   Player 1 (Host) → %s" % p1_scene)
 	_log("   Player 2 (Client) → %s" % p2_scene)
@@ -1240,7 +2048,24 @@ func start_multiplayer_game_pair(p1_scene: String, p2_scene: String, level_set: 
 	# One baseline for both halves of the pair, read once here so the host and the client
 	# measure this round's quota from the same total (see round_score_baseline).
 	var round_baseline: int = get_total_score()
-	
+
+	# Round 1 gets the same rejoin-resync ctx the later rounds have. _load_next_round()
+	# records its ctx for rounds 2+, but round 1 loads through here - without this, a
+	# drop-and-rejoin during round 1 fell through _end_reconnect_hold()'s ctx branch to
+	# the fresh-round fallback and discarded a live round, exactly the bug the ctx branch
+	# exists to prevent. An empty level_set (the legacy callers) cannot be resynced, so
+	# it clears the ctx rather than leaving the PREVIOUS session's round in place: a
+	# stale ctx would resync a new session's returning peer into the old session's game.
+	if not level_set.is_empty():
+		_current_round_ctx = {
+			"level_set": level_set,
+			"baseline": round_baseline,
+			"lives": team_lives,
+			"rounds": rounds_survived,
+		}
+	else:
+		_current_round_ctx = {}
+
 	# Host loads P1 scene
 	_load_game_scene(p1_scene, round_baseline)
 	
@@ -1306,8 +2131,9 @@ func increment_local(amount: int) -> void:
 	var gc = get_node_or_null("/root/GCounter")
 	if gc:
 		gc.increment(my_id, amount)
-	
-	_log("💧 Local score +%d → G-Counter[%d] = %d" % [amount, my_id, g_counter[my_id]])
+
+	if VERBOSE_SCORE_LOG:
+		_log("💧 Local score +%d → G-Counter[%d] = %d" % [amount, my_id, g_counter[my_id]])
 	
 	# Broadcast merge to all peers
 	rpc("_merge_counter", my_id, g_counter[my_id])
@@ -1337,7 +2163,8 @@ func _merge_counter(peer_id: int, value: int) -> void:
 		gc.merge({peer_id: value})
 	
 	if g_counter[peer_id] > old_value:
-		_log("📡 Merged counter[%d]: %d → %d" % [peer_id, old_value, g_counter[peer_id]])
+		if VERBOSE_SCORE_LOG:
+			_log("📡 Merged counter[%d]: %d → %d" % [peer_id, old_value, g_counter[peer_id]])
 		team_score_updated.emit(get_round_score())
 
 func get_total_score() -> int:
@@ -1413,9 +2240,22 @@ func _sync_team_lives(lives: int) -> void:
 func _execute_game_over() -> void:
 	# Execute game over sequence on all clients
 	game_in_progress = false
+	_mp_session_over = true
 	_log("🏁 GAME OVER - Rounds: %d, Score: %d"
 		% [rounds_survived, get_total_score()])
-	# Game will handle showing game over screen
+	# Show the final board HERE, not only in _show_game_over(). There are two
+	# game-over paths and only this one reliably fires: lose_life() sends this
+	# RPC the moment lives hit 0, while _show_game_over() depends on the host's
+	# round transition running 2 s after resolution — which never happens if the
+	# host is itself stuck, gone, or mid-hold. Measured on two phones: both sat
+	# on "ROUND SLIPPED AWAY! Waiting for partner..." for 3–6 minutes after this
+	# exact log line, because this path displayed nothing and the other never
+	# came. Same scene call the transition path makes; the overlay's own
+	# duplicate guard makes a double-fire harmless.
+	var current_scene := get_tree().current_scene
+	if current_scene != null and current_scene != self \
+			and current_scene.has_method("_show_game_over_screen"):
+		current_scene.call("_show_game_over_screen")
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # RPC FUNCTIONS - GAME EVENTS
@@ -1502,6 +2342,15 @@ func _execute_return_to_lobby() -> void:
 	# The authority's pause bookkeeping goes with the round. Left set, the next round
 	# would open believing a pause was already in force and drop the first press.
 	clear_pause_state()
+	# The deliberate group return is a session end too, and gets the same one-row
+	# treatment as the other exits (see record_mp_exit_if_pending). Score is read
+	# BEFORE the scene change and the deferred teardown below clear it, and the log
+	# is exported on the spot for the same reason GameManager.return_to_multiplayer_
+	# lobby() exports: no other code path will, on an exit that never reaches the
+	# final-score screen.
+	record_mp_exit_if_pending()
+	if SessionLogger:
+		SessionLogger.export_session()
 	get_tree().change_scene_to_file("res://scenes/ui/MultiplayerLobby.tscn")
 
 	# The teardown stays DEFERRED, and the deferral is load-bearing: this method is
@@ -2002,10 +2851,19 @@ var _pause_active: bool = false
 var _pause_source: String = ""
 
 const PAUSE_SOURCE_PLAYER := "player"
+## Internal freeze owned by the reconnect hold (auto-pause on disconnect).
+## While set, the tree freeze belongs to the hold, not to a player: pause presses
+## are dropped and resume is refused, so a stray tap can't unfreeze a round that
+## is waiting for its peer. Restored to the pre-hold value on rejoin.
+const PAUSE_SOURCE_HOLD := "reconnect_hold"
+## What _pause_active/_pause_source were when the hold opened, so _end_reconnect_hold
+## can put them back. Without this the hold's freeze leaked into the pause authority
+## (or a pre-hold player pause was forgotten), and the next pause press was dropped.
+var _pause_before_hold_had_pause: bool = false
 
 
 func is_paused() -> bool:
-	return _pause_active
+	return _pause_active or reconnect_hold_active
 
 
 ## True while the pause in force came from an explicit player action, on either peer.
@@ -2029,6 +2887,10 @@ func request_resume() -> void:
 	# Resume only ever originates from an explicit user action reaching this function.
 	# Nothing in the pause broadcast path calls it, so a peer receiving a pause can no
 	# longer answer with a resume.
+	# The reconnect hold owns the freeze while it is open: a resume there would
+	# unfreeze a round that is waiting for its peer and let it play on solo.
+	if reconnect_hold_active:
+		return
 	if not _pause_active:
 		return
 	if is_host:
@@ -2191,7 +3053,11 @@ func _execute_countdown(count: int) -> void:
 	_log("⏱️ Countdown: %d" % count)
 	
 	if count > 0:
-		await get_tree().create_timer(COUNTDOWN_TICK_SECONDS).timeout
+		# process_always=false: the tick chain must freeze with a reconnect hold's
+		# pause like everything else in the round. The default (true) ran the chain
+		# to its GO while the partner was away, so a mid-countdown drop left the
+		# host live in a round the rejoined client could never be started into.
+		await get_tree().create_timer(COUNTDOWN_TICK_SECONDS, false).timeout
 		if is_host:
 			rpc("_execute_countdown", count - 1)
 	else:
@@ -2312,6 +3178,8 @@ func start_round() -> void:
 	
 	round_in_progress = true
 	round_completion_status.clear()
+	_local_round_completion = {}
+	_round_resolution_emitted = false
 	_log("🎮 Round started")
 
 func report_player_completion(success: bool, score: int, accuracy: float = -1.0,
@@ -2321,12 +3189,17 @@ func report_player_completion(success: bool, score: int, accuracy: float = -1.0,
 		round_in_progress = true
 	
 	var my_id = multiplayer.get_unique_id()
-	round_completion_status[my_id] = {
+	var payload := {
 		"success": success,
 		"score": score,
 		"accuracy": accuracy,
 		"reaction_time_ms": reaction_time_ms
 	}
+	round_completion_status[my_id] = payload
+	# Independent copy: the table entry is cleared with the table at every round
+	# load, while this one has to survive until the round it belongs to is over -
+	# it is what a rejoin re-files from (_refile_completion_after_rejoin).
+	_local_round_completion = payload.duplicate()
 	
 	var status_str = "Success" if success else "Failed"
 	_log("✅ Player %d completed (%s, score: %d)"
@@ -2361,23 +3234,46 @@ func _sync_player_completion(peer_id: int, success: bool, score: int,
 	_check_both_completed()
 
 func _check_both_completed() -> void:
-	# Check if both players have completed their games
-	if round_completion_status.size() < 2:
-		return  # Still waiting for other player
-	
-	round_in_progress = false
-	
-	# Get results
-	var p1_data = round_completion_status.get(1, {"success": false, "score": 0})
-	var p2_data = round_completion_status.get(2, {"success": false, "score": 0})
-	
-	# Find peer IDs for each player
+	# Check if both players have completed their games.
+	#
+	# Resolution needs one completion per PLAYER NUMBER, not two dictionary
+	# entries. Two ways a raw size check misfires after a reconnect:
+	#   - a rejoining client arrives on a NEW peer id, so the same human can hold
+	#     TWO entries (the pre-drop id and the current one) while the partner
+	#     holds none - size 2, but only one player has actually finished, and the
+	#     missing side would resolve from its "both failed" default, costing the
+	#     team a life nobody lost;
+	#   - the pre-drop entry belongs to a peer id that has since been erased from
+	#     players - it must not count at all.
+	var my_id := multiplayer.get_unique_id()
+	var p1_pid := 0
+	var p2_pid := 0
 	for peer_id in round_completion_status:
-		var player_num = players.get(peer_id, {}).get("player_num", 0)
+		if peer_id != my_id and not players.has(peer_id):
+			continue  # filed by a peer id nobody owns any more
+		var player_num := int(players.get(peer_id, {}).get("player_num", 0))
+		if player_num == 0 and peer_id == my_id:
+			# Own entry filed before this peer's re-registration reached the
+			# player table (the host's list sync is still in flight).
+			player_num = local_player_id
 		if player_num == 1:
-			p1_data = round_completion_status[peer_id]
+			p1_pid = peer_id
 		elif player_num == 2:
-			p2_data = round_completion_status[peer_id]
+			p2_pid = peer_id
+	if p1_pid == 0 or p2_pid == 0:
+		return  # Still waiting for other player
+
+	if _round_resolution_emitted:
+		# Already resolved this round. A completion re-filed after a rejoin, or a
+		# player-list sync landing late, must not resolve the same round twice.
+		return
+	_round_resolution_emitted = true
+
+	round_in_progress = false
+
+	# Get results, keyed by the peer ids the player-number pass just resolved
+	var p1_data: Dictionary = round_completion_status[p1_pid]
+	var p2_data: Dictionary = round_completion_status[p2_pid]
 	
 	var p1_success = p1_data.get("success", false)
 	var p2_success = p2_data.get("success", false)
@@ -2388,6 +3284,18 @@ func _check_both_completed() -> void:
 		"Win" if p1_success else "Fail", p1_score,
 		"Win" if p2_success else "Fail", p2_score
 	])
+
+	# Session totals. This is the ONLY writer on the shipped path: the legacy
+	# complete_round() also accumulates, but nothing calls it except the dead
+	# MultiplayerCoordinator — so every scoreboard read 0 forever. Runs on BOTH
+	# peers behind the per-round latch above (not host-only): both sides resolve
+	# from the same player-number-keyed completions, hence add identical
+	# amounts, and no extra sync RPC is needed. Mid-round quits never reach
+	# here, so partial sessions correctly total only finished rounds.
+	mp_session_p1_score += p1_score
+	mp_session_p2_score += p2_score
+	_log("📊 Session totals → P1: %d (+%d), P2: %d (+%d)" % [
+		mp_session_p1_score, p1_score, mp_session_p2_score, p2_score])
 	
 	# Handle life deduction (only host)
 	if is_host:
@@ -2500,7 +3408,26 @@ func _transition_to_next_round() -> void:
 	# Transition to next round (host only)
 	if not is_host:
 		return
-	
+	# A session that is no longer in progress must not load rounds into itself.
+	# This runs deferred (2 s after both_players_completed, or from
+	# _end_reconnect_hold), so it can land AFTER the reconnect hold expired and
+	# _resolve_lost_peer() routed this peer to the lobby — without the guard it
+	# broadcast a round load into a torn-down session.
+	if not game_in_progress:
+		return
+
+	# A reconnect hold freezes the round exactly where it is. Loading the next
+	# round NOW would send the round-load broadcast to a peer that is gone: the
+	# host lands on round N+1, the rejoined peer wakes up still on round N's
+	# summary, and the two then wait for each other's completions forever - the
+	# intermittent post-rejoin freeze. So the transition is deferred until the
+	# hold resolves; _end_reconnect_hold() runs it (rejoined) or drops it
+	# (expired, the lobby routing owns the exit).
+	if is_reconnect_hold_active():
+		_pending_round_transition = true
+		_log("⏳ Next round deferred while the reconnect hold is open")
+		return
+
 	# Check if game over
 	if team_lives <= 0:
 		_log("💀 GAME OVER - Team ran out of lives!")
@@ -2535,6 +3462,17 @@ func _load_next_round(level_set: Dictionary, round_baseline: int, lives: int, ro
 	# The host's total as this round begins. Both peers run this body, so both start the round
 	# measuring from the same number; this parameter used to be received and thrown away.
 	round_score_baseline = round_baseline
+	# Host-side record of the round now running, for the rejoin round-resync
+	# (_end_reconnect_hold → resync_round_to_peer). The ctx must be recorded
+	# BEFORE the scene change below: a drop during the change is exactly the
+	# window the resync exists for.
+	if is_host:
+		_current_round_ctx = {
+			"level_set": level_set,
+			"baseline": round_baseline,
+			"lives": lives,
+			"rounds": rounds,
+		}
 	# Clear stale round completion and ready state BEFORE changing scenes
 	_reset_round_status()
 	# Both peers run this body, so this is where the round's roles land — the host's own copy
@@ -2561,6 +3499,7 @@ func _load_next_round(level_set: Dictionary, round_baseline: int, lives: int, ro
 @rpc("authority", "call_local", "reliable")
 func _show_game_over() -> void:
 	# Show game over on all clients
+	_mp_session_over = true
 	_log("💀 GAME OVER - Rounds: %d, Score: %d" % [rounds_survived, get_total_score()])
 	
 	# The game scene will show the game over screen

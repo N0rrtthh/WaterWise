@@ -611,7 +611,9 @@ func host_game(port: int = DEFAULT_PORT) -> bool:
 	
 	multiplayer.multiplayer_peer = peer
 	if NetworkManager:
-		NetworkManager.adopt_existing_peer(true)
+		# The port travels with the peer so NetworkManager._relisten_as_host()
+		# can rebind it after this device's own server socket dies mid-session.
+		NetworkManager.adopt_existing_peer(true, "", port)
 	is_host = true
 	is_multiplayer_connected = true
 	local_player_num = 1
@@ -1991,8 +1993,28 @@ func consume_multiplayer_notice() -> String:
 	return key
 
 func return_to_multiplayer_lobby() -> void:
+	# An MP session that ends anywhere other than the final-score screen used to
+	# leave NO JSON behind: _finalize_session_for_logging() (the only export site)
+	# runs from _show_final_score(), so a session ended by a disconnect, an abandoned
+	# reconnect window or a quit-during-hang recorded nothing — the exact failures
+	# the thesis needs on disk. Every exit funnels through here, so the exit is
+	# recorded (once — NetworkManager skips it when its own disconnect row already
+	# narrated this session's end) and the log is exported BEFORE the teardown
+	# clears the score the row describes.
+	var _nm := get_node_or_null("/root/NetworkManager")
+	var had_mp_session: bool = (
+		session_active
+		or is_multiplayer_connected
+		or (_nm != null and bool(_nm.get("game_in_progress")))
+	)
+	if had_mp_session and _nm and _nm.has_method("record_mp_exit_if_pending"):
+		_nm.call("record_mp_exit_if_pending")
 	get_tree().paused = false
 	disconnect_multiplayer()
+	if had_mp_session:
+		var _sl := get_node_or_null("/root/SessionLogger")
+		if _sl and _sl.has_method("export_session"):
+			_sl.call("export_session")
 	transition_to_scene("res://scenes/ui/MultiplayerLobby.tscn", 0.2)
 
 func _show_final_score() -> void:

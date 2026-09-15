@@ -264,8 +264,18 @@ class Subject extends Node:
 				% str(first_snap.get("game_in_progress"))
 				+ "_on_player_disconnected() is reachable on a client for the first time")
 
+		# The client no longer leaves the instant the host's socket dies: the
+		# reconnect hold keeps the round alive for NetworkManager's 30 s window
+		# so a ~10 s outage can rejoin instead of dumping both players to the
+		# lobby (the real-device fix this suite's host-socket-death harness
+		# verifies from the other side). This host driver never comes back — it
+		# closes the socket and exits — so here the hold must run its FULL
+		# course and expire before the lobby loads. The wait is the hold window
+		# plus the expiry handling's margin, not the 12 s it took before the
+		# hold existed.
+		const GONE_HOST_LOBBY_TIMEOUT: float = 45.0
 		await _eventually("the client leaves the dead round instead of soft-locking in it",
-			func() -> bool: return lobby_roots.size() > 0, 12.0,
+			func() -> bool: return lobby_roots.size() > 0, GONE_HOST_LOBBY_TIMEOUT,
 			func() -> String: return _state())
 		# Let every one of the three handlers finish before counting: the point of the count
 		# is that the two later ones found a transition already running and did nothing.
